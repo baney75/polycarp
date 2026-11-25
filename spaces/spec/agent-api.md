@@ -1,14 +1,14 @@
 # The agent API
 
-One contract for reading and driving the window manager from a program: queries, commands and events. The Windows
+One contract for reading and commanding the window manager from a program: queries, commands and events. The Windows
 daemon follows it. The Mac app no longer does (2026-11-18): computer use was removed, and the Mac keeps only the
 agent workspace API in [../docs/agent-workspace-api.md](../docs/agent-workspace-api.md); Linux follows it when its daemon catches up. The shapes are in
 [agent-api.schema.json](agent-api.schema.json) (JSON Schema 2020-12, one `$defs` entry per result and event).
 
-What it adds to yabai's `query` and AeroSpace's `list-*` and callbacks: every query and every event goes through the
-same scope as the hands (`computer_*`), so an agent can watch and drive the whole desktop under Full Access and only its
-own workspace otherwise, and no window or workspace Donovan can see changes unless he turned that on. `theme-set` is
-the one stated exception: agents may change how the Mac looks.
+What it adds to yabai's `query` and AeroSpace's `list-*` and callbacks: every query and every event goes through one
+scope, so an agent can watch and arrange the whole desktop under Full Access and only its own workspace otherwise, and
+no window or workspace Donovan can see changes unless he turned that on. `theme-set` is the one stated exception:
+agents may change how the Mac looks.
 
 ## Rules every platform keeps
 
@@ -44,7 +44,7 @@ Each result says what the caller could see: `"scope": "agent"` or `"scope": "all
 
 | Access (Settings > Agents) | `scope` | Windows listed, events sent |
 | --- | --- | --- |
-| Read Only, Default | `agent` | Windows on the agent workspace and windows of apps Donovan lent |
+| Read Only, Default | `agent` | Windows on the agent workspace |
 | Full Access | `all` | Every window the window manager places |
 | A caller from another machine (connector, `--on HOST`) | `agent` | As Default, whatever the Mac's setting |
 
@@ -56,7 +56,7 @@ themselves are not private and are always listed. The focused window outside sco
 focus moving between two windows outside scope sends no event.
 
 A command acts only on windows in the caller's scope, and reads, records and reports only those. A window outside it is
-refused as every hands verb refuses it.
+refused with `not_in_scope`.
 
 A connector may query and read events with the `events` tool. `subscribe` holds a socket on this machine and is refused
 for another one; `--on HOST` carries neither yet. Every command below is refused for a caller from another machine with
@@ -77,12 +77,11 @@ looks**). A command that needs view control runs only when all three hold:
 2. Access is Full Access.
 3. Donovan turned on **Agents may change what you see** in the app's own Settings (macOS: Settings > Agents; off by
    default). The switch is never stored: it lives in the running app, is off at every launch, and turns on only when
-   Donovan confirms it on Polycarp's own sheet with a real click or key, checked as a lend's is (a click posted by a
-   program or an accessibility press is refused). So a `defaults write`, an edit of the settings file or a copied
+   Donovan confirms it on Polycarp's own sheet with a real click or key (a click posted by a program or an
+   accessibility press is refused). So a `defaults write`, an edit of the settings file or a copied
    value leaves view control off: nothing on disk is read for it, and a value found under the old key is removed at
    launch. A Keychain item planted with a matching seal, which an earlier draft of this rule trusted, is never read
-   either. Hands refuse Polycarp's own windows in every mode, so no agent clicks the switch either. On Windows,
-   until the daemon has a confirmation that synthetic input can't answer, the switch stays off.
+   either. On Windows, until the daemon has a confirmation that synthetic input can't answer, the switch stays off.
 
 Otherwise the command fails with `permission_denied`, `retry: never`, before anything moves, and the suggestion says
 which of the three is missing.
@@ -143,7 +142,7 @@ Each answers with the state it read back after acting, never with what it asked 
 - `focus` brings the window's app forward and switches to its workspace. It is the one command that takes keyboard
   focus, which is why it always needs view control.
 
-Every command also takes `wait`, as every hands action does: how long to wait while Donovan is using the app.
+Every command also takes `wait`: how long to wait while Donovan is using the app.
 
 Command line: `polycarp-spaces agent <command> --window 4211 --workspace 3`. MCP: one tool per command, named as in the
 table with `-` spelled `_`.
@@ -176,7 +175,7 @@ passes it, so a retried call gets the same answer. A `since` past the last event
 
 Events come from the same model the queries read: a change is reported once the window manager has applied it, never
 when it was only asked for. Every event is filtered by the scope in force when it is sent. A window that leaves the
-caller's scope while it listens (a lend ends) is reported as `window_closed`, and one that enters it as
+caller's scope while it listens is reported as `window_closed`, and one that enters it as
 `window_created`. When Donovan changes Access, the server ends every subscriber: `subscribe` closes, and the next
 `events` call with `since` fails `invalid_args` and says to start again. The client starts again and gets a `hello`
 with the new scope and state. Frame changes the window manager did not make (a person dragging a window) are
@@ -190,7 +189,7 @@ Measured by `scripts/agent-api-probe.swift` against the running app on an otherw
   under 50 ms at the 95th percentile over 100 calls, with the app the window belongs to responsive.
 - Every state change a command makes is seen as an event within 100 ms of the command's answer.
 - `switch` and `focus` move every window on a display; their time is the switch time `scripts/bench.sh` holds.
-- A command that doesn't see its change in the model within 1 s answers `unverified`, `retry: after_snapshot`.
+- A command that doesn't see its change in the model within 1 s answers `unverified`, `retry: never`.
 
 ## Checks
 

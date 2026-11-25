@@ -142,7 +142,7 @@ pub enum Event {
     AgentShow,
     AgentHide,
     AgentToggle,
-    /// `agent move`: park one of your windows on the agent workspace. It is not drivable.
+    /// `agent move`: park one of your windows on the agent workspace.
     AgentSend {
         window: WindowId,
     },

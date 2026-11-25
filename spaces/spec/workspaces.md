@@ -78,7 +78,7 @@ moved to that one, silently (no focus change).
 
 ### R-P2 Windows that were already open
 When the daemon starts it mirrors every window exactly where it is, even out of sight. A window
-already parked on the agent workspace stays parked and is not drivable. A window of an agent process
+already parked on the agent workspace stays parked. A window of an agent process
 found on your workspaces is moved off them.
 
 ## Moving a window
@@ -149,42 +149,21 @@ the activation is user-caused: then focus is yours.
 If the compositor reports the agent workspace showing and you did not ask, it is hidden again and
 counted in `guard.refused`.
 
-## Agent scope (the hands)
+## Agent processes
 
-### R-W1 One compositor window, one accessible window
-The accessible window an action targets is the one whose title equals the compositor window's, and
-exactly one does. There is no fallback to "the only window of the process": it could be another
-window, even one outside the agent workspace. No match, or two, is `window_unmatched`, except when the
-process has no application on the accessibility bus at all: that app has no tree, and waiting does not
-change it, so it is `no_accessibility` (retry never), unless the process started a moment ago.
+Not workspace rules but part of the same contract; conformance cases for the pid rules are in `agent.json`.
 
-Scope is checked again right before the engine's action command: window, pid, start time and
-workspace (`special:agent`) must still be what they were; if anything changed the call is refused
-with `not_in_scope`. An app is started for an agent only if it is on the list of apps with a
-verified way to run as a separate process; any other app is refused before launch with
-`needs_sandbox`, whether or not you are running a copy.
-
-
-Not workspace rules but part of the same contract; `crates/baneyspaces-core/src/agent.rs` implements
-them and its tests are the cases. An agent action proceeds only when all hold:
-
-1. The window is on the agent workspace (`not_in_scope` otherwise).
-2. The window's process is one BaneySpaces started for an agent, identified by pid and process
-   start time (`needs_lend` if not, `stale_ref` if the pid was reused or the window changed hands).
-3. The snapshot the ref came from is of that same window and process (`stale_ref` otherwise).
-
-An agent only drives a process BaneySpaces started for it as a new instance, verified by pid and
-start time. Every pid check is start-time aware, and a registered process that dies or whose pid is
-reused is forgotten (a window of a reused pid is never an agent window; conformance cases in
-`agent.json`). An app is started for an agent only if it is on the allowlist of apps with a verified
-separate-process launch; any other is refused before launch with `needs_sandbox`, whether or not you
-run a copy. The app is named (never a path) and resolves to the system binary of that name; the only
-arguments are files inside the handoff folder, and the flags that isolate it are added by BaneySpaces
-(`bad_arguments` for anything else). Every agent process has a session bus of its own, so D-Bus
-single-instance forwarding cannot cross in either direction; `agent run` is a shell with your uid,
-so this is accident-proofing, not a boundary. If an allowed app forwards anyway, its window opens in your process on your workspace;
-it is left where it is and the `single_instance` error reports it in `error.data`. Every action leaves a record without content (agent id, verb, pid,
-window id, ref, route, result, refusal, screen_changed), kept 30 days.
+Every pid check is start-time aware, and a registered process that dies or whose pid is reused is
+forgotten (a window of a reused pid is never an agent window). An app is started for an agent only if
+it is on the allowlist of apps with a verified separate-process launch; any other is refused before
+launch with `needs_sandbox`, whether or not you run a copy. The app is named (never a path) and
+resolves to the system binary of that name; the only arguments are files inside the handoff folder,
+and the flags that isolate it are added by BaneySpaces (`bad_arguments` for anything else). Every
+agent process has a session bus of its own, so D-Bus single-instance forwarding cannot cross in
+either direction; `agent run` is a shell with your uid, so this is accident-proofing, not a boundary.
+If an allowed app forwards anyway, its window opens in your process on your workspace; it is left
+where it is and the `single_instance` error reports it in `error.data`. Every action leaves a record
+without content (agent id, verb, pid, window id, route, result, refusal), kept 30 days.
 
 Callers: a caller of the control socket that carries a launch token BaneySpaces issued, or is a
 registered agent process, is refused the operations that belong to the user (switch, move, focus

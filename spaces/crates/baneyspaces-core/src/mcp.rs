@@ -13,107 +13,18 @@ pub const FALLBACK_PROTOCOL: &str = "2024-11-05";
 pub fn tools() -> Value {
     let r = |desc: &str, props: Value, req: &[&str]| json!({ "type": "object", "properties": props, "required": req, "additionalProperties": false, "description": desc });
     let s = |d: &str| json!({ "type": "string", "description": d });
-    let reference = json!({ "type": "string", "pattern": "^@s[a-z0-9]+:e[0-9]+$", "description": "A ref from a snapshot, such as @s8f3k2p9:e8." });
-    let window = s("A window id from agent_windows or agent_open (the Hyprland address, 0x...).");
     json!([
         { "name": "agent_status", "description": "What is on the agent workspace: windows, processes, whether it is showing.",
           "inputSchema": r("", json!({}), &[]) },
-        { "name": "agent_windows", "description": "Windows on the agent workspace you may act on.",
+        { "name": "agent_windows", "description": "Windows on the agent workspace.",
           "inputSchema": r("", json!({}), &[]) },
         { "name": "agent_open", "description": "Start an allowlisted app on the agent workspace, by name, as its own process with its own session bus. You stay where you are. Only files inside the handoff folder may be passed: no flags, no paths to programs, no URLs (bad_arguments). An app not on the allowlist is needs_sandbox before it starts.",
-          "inputSchema": r("", json!({ "app": s("The app's name, such as foot. Never a path."), "args": { "type": "array", "items": { "type": "string" }, "description": "Paths of files inside the handoff folder." } }), &["app"]) },
-        { "name": "agent_snapshot", "description": "Accessibility tree of one agent window, with refs to act on.",
-          "inputSchema": r("", json!({ "window": window, "interactive": { "type": "boolean" }, "compact": { "type": "boolean" } }), &["window"]) },
-        { "name": "agent_find", "description": "Find elements in an agent window by role, name or text.",
-          "inputSchema": r("", json!({ "window": window, "role": s("Accessibility role."), "name": s("Accessible name."), "text": s("Text content.") }), &["window"]) },
-        { "name": "agent_get", "description": "Read one property (text, value, title, bounds, role, states) of a ref.",
-          "inputSchema": r("", json!({ "ref": reference, "property": s("text, value, title, bounds, role or states.") }), &["ref", "property"]) },
-        { "name": "agent_click", "description": "Press a ref through the accessibility API. Returns evidence read back from the element.",
-          "inputSchema": r("", json!({ "ref": reference }), &["ref"]) },
-        { "name": "agent_set_value", "description": "Set a ref's value through the accessibility API.",
-          "inputSchema": r("", json!({ "ref": reference, "value": s("The new value.") }), &["ref", "value"]) },
-        { "name": "agent_type", "description": "Insert text into a text ref through the accessibility API (no key events).",
-          "inputSchema": r("", json!({ "ref": reference, "text": s("Text to insert.") }), &["ref", "text"]) },
-        { "name": "agent_toggle", "description": "Toggle a checkbox or switch ref.",
-          "inputSchema": r("", json!({ "ref": reference }), &["ref"]) },
-        { "name": "agent_select", "description": "Select an option in a list or dropdown ref.",
-          "inputSchema": r("", json!({ "ref": reference, "value": s("The option to select.") }), &["ref", "value"]) },
-        { "name": "agent_scroll", "description": "Scroll a ref.",
-          "inputSchema": r("", json!({ "ref": reference, "direction": { "type": "string", "enum": ["up", "down", "left", "right"] }, "amount": { "type": "integer", "minimum": 1 } }), &["ref", "direction"]) },
-        { "name": "agent_shot", "description": "Capture one agent window. Returned only when asked for.",
-          "inputSchema": r("", json!({ "window": window }), &["window"]) }
+          "inputSchema": r("", json!({ "app": s("The app's name, such as foot. Never a path."), "args": { "type": "array", "items": { "type": "string" }, "description": "Paths of files inside the handoff folder." } }), &["app"]) }
     ])
 }
 
 pub fn tool_names() -> Vec<String> {
     tools().as_array().map(|a| a.iter().filter_map(|t| t["name"].as_str().map(String::from)).collect()).unwrap_or_default()
-}
-
-/// The snapshot arguments for rows (`format`, `query`, `since`, `max_elements`). macOS only for now.
-pub const ROWS_ARGS: [&str; 4] = ["format", "query", "since", "max_elements"];
-
-/// Rows are macOS only for now: say so instead of ignoring the arguments.
-pub fn rows_not_supported(asked: &[&str]) -> Envelope {
-    Envelope::err(
-        "not_supported",
-        format!("{} on snapshot is macOS only for now; this platform returns the JSON tree", asked.join(", ")),
-        Retry::Never,
-        "Snapshot again with only the window, interactive and compact.",
-    )
-}
-
-/// The refusal for a CLI `agent snapshot` given `--format`, `--query`, `--since` or `--max_elements`.
-pub fn rows_flags_refusal(args: &[String]) -> Option<Envelope> {
-    // `--format json` asks for what this platform returns, so it passes.
-    let json = |i: usize| args[i] == "--format=json" || (args[i] == "--format" && args.get(i + 1).is_some_and(|v| v == "json"));
-    let asked: Vec<&str> = ROWS_ARGS
-        .iter()
-        .copied()
-        .filter(|k| (0..args.len()).any(|i| !json(i) && args[i].strip_prefix("--").and_then(|s| s.split('=').next()) == Some(*k)))
-        .collect();
-    (!asked.is_empty()).then(|| rows_not_supported(&asked))
-}
-
-fn digits(s: &str) -> bool {
-    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
-}
-
-/// A bare row number (`5`, `[5]`) as a ref is macOS only for now; `e5` is a browser ref from read_page, named as one.
-/// Other malformed refs are left to the hands.
-pub fn bare_ref_refusal(r: &str) -> Option<Envelope> {
-    if r.strip_prefix('e').is_some_and(digits) {
-        return Some(Envelope::err(
-            "bad_arguments",
-            format!("{r:?} is a browser ref from read_page; computer_* tools act on native windows"),
-            Retry::Never,
-            format!("For a web page, use the browser tools (click, fill, select) with {r}. For a native window, pass the full ref from computer_snapshot, like @s8f3k2p9:e5."),
-        ));
-    }
-    let n = r.strip_prefix('[').and_then(|r| r.strip_suffix(']')).unwrap_or(r);
-    digits(n).then(|| {
-        Envelope::err(
-            "not_supported",
-            format!("{r:?} is a bare row number, which is macOS only for now; pass the full ref from a snapshot, like @s8f3k2p9:e5"),
-            Retry::Never,
-            "Snapshot the window and pass the full ref of the element.",
-        )
-    })
-}
-
-fn rows_refusal(name: &str, args: &Value) -> Option<Envelope> {
-    if let Some(e) = args.get("ref").and_then(Value::as_str).and_then(bare_ref_refusal) {
-        return Some(e);
-    }
-    if name == "agent_snapshot" && (args.get("screenshot").is_some_and(|v| v != false) || args.get("zoom").is_some()) {
-        return Some(Envelope::err(
-            "not_supported",
-            "screenshot and zoom on snapshot are macOS only for now",
-            Retry::Never,
-            "Call agent_shot with the window for its picture.",
-        ));
-    }
-    let asked: Vec<&str> = ROWS_ARGS.iter().copied().filter(|k| args.get(*k).is_some_and(|v| !(*k == "format" && v == "json"))).collect();
-    (name == "agent_snapshot" && !asked.is_empty()).then(|| rows_not_supported(&asked))
 }
 
 fn rpc_error(id: &Value, code: i64, message: &str) -> Value {
@@ -132,7 +43,7 @@ pub fn handle(msg: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Op
                 "protocolVersion": ver,
                 "capabilities": { "tools": { "listChanged": false } },
                 "serverInfo": { "name": SERVER_NAME, "version": env!("CARGO_PKG_VERSION") },
-                "instructions": "Agent computer use on the agent workspace only. Open an app with agent_open, snapshot it, act on refs, and read the evidence in each result. Nothing here touches the user's workspaces."
+                "instructions": "The agent workspace: what is on it, and starting an app there. Nothing here reads or drives an app, or touches the user's workspaces."
             }})
         }
         "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
@@ -143,7 +54,7 @@ pub fn handle(msg: &Value, call: &mut dyn FnMut(&str, &Value) -> Envelope) -> Op
                 return Some(rpc_error(&id, -32602, &format!("unknown tool {name}")));
             }
             let args = msg["params"].get("arguments").cloned().unwrap_or_else(|| json!({}));
-            let env = if let Some(e) = rows_refusal(name, &args) { e } else if args.is_object() { call(name, &args) } else { Envelope::err("invalid_args", "arguments must be an object", Retry::Never, "Send a JSON object.") };
+            let env = if args.is_object() { call(name, &args) } else { Envelope::err("invalid_args", "arguments must be an object", Retry::Never, "Send a JSON object.") };
             let text = env.to_json();
             json!({ "jsonrpc": "2.0", "id": id, "result": {
                 "content": [{ "type": "text", "text": text }],
@@ -230,76 +141,19 @@ mod tests {
         let out = run(&[
             json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"switch","arguments":{}}}),
             json!({"jsonrpc":"2.0","id":2,"method":"resources/list"}),
+            json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"agent_click","arguments":{}}}),
         ]);
         assert_eq!(out[0]["error"]["code"], -32602);
         assert_eq!(out[1]["error"]["code"], -32601);
+        assert_eq!(out[2]["error"]["code"], -32602, "computer use was removed");
     }
 
     #[test]
     fn a_failed_envelope_sets_is_error() {
         let mut call = |_: &str, _: &Value| Envelope::err("not_in_scope", "no", Retry::Never, "x");
-        let r = handle(&json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"agent_click","arguments":{"ref":"@sa:e1"}}}), &mut call).unwrap();
+        let r = handle(&json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"agent_open","arguments":{"app":"foot"}}}), &mut call).unwrap();
         assert_eq!(r["result"]["isError"], true);
         assert_eq!(r["result"]["structuredContent"]["error"]["code"], "not_in_scope");
-    }
-
-    #[test]
-    fn snapshot_rows_arguments_are_not_supported_here_and_say_so() {
-        let called = std::cell::Cell::new(0);
-        let mut call = |_: &str, _: &Value| { called.set(called.get() + 1); Envelope::ok(json!(null)) };
-        let r = handle(&json!({"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"agent_snapshot","arguments":{"window":"0x1","query":"Save","since":"latest"}}}), &mut call).unwrap();
-        assert_eq!(called.get(), 0, "refused before the hands run");
-        let e = &r["result"]["structuredContent"]["error"];
-        assert_eq!(e["code"], "not_supported");
-        assert!(e["message"].as_str().unwrap().starts_with("query, since on snapshot is macOS only"), "{e}");
-        let ok = handle(&json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"agent_snapshot","arguments":{"window":"0x1","compact":true}}}), &mut call).unwrap();
-        assert_eq!(ok["result"]["isError"], false);
-    }
-
-    #[test]
-    fn the_cli_rows_flags_are_refused_too() {
-        let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-        let e = rows_flags_refusal(&v(&["--window", "0x1", "--max_elements", "5"])).expect("refused");
-        assert_eq!(e.error.as_ref().map(|e| e.code.as_str()), Some("not_supported"));
-        assert!(rows_flags_refusal(&v(&["--window", "0x1", "-i", "--compact"])).is_none());
-        // Review r1 first-F4: the inline spelling too.
-        for a in ["--format=rows", "--query=Save", "--since=latest", "--max_elements=3"] {
-            assert!(rows_flags_refusal(&v(&["--window", "0x1", a])).is_some(), "{a}");
-        }
-        // Review r2 second-S3: json is what this platform returns.
-        assert!(rows_flags_refusal(&v(&["--window", "0x1", "--format=json"])).is_none());
-        assert!(rows_flags_refusal(&v(&["--window", "0x1", "--format", "json"])).is_none());
-        assert!(rows_flags_refusal(&v(&["--window", "0x1", "--format", "rows"])).is_some());
-        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "format": "json"})).is_none());
-        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "format": "rows"})).is_some());
-    }
-
-    // Item 6: a snapshot picture is macOS only; the answer names the call that works here.
-    #[test]
-    fn a_snapshot_screenshot_is_not_supported_here() {
-        let e = rows_refusal("agent_snapshot", &json!({"window": "0x1", "screenshot": true})).and_then(|e| e.error).unwrap();
-        assert_eq!(e.code, "not_supported");
-        assert!(e.suggestion.contains("agent_shot"));
-        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "zoom": "0,0,10,10"})).is_some());
-        assert!(rows_refusal("agent_snapshot", &json!({"window": "0x1", "screenshot": false})).is_none());
-    }
-
-    // Review r1 second-F7: a bare row number as a ref is refused, from MCP and for the CLI.
-    #[test]
-    fn a_bare_row_number_ref_is_not_supported_here() {
-        for r in ["5", "[5]"] {
-            assert_eq!(bare_ref_refusal(r).and_then(|e| e.error).map(|e| e.code), Some("not_supported".to_string()), "{r}");
-        }
-        // Weak-model item 3: a browser ref is named as one, with the tools that take it.
-        let e = bare_ref_refusal("e12").and_then(|e| e.error).unwrap();
-        assert_eq!(e.code, "bad_arguments");
-        assert!(e.message.contains("browser ref") && e.suggestion.contains("click, fill, select"), "{e:?}");
-        for r in ["@s8f3k2p9:e5", "e", "[]", "five"] {
-            assert!(bare_ref_refusal(r).is_none(), "{r}");
-        }
-        let mut call = |_: &str, _: &Value| Envelope::ok(json!(null));
-        let r = handle(&json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"agent_click","arguments":{"ref":"5"}}}), &mut call).unwrap();
-        assert_eq!(r["result"]["structuredContent"]["error"]["code"], "not_supported");
     }
 
     #[test]

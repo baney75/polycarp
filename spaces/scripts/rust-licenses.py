@@ -49,7 +49,7 @@ for spec in args.roots:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEXTS = {"MIT": os.path.join(HERE, "licence-texts", "MIT.txt"), "Zlib": os.path.join(HERE, "licence-texts", "Zlib.txt"),
-         "Apache-2.0": os.path.join(HERE, "..", "LICENSES", "agent-desktop-Apache-2.0.txt")}
+         "Apache-2.0": os.path.join(HERE, "licence-texts", "Apache-2.0.txt")}
 
 def standard_texts(name, version, p):
     """The first alternative of the crate's licence expression whose every licence has a text here (OR: one is enough,

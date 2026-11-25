@@ -142,8 +142,7 @@ final class AgentAPIContractTests: XCTestCase {
         for phrase in ["The switch is never stored: it lives in the running app, is off at every launch",
                        "confirms it on Polycarp's own sheet with a real click or key",
                        "value leaves view control off: nothing on disk is read for it",
-                       "A Keychain item planted with a matching seal, which an earlier draft of this rule trusted, is never read",
-                       "Hands refuse Polycarp's own windows in every mode"] {
+                       "A Keychain item planted with a matching seal, which an earlier draft of this rule trusted, is never read"] {
             XCTAssertTrue(says(rule, phrase), phrase)
         }
         XCTAssertTrue(says(rule, "On Windows, until the daemon has a confirmation that synthetic input can't answer, the switch stays off."),

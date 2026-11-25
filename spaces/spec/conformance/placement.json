@@ -245,7 +245,7 @@
   ]
  },
  {
-  "name": "a window already parked on the agent workspace stays parked and not drivable",
+  "name": "a window already parked on the agent workspace stays parked",
   "rules": [
    "R-P2"
   ],

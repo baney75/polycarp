@@ -200,7 +200,7 @@ helper post "${DW#w-}" 0x10 >/dev/null
 sleep 2; AS=$(cli agent status); [[ "$(grep -o '"window":"w-' <<<"$AS" | wc -l)" == 1 ]] && ok "the dialog is gone from the agent workspace" || bad "dialog still listed"
 RB=$(readback); echo "$RB" >> "$LOG"; shot 09-agent-dialog-closed >/dev/null
 grep "^$AW " <<<"$RB" | grep -q 'SEEN=False' && ok "the agent's window is still invisible after its dialog" || bad "agent window is visible"
-cli agent snapshot | grep -q 'agent snapshot was removed from Polycarp' && ok "agent snapshot says it was removed" || bad "agent snapshot"
+SN=$(cli agent snapshot || true); grep -q 'agent snapshot was removed from Polycarp' <<<"$SN" && ok "agent snapshot says it was removed" || bad "agent snapshot"
 cli agent log --since 120 | grep -q '"verb":"open"' && ok "the action log recorded the open" || bad "no log record"
 
 # The ghost restores exactly: alpha opaque and the styles back while shown, a ghost again when hidden.
