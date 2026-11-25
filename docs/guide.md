@@ -322,6 +322,7 @@ Any other MCP client can start the same command.
 | `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |
 | `keys_list` | Read every Polycarp keyboard shortcut: its keys (`mod` is the person's modifier), what it does, its group, where it works and when. Read-only. The same list: [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md) |
 | `filters_list`, `filter_set`, `filter_remove` | See, add or replace (by `id`), and remove the feed filters and page edits Polycarp's browser extension applies. See [Filters](#filters) |
+| `edits_list`, `edit_set`, `edit_remove` | See, add or replace (by `id`), and remove the page edits agents made, which Polycarp's browser extension applies. See [Page edits](../spaces/docs/edits.md) |
 
 ### The workflow
 

@@ -6,7 +6,8 @@
 //! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
 //! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, each paper tool with
 //! `polycarp-spaces paper ... --json`, `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the
-//! same envelope (docs/keys.md), and each filter tool with `polycarp-spaces filters ... --json`.
+//! same envelope (docs/keys.md), each filter tool with `polycarp-spaces filters ... --json`, and each page
+//! edit tool with `polycarp-spaces edits ... --json` (spaces/docs/edits.md).
 
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
@@ -64,6 +65,10 @@ To hide posts in the person's feeds (X, YouTube, Reddit, Hacker News, Bluesky, L
 patterns, accounts or kinds (shorts, promoted, reposts), or to hide parts of a named site's pages by CSS selector, \
 call filters_list, then filter_set one rule by id; filter_remove takes one away. Polycarp's own browser extension \
 applies them, behind a one-click Show bar.
+To change how a website looks or reads in the person's browser (restyle, reword, move, hide, add a note), call \
+edits_list, then edit_set one edit by id, named for what it does; edit_remove takes one away. Change only the sites \
+the person asked about. Polycarp's extension applies it, says so on the page and offers Undo. It can't click, type, \
+load anything or run a script, and you can't see the page through it: ask the person how it looks.
 Every result is {ok, data} or {ok:false, error:{code, message, suggestion, data:{errors}}}.";
 
 fn obj(props: Json, required: &[&str]) -> Json {
@@ -506,6 +511,55 @@ pub(crate) fn tools() -> Vec<Tool> {
             destructive: true,
             idempotent: true,
         },
+        Tool {
+            name: "edits_list",
+            description: "The page edits agents made, which Polycarp's browser extension applies, from edits.json: each with its id, name, enabled, sites, paths, changes and css. Read this before edit_set to see the ids in use. The edits the person made in the browser are not here.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "edit_set",
+            description: "Add a page edit, or replace the one with the same id. Polycarp's browser extension applies it on the sites it names each time the person opens them; open pages pick it up within 30 seconds, and a page says so and offers Undo the first time. An edit needs changes or css. It changes how a page looks and reads only: no clicks, scripts, form fields or network. hide and insert hold up best; an app that rebuilds its page can undo a move. Prefer a filter for hiding posts in a feed. A refused edit wrote nothing; error.data.errors names the field.",
+            schema: obj(
+                json!({
+                    "id": {"type":"string","description":"1 to 64 of a-z, 0-9 and -, as quiet-news. An existing id is replaced whole."},
+                    "name": {"type":"string","description":"What the person sees it called, up to 80 characters, as Quiet news."},
+                    "enabled": {"type":"boolean","description":"false keeps the edit but stops it. Default true."},
+                    "sites": {"type":"array","items":{"type":"string"},"description":"1 to 50 hosts, as news.example.com. A host covers its subdomains."},
+                    "paths": {"type":"array","items":{"type":"string"},"description":"Pages of those sites, as /home or /watch/*; empty or left out is every page."},
+                    "changes": {"type":"array","items": {"type":"object","properties": {
+                        "do": {"type":"string","enum":["hide","style","text","attr","move","insert"]},
+                        "at": {"type":"string","description":"A CSS selector: what to change, or where to insert."},
+                        "style": {"type":"object","description":"style: {property: value}, as {\"font-size\": \"18px\"}.","additionalProperties":{"type":"string"}},
+                        "text": {"type":"string","description":"text: the new words."},
+                        "find": {"type":"string","description":"text: replace only these words."},
+                        "name": {"type":"string","enum":["alt","aria-label","dir","lang","title"],"description":"attr: which one."},
+                        "value": {"type":["string","null"],"description":"attr: its value; null removes it."},
+                        "to": {"type":"string","description":"move: a CSS selector of the part to move it by."},
+                        "where": {"type":"string","enum":["before","after","first","last"],"description":"move and insert: before or after the part, or inside it as its first or last."},
+                        "blocks": {"type":"array","items":{"type":"object"},"description":"insert: up to 20 blocks, as {\"kind\": \"heading\", \"text\": \"Today\"}, {\"kind\": \"text\", \"text\": \"...\"}, {\"kind\": \"list\", \"items\": [\"one\", \"two\"]} or {\"kind\": \"link\", \"text\": \"...\", \"url\": \"https://...\"}. Plain words, never HTML."}
+                    },"required":["do","at"]},"description":"Up to 50 changes, made in order. Each takes do, at and the fields its do names."},
+                    "css": {"type":"string","description":"A stylesheet for those pages, up to 20000 characters. Nothing that loads (url(), image(), @import, @font-face) and no backslash."}
+                }),
+                &["id", "sites"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "edit_remove",
+            description: "Remove one page edit by its id from edits_list. Open pages go back within 30 seconds. To undo, edit_set the edit edits_list gave before.",
+            schema: obj(
+                json!({"id": {"type":"string","description":"The edit's id, from edits_list."}}),
+                &["id"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
     ]
 }
 
@@ -679,10 +733,10 @@ pub(crate) fn call(
             Ok(a) => style_call(name, &a),
         });
     }
-    if name.starts_with("filter") {
+    if name.starts_with("filter") || name.starts_with("edit") {
         return Some(match Args::new(&tool, args) {
             Err(e) => theme::envelope(&Err(e)),
-            Ok(a) => filters_call(name, &a),
+            Ok(a) => rules_call(name, &a),
         });
     }
     if name == "search" || name == "search_open" {
@@ -834,22 +888,29 @@ fn paper_call(name: &str, a: &Args) -> theme::Envelope {
     }
 }
 
-/// Runs one filter tool through `polycarp-spaces filters ... --json` (no shell) and passes its envelope on. The rule
-/// goes as one JSON argument; the command checks every field.
-fn filters_call(name: &str, a: &Args) -> theme::Envelope {
+/// Runs one filter or page edit tool through `polycarp-spaces filters|edits ... --json` (no shell) and passes its
+/// envelope on. The rule or edit goes as one JSON argument; the command checks every field.
+fn rules_call(name: &str, a: &Args) -> theme::Envelope {
+    let verb = if name.starts_with("filter") {
+        "filters"
+    } else {
+        "edits"
+    };
     let built = || -> Result<Vec<String>, ApiErr> {
-        Ok(match name {
-            "filters_list" => vec!["filters".into(), "ls".into()],
-            "filter_set" => vec![
-                "filters".into(),
+        Ok(if name.ends_with("s_list") {
+            vec![verb.into(), "ls".into()]
+        } else if name.ends_with("_set") {
+            vec![
+                verb.into(),
                 "set".into(),
                 Json::Object(a.map.clone()).to_string(),
-            ],
-            _ => vec!["filters".into(), "rm".into(), a.need("id")?.into()],
+            ]
+        } else {
+            vec![verb.into(), "rm".into(), a.need("id")?.into()]
         })
     };
     match built() {
-        Ok(argv) => spaces_run(argv, "filters ls"),
+        Ok(argv) => spaces_run(argv, &format!("{verb} ls")),
         Err(e) => theme::envelope(&Err(e)),
     }
 }

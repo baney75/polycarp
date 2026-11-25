@@ -132,7 +132,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 39] = [
+const TOOLS: [&str; 42] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -172,6 +172,9 @@ const TOOLS: [&str; 39] = [
     "filters_list",
     "filter_set",
     "filter_remove",
+    "edits_list",
+    "edit_set",
+    "edit_remove",
 ];
 
 #[test]
@@ -1137,6 +1140,87 @@ fn filter_tools_run_the_spaces_filters_command_and_pass_its_envelope_on_as_is() 
 
 #[cfg(unix)]
 #[test]
+fn edit_tools_run_the_spaces_edits_command_and_take_every_field_an_edit_has() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"edit": {"id": "quiet"}, "replaced": false}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let v = s.request("tools/list", json!({}));
+    let tools = v["result"]["tools"].as_array().unwrap();
+    let by = |n: &str| tools.iter().find(|t| t["name"] == n).unwrap().clone();
+
+    // Every edit the app and the extension both accept passes the tool's own check, as one JSON argument, as given.
+    let spec = concat!(env!("CARGO_MANIFEST_DIR"), "/../spaces/spec/edits.json");
+    let spec: Value = serde_json::from_str(&fs::read_to_string(spec).unwrap()).unwrap();
+    let accepted = spec["accept"].as_array().unwrap();
+    assert!(accepted.len() > 10);
+    for case in accepted {
+        let r = s.tool("edit_set", case["edit"].clone());
+        assert_eq!(r["structuredContent"], reply, "{}", case["case"]);
+        let argv = stub_args(&sb);
+        assert_eq!(argv.len(), 4, "{argv:?}");
+        assert_eq!(argv[..2], ["edits", "set"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(&argv[2]).unwrap(),
+            case["edit"]
+        );
+        assert_eq!(argv[3], "--json");
+    }
+    // The schema a model reads names each field those cases use.
+    let schema = &by("edit_set")["inputSchema"];
+    assert_eq!(schema["required"], json!(["id", "sites"]));
+    for case in accepted {
+        for k in case["edit"].as_object().unwrap().keys() {
+            assert!(schema["properties"][k].is_object(), "edit_set lacks {k}");
+        }
+        let change = &schema["properties"]["changes"]["items"]["properties"];
+        for c in case["edit"]["changes"].as_array().into_iter().flatten() {
+            for k in c.as_object().unwrap().keys() {
+                assert!(change[k].is_object(), "a change lacks {k}");
+            }
+            for k in ["do", "where", "name"] {
+                if let Some(v) = c[k].as_str() {
+                    let e = change[k]["enum"].as_array().unwrap();
+                    assert!(e.iter().any(|x| x == v), "{k} lacks {v}");
+                }
+            }
+        }
+    }
+
+    s.tool("edits_list", json!({}));
+    assert_eq!(stub_args(&sb), ["edits", "ls", "--json"]);
+    s.tool("edit_remove", json!({"id": "quiet"}));
+    assert_eq!(stub_args(&sb), ["edits", "rm", "quiet", "--json"]);
+    assert_eq!(by("edits_list")["annotations"]["readOnlyHint"], true);
+    for n in ["edit_set", "edit_remove"] {
+        assert_eq!(by(n)["annotations"]["destructiveHint"], true, "{n}");
+        assert_eq!(by(n)["annotations"]["readOnlyHint"], false, "{n}");
+    }
+
+    for (tool, args) in [
+        ("edit_set", json!({"id": "a"})),
+        (
+            "edit_set",
+            json!({"id": "a", "sites": ["x.com"], "js": "alert(1)"}),
+        ),
+        ("edit_remove", json!({"id": 3})),
+        ("edits_list", json!({"id": "a"})),
+    ] {
+        fs::remove_file(sb.root.join("spaces/args")).unwrap_or_default();
+        let r = s.tool(tool, args.clone());
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{tool} {args}"
+        );
+        assert!(stub_args(&sb).is_empty(), "{tool} {args} ran the command");
+    }
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
 fn surfaces_tools_check_their_arguments_before_running_anything() {
     let sb = Sandbox::new();
     let bin = spaces_stub(&sb);
@@ -1275,6 +1359,7 @@ fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
     assert!(at("style_example") < at("style_set") && at("style_set") < at("style_check"));
     assert!(at("paper_set") < at("paper_get") && at("paper_get") < at("paper_reset"));
     assert!(at("filters_list") < at("filter_set") && at("filter_set") < at("filter_remove"));
+    assert!(at("edits_list") < at("edit_set") && at("edit_set") < at("edit_remove"));
     assert_eq!(s.finish(), 0);
 }
 

@@ -25,16 +25,16 @@ Call one tool per step. Read the answer before the next step.
 3. Make a change.
    - Window, workspace and launcher tools need the running app: call `app_status` first. If it is not running, say
      so and stop.
-   - Surface, paper, filter, theme and file tools work without the app. Do not call `app_status` for them.
+   - Surface, paper, filter, page edit, theme and file tools work without the app. Do not call `app_status` for them.
    - To act on a window, call `app_items` to find it, then the change tool.
    - Call the one change tool from the list below.
 4. Check the change.
    - After `app_focus`, call `app_items`. After `surfaces_set`, call `surfaces_get`. After `theme_set`, call
-     `theme_current`. After `paper_set` or `filter_set`, the tool's own answer is the check.
+     `theme_current`. After `paper_set`, `filter_set` or `edit_set`, the tool's own answer is the check.
    - After `launcher_open` or `workspace_switch`, the tool's own answer is the check. Call nothing more.
 5. Tell the person in one short sentence what changed.
 
-## The 13 calls
+## The 14 calls
 
 | Goal | Tool | Arguments |
 | --- | --- | --- |
@@ -51,6 +51,7 @@ Call one tool per step. Read the answer before the next step.
 | Switch theme | `theme_set` | `{"name": "polycarp", "mode": "dark"}` |
 | Find a file | `files_search` | `{"query": "tax letter"}` |
 | Hide YouTube Shorts | `filter_set` | `{"id": "no-shorts", "sites": ["youtube.com"], "kinds": ["shorts"]}` |
+| Change how a website looks or reads | `edit_set` | `{"id": "big-text", "name": "Bigger text", "sites": ["example.com"], "changes": [{"do": "style", "at": "article", "style": {"font-size": "20px"}}]}` |
 
 More surface examples, each a `surfaces_set` call:
 
