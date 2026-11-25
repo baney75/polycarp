@@ -92,6 +92,10 @@ else. BaneySpaces reads the default path unless the variable reaches it (set it 
 `launchctl setenv`, or leave it unset for both). `polycarp theme current` prints `folder:`, the folder the
 command writes; BaneySpaces reads `<folder>/current/theme.json`.
 
+The browser extension gets `surfaces.browser` and `mode` of the same file from the new tab host (docs/newtab.md), read by the
+rules under Reading for that surface, with one more: the file itself may not be a symbolic link. Spaces' own text pairs
+(`Look.textPairs`) are not asked of it. A file that fails is no theme there either.
+
 **Precedence.** While the file holds a valid theme it is the theme in force. It draws every surface
 instead of `appearance.theme`, `appearance.palette` and the accent, and it takes the next frame like
 any Settings change. It never rewrites those stored values: delete the file (or write one that is

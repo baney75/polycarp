@@ -178,12 +178,13 @@ public struct PolycarpTheme: Equatable, Sendable {
     /// Parses and checks the text of `theme.json`. A problem is one plain sentence.
     /// `checkContrast: false` is for the theme editor's preview only, which must keep drawing while a color passes through a
     /// pair that is too faint; it lists those pairs as warnings instead, and the CLI refuses them on Save.
-    public static func parse(_ data: Data, checkContrast: Bool = true) -> Result<PolycarpTheme, PolycarpThemeError> {
+    /// `surface` is the part of the theme to read: the app's own, or `browser` for the extension (`NewTabTheme`).
+    public static func parse(_ data: Data, surface: String = "spaces", checkContrast: Bool = true) -> Result<PolycarpTheme, PolycarpThemeError> {
         guard data.count <= maxBytes else { return .failure(.init("over \(maxBytes) bytes")) }
         guard let any = try? JSONSerialization.jsonObject(with: data), let root = any as? [String: Any] else {
             return .failure(.init("not a JSON object"))
         }
-        do { return .success(try build(root, checkContrast: checkContrast)) } catch let e as PolycarpThemeError { return .failure(e) } catch { return .failure(.init("\(error)")) }
+        do { return .success(try build(root, surface: surface, checkContrast: checkContrast)) } catch let e as PolycarpThemeError { return .failure(e) } catch { return .failure(.init("\(error)")) }
     }
 
     /// `pairs()` in cli/src/theme.rs: text on its fills at `minContrast`, and the status colors on `sunken` at 3.0.
@@ -205,7 +206,7 @@ public struct PolycarpTheme: Equatable, Sendable {
     public static let schema = 2
     public static let oldestSchema = 1
 
-    private static func build(_ root: [String: Any], checkContrast: Bool) throws -> PolycarpTheme {
+    private static func build(_ root: [String: Any], surface: String, checkContrast: Bool) throws -> PolycarpTheme {
         guard let n = root["schema"] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID(), n.doubleValue == n.doubleValue.rounded() else {
             throw PolycarpThemeError("schema is missing or not a whole number")
         }
@@ -216,8 +217,8 @@ public struct PolycarpTheme: Equatable, Sendable {
         guard let modeText = root["mode"] as? String, let mode = Mode(rawValue: modeText) else {
             throw PolycarpThemeError("mode is missing or not auto, light or dark")
         }
-        guard let surfaces = root["surfaces"] as? [String: Any], let spaces = surfaces["spaces"] as? [String: Any] else {
-            throw PolycarpThemeError("surfaces.spaces is missing")
+        guard let surfaces = root["surfaces"] as? [String: Any], let spaces = surfaces[surface] as? [String: Any] else {
+            throw PolycarpThemeError("surfaces.\(surface) is missing")
         }
         func section(_ key: String) throws -> [String: Any] {
             guard let s = spaces[key] as? [String: Any] else { throw PolycarpThemeError("\(key) is missing") }
@@ -283,7 +284,8 @@ public struct PolycarpTheme: Equatable, Sendable {
             fast: try number(motion, "fast", 0, 1000), normal: try number(motion, "normal", 0, 1000), slow: try number(motion, "slow", 0, 1000),
             scaleFrom: try number(motion, "scale_from", 0.5, 1), reduced: reduced.boolValue)
         built.mono = mono
-        if checkContrast { try built.checkDrawnPairs() }
+        // The extension draws none of Spaces' own pairs.
+        if checkContrast, surface == "spaces" { try built.checkDrawnPairs() }
         return built
     }
 
@@ -409,9 +411,11 @@ public enum PolycarpThemeFile {
         case failed(String)
     }
 
-    public static func bytes(path: String, limit: Int, read: ReadCall = { fd, buf, n in Darwin.read(fd, buf, n) }) -> Bytes {
-        var fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC)
-        while fd < 0 && errno == EINTR { fd = open(path, O_RDONLY | O_NONBLOCK | O_CLOEXEC) }
+    /// `followLink: false` refuses a file that is itself a symbolic link.
+    public static func bytes(path: String, limit: Int, followLink: Bool = true, read: ReadCall = { fd, buf, n in Darwin.read(fd, buf, n) }) -> Bytes {
+        let flags = O_RDONLY | O_NONBLOCK | O_CLOEXEC | (followLink ? 0 : O_NOFOLLOW)
+        var fd = open(path, flags)
+        while fd < 0 && errno == EINTR { fd = open(path, flags) }
         if fd < 0 {
             let e = errno
             if e == ENOENT || e == ENOTDIR { return .missing }

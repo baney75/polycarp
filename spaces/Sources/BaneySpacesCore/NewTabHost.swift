@@ -99,6 +99,8 @@ public enum NewTabHost {
         public var filters: () -> Result<[FilterRule], SurfacesIssue>
         /// edits.json's edits, the same way.
         public var edits: () -> Result<[SurfaceValue], SurfacesIssue>
+        /// The theme in force for the extension, nil for none (`NewTabTheme`).
+        public var theme: () -> NewTabTheme?
         /// Keeps the page the person shared with their agents, or with null forgets it (`SharedPage`).
         public var sharePage: (SurfaceValue) -> Result<Void, SurfacesIssue>
 
@@ -112,10 +114,11 @@ public enum NewTabHost {
                     papers: PaperStore? = nil,
                     filters: @escaping () -> Result<[FilterRule], SurfacesIssue> = { .success([]) },
                     edits: @escaping () -> Result<[SurfaceValue], SurfacesIssue> = { .success([]) },
+                    theme: @escaping () -> NewTabTheme? = { nil },
                     sharePage: @escaping (SurfaceValue) -> Result<Void, SurfacesIssue> = { _ in .failure(SurfacesIssue("page", "can't be shared here")) }) {
             self.surfaces = surfaces; self.now = now; self.timeZone = timeZone
             self.bangs = bangs; self.sessions = sessions; self.focus = focus; self.browser = browser
-            self.papers = papers; self.filters = filters; self.edits = edits; self.sharePage = sharePage
+            self.papers = papers; self.filters = filters; self.edits = edits; self.theme = theme; self.sharePage = sharePage
         }
 
         /// The real one: surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` reads them (the app
@@ -140,7 +143,7 @@ public enum NewTabHost {
                 // Asked every 30 seconds while a browser is open, so a page shared an hour ago doesn't outstay it.
                 _ = SharedPage.load(path: SharedPage.path())
                 return Edits.load(path: Edits.path())
-            }, sharePage: { SharedPage.share($0, to: SharedPage.path()) })
+            }, theme: { NewTabTheme.load(path: PolycarpThemeFile.path()) }, sharePage: { SharedPage.share($0, to: SharedPage.path()) })
         }
     }
 
@@ -155,6 +158,7 @@ public enum NewTabHost {
         case "focus": return focus(object["id"], source)
         case "filters": return filters(source)
         case "edits": return edits(source)
+        case "theme": return json(withTheme(["ok": true], source))
         case "sharePage": return sharePage(request, source)
         case let op?: return failure("there is no request called \(op)")
         case nil: return failure("the request has no op")
@@ -182,10 +186,18 @@ public enum NewTabHost {
             reply["verse"] = NSNull()
         }
         reply["bangs"] = bangs.prefix(maxBangs).map(bangObject)
+        reply = withTheme(reply, source)
         let data = json(reply)
         if data.count <= maxMessage { return data }
         reply["bangs"] = Bangs.builtIn.map(bangObject)
         return json(reply)
+    }
+
+    /// `{"op":"theme"}`, and the same keys in `page` so a new tab needs one request: `theme` and its `stamp`, or neither
+    /// when no theme is in force.
+    private static func withTheme(_ reply: [String: Any], _ source: Source) -> [String: Any] {
+        guard let theme = source.theme() else { return reply }
+        return reply.merging(["theme": theme.object, "stamp": theme.stamp]) { $1 }
     }
 
     /// A bang as the page reads it: trigger, name, url with {q}, home when it has one, agent.
