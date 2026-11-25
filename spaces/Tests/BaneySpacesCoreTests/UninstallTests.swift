@@ -247,13 +247,10 @@ final class UninstallTests: XCTestCase {
         try write("Applications/AeroSpace.app/Contents/Info.plist", "")
         try write("Library/Application Support/BaneySpaces/aerospace-start-at-login", "")
         try write("Library/Application Support/BaneySpaces/aerospace-login-item", path("Applications/AeroSpace.app").path)
-        let suiteName = "com.baney.test.\(UUID().uuidString)"
-        defer { UserDefaults(suiteName: suiteName)?.removePersistentDomain(forName: suiteName) }
+        let old = try defaultsSuite(), new = try defaultsSuite()
         let outcome = SettingsImport.run(legacyDir: path("Library/Application Support/BaneySpaces"),
                                          newDir: path("Library/Application Support/Polycarp"),
-                                         legacyDefaults: UserDefaults(suiteName: suiteName)!, legacyDomain: suiteName,
-                                         newDefaults: UserDefaults(suiteName: suiteName + ".new")!)
-        defer { UserDefaults(suiteName: suiteName + ".new")?.removePersistentDomain(forName: suiteName + ".new") }
+                                         legacyDefaults: old.defaults, legacyDomain: old.name, newDefaults: new.defaults)
         guard case .imported = outcome else { return XCTFail("\(outcome)") }
         let out = try uninstall()
         XCTAssertTrue(try String(contentsOf: path(".aerospace.toml"), encoding: .utf8).contains("start-at-login = true"))

@@ -84,7 +84,7 @@ final class AppearanceTests: XCTestCase {
     }
 
     func testSavedInOneUserDefaultsKey() throws {
-        let suite = UserDefaults(suiteName: "AppearanceTests-\(UUID().uuidString)")!
+        let suite = try defaultsSuite().defaults
         XCTAssertEqual(AppearanceSettings.load(from: suite), AppearanceSettings())
         var s = AppearanceSettings()
         s.palette = .mono
