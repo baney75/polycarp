@@ -241,6 +241,10 @@ struct LauncherActions {
     var sendGroup: (BrowserPeer, BrowserRow, Int) -> Void = { _, _, _ in }
     /// An empty tab in a browser, on this workspace.
     var newTab: (BrowserPeer) -> Void = { _ in }
+    /// The person's web apps, opening one, and the page in front on this workspace.
+    var webApps = WebAppStore.shared
+    var openWebApp: (WebApp) -> Void = { _ in }
+    var frontPage: () -> BrowserWindows.Front? = { nil }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -700,13 +704,16 @@ final class LauncherModel: ObservableObject {
                 if site?.sure == true { out += siteItems(q) }
                 out += provided.top.map(providedItem)
                 let ranked = rankedApps(q).prefix(8)
-                let sessions = actions.sessionItems(q).prefix(8)
+                let found = actions.sessionItems(q).prefix(8)
                 let hits = actions.browserHits(q)
-                let listed = Set(sessions.map { String($0.id.dropFirst("session:".count)) })
+                let listed = Set(found.map { String($0.id.dropFirst("session:".count)) })
+                let behind = BrowserListing.behind(hits, listed: listed)
+                let sessions = found.map { item in behind[String(item.id.dropFirst("session:".count))].map { asTab(item, $0) } ?? item }
                 let pages = browserItems(hits, listed: listed)
                 // Apps that answer better than the best page shown go above the pages; the rest go below.
                 let above = BrowserListing.above(hits, listed: listed, apps: ranked.map(\.score))
                 out += appItems(ranked.prefix(above).map(\.app), q, limit: 8)
+                out += webAppItems(q)
                 if above < ranked.count {
                     out += pages
                     out += appItems(ranked.dropFirst(above).map(\.app), q, limit: 8, section: "Other Apps")
@@ -737,7 +744,7 @@ final class LauncherModel: ObservableObject {
                                         subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
                                         badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
             }
-        case .apps: out = appItems(q.isEmpty ? apps : rankedApps(q).map(\.app), q, limit: 500)
+        case .apps: out = webAppItems(q) + appItems(q.isEmpty ? apps : rankedApps(q).map(\.app), q, limit: 500)
         case .files: out = fileItems()
         case .install: out = installItems(q)
         case .remove: out = removeItems(q)
@@ -934,14 +941,58 @@ final class LauncherModel: ObservableObject {
     /// A browser's tabs, bookmarks, visited pages and downloads. Their icons are the browser's and a symbol.
     private func browserItems(_ hits: [BrowserHit], listed: Set<String>) -> [LauncherItem] {
         BrowserListing.rows(hits, listed: listed, app: Self.appName).map { r in
-            LauncherItem(id: "page:" + r.hit.id, section: "Browser", title: r.title, subtitle: r.subtitle,
+            let make = makeAction(r.hit)
+            return LauncherItem(id: "page:" + r.hit.id, section: "Browser", title: r.title, subtitle: r.subtitle,
                          icon: (r.hit.row.source == .downloads ? nil : actions.siteIcon(r.hit)).map { .image($0) }
                              ?? r.symbol.map { .symbol($0) } ?? .file(SessionController.appPath(r.hit.peer.bundleID)), badge: r.badge,
                          run: { [weak self] in
                              self?.close()
                              self?.actions.openBrowser(r.hit)
-                         })
+                         }, alternate: make, alternateTitle: make == nil ? "" : "Make This an App")
         }
+    }
+
+    /// ⌘↩ on a page that can be an app.
+    private func makeAction(_ hit: BrowserHit) -> (() -> Void)? {
+        WebApps.fits(hit.row) ? { [weak self] in self?.makeApp(of: hit.row, in: hit.peer) ?? () } : nil
+    }
+
+    /// A session row for a tab the extension also knows: it is the one listed, so it does what the browser row would.
+    private func asTab(_ item: LauncherItem, _ hit: BrowserHit) -> LauncherItem {
+        var item = item
+        if hit.row.app != nil { item.badge = "App" }
+        if item.alternate == nil, let make = makeAction(hit) { item.alternate = make; item.alternateTitle = "Make This an App" }
+        return item
+    }
+
+    private func webAppItems(_ q: String) -> [LauncherItem] {
+        let all = actions.webApps.list
+        return (q.isEmpty ? all.sorted { $0.name < $1.name } : WebApps.find(q, in: all)).map { app in
+            LauncherItem(id: "webapp:" + app.id, section: "Apps", title: app.name, subtitle: "Web app · \(Self.appName(app.browser))",
+                         icon: actions.webApps.image(app).map { .image($0) } ?? .symbol("macwindow"),
+                         run: { [weak self] in self?.close(); self?.actions.openWebApp(app) },
+                         alternate: { [weak self] in self?.removeApp(app) }, alternateTitle: "Remove")
+        }
+    }
+
+    /// Asks what to call it: a page's title says too much, or too little.
+    private func makeApp(of row: BrowserRow, in peer: BrowserPeer) {
+        let hit = BrowserHit(BrowserWindows.Front(peer, row))
+        _ = actions.siteIcon(hit)
+        let name = NSTextField(string: WebApps.name(title: row.title, site: row.site))
+        name.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        guard ask("Make This an App", "It opens \(row.site) in a window of its own in \(Self.appName(peer.bundleID)). Its name in the launcher:", button: "Make App", entry: name) else { return }
+        done(actions.webApps.add(name.stringValue, url: row.url, browser: peer.bundleID, icon: actions.siteIcon(hit)), "\(name.stringValue) is an app")
+    }
+
+    private func removeApp(_ app: WebApp) {
+        guard ask("Remove \(app.name)?", "It leaves the launcher. Nothing in \(Self.appName(app.browser)) changes.", button: "Remove", destructive: true) else { return }
+        done(actions.webApps.remove(app), "\(app.name) is removed")
+    }
+
+    private func done(_ wrong: String?, _ said: String) {
+        Toast.show(wrong ?? said, symbol: wrong == nil ? "macwindow" : "exclamationmark.triangle.fill")
+        rebuild()
     }
 
     /// "trip planning 3": that tab group, sent to workspace 3.
@@ -1195,11 +1246,20 @@ final class LauncherModel: ObservableObject {
             ("New Terminal", "plus", "A new Ghostty window", { [weak self] in self?.actions.newTerminal() }),
             ("New Tab Here", "plus.square.on.square", actions.searcher().map { "In \(Self.appName($0.bundleID)), on this workspace" } ?? "",
              { [weak self] in if let peer = self?.actions.searcher() { self?.actions.newTab(peer) } }),
+            ("Make This Page an App", "macwindow.badge.plus", "The page in front on this workspace, in a window of its own",
+             { [weak self] in if let f = self?.actions.frontPage() { self?.makeApp(of: f.tab, in: f.peer) } }),
             ("Show All Workspaces", "square.grid.3x3", "", { [weak self] in self?.actions.showOverview() }),
             ("Bring Every Window Back", "arrow.uturn.backward.circle", "Gathers every window onto workspace 1", { [weak self] in self?.actions.bringBack() }),
             ("Polycarp Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
         ]
-        return all.filter { $0.0 != "New Tab Here" || actions.searcher() != nil }.filter { q.isEmpty || Fuzzy.score(q, $0.0) != nil }.map { c in
+        func here(_ name: String) -> Bool {
+            switch name {
+            case "New Tab Here": actions.searcher() != nil
+            case "Make This Page an App": actions.frontPage().map { WebApps.fits($0.tab) } ?? false
+            default: true
+            }
+        }
+        return all.filter { (q.isEmpty || Fuzzy.score(q, $0.0) != nil) && here($0.0) }.map { c in
             LauncherItem(id: "cmd:\(c.0)", section: "System", title: c.0, subtitle: c.2, icon: .symbol(c.1),
                          run: { [weak self] in self?.close(); DispatchQueue.main.async(execute: c.3) })
         }
@@ -1312,13 +1372,15 @@ final class LauncherModel: ObservableObject {
     }
 
     /// A yes-or-no question over the launcher. The app you were in comes back afterwards.
-    private func ask(_ title: String, _ detail: String, button: String, destructive: Bool = false) -> Bool {
+    private func ask(_ title: String, _ detail: String, button: String, destructive: Bool = false, entry: NSTextField? = nil) -> Bool {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = detail
         alert.addButton(withTitle: button)
         alert.addButton(withTitle: "Cancel")
         alert.buttons[0].hasDestructiveAction = destructive
+        alert.accessoryView = entry
+        alert.window.initialFirstResponder = entry
         let previous = NSWorkspace.shared.frontmostApplication
         alertOpen = true
         NSApp.activate(ignoringOtherApps: true)

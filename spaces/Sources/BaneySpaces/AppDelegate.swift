@@ -26,7 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         s.pages = { [weak self] pid, windows in
             guard let self, let app = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return [:] }
             return BrowserHub.shared.fronts(of: app, windows, items: self.session.engine.items)
-                .mapValues { ($0.tab.title, BrowserHub.shared.icon($0.tab, $0.peer)) }
+                .mapValues { ($0.tab.title, BrowserHub.shared.icon($0.tab, $0.peer), $0.tab.app != nil) }
         }
         return s
     }()
@@ -232,6 +232,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let there = { _ = BrowserHub.shared.open([:], in: peer) }
             if self?.openHere([:], in: peer.bundleID, orElse: there) != true { there() }
         }
+        a.openWebApp = { [weak self] in self?.open($0) }
+        a.frontPage = { [weak self] in self.flatMap { $0.page(on: $0.spaces.model.current)?.now.front } }
         Launcher.openHere = { [weak self] url, orElse in
             guard let browser = SessionController.mainBrowser() else { return false }
             return self?.openHere(["url": url.absoluteString], in: browser, orElse: orElse) ?? false
@@ -995,6 +997,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return true
     }
 
+    /// Goes to a web app's window, or opens it on the workspace the person is on, starting its browser if it has to.
+    private func open(_ app: WebApp) {
+        let hub = BrowserHub.shared
+        if let tab = hub.tab(of: app) { return openBrowser(BrowserHit(tab)) }
+        guard let url = URL(string: app.url), let at = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.browser) else { return NSSound.beep() }
+        // Without the extension it is a page like any other.
+        let plainly = { NSWorkspace.shared.open([url], withApplicationAt: at, configuration: NSWorkspace.OpenConfiguration()) }
+        guard let pid = NSRunningApplication.runningApplications(withBundleIdentifier: app.browser).first?.processIdentifier else {
+            NSWorkspace.shared.openApplication(at: at, configuration: NSWorkspace.OpenConfiguration())
+            return hub.open(app, within: 15) { plainly() }
+        }
+        guard !hub.peers(of: app.browser).isEmpty else { return plainly() }
+        guard started else { _ = hub.open(app); return }
+        spaces.openWindowHere(pid, by: { DispatchQueue.main.sync { hub.open(app) } }, orElse: { plainly() })
+    }
+
     /// What the bar's `page` module shows for a workspace.
     private func page(on n: Int) -> TopBarModel.Page? {
         let hub = BrowserHub.shared
@@ -1020,7 +1038,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         func windows() -> [Spaces.Entry] { Workspaces.range.flatMap { spaces.entries(on: $0) }.filter { $0.pid == pid } }
         let all = windows()
         let known = BrowserHub.shared.fronts(of: app, all.map { (id: $0.id, title: $0.title) }, items: session.engine.items)
-        if let there = spaces.entries(on: n).compactMap({ known[$0.id] }).first(where: { $0.peer == peer }) {
+        if let there = spaces.entries(on: n).compactMap({ known[$0.id] }).first(where: { $0.peer == peer && !$0.tab.popup }) {
             if !BrowserHub.shared.send(group, in: peer, to: there.tab.window) { NSSound.beep() }
             return
         }

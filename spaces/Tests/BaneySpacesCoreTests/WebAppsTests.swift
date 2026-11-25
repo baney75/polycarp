@@ -61,15 +61,24 @@ final class WebAppsTests: XCTestCase {
     }
 
     func testATabSaysItsAppAndAWindowWithNoTabStripTakesNoTab() throws {
-        func rows(_ o: [String: Any]) -> [BrowserRow] {
+        func rows(_ o: [String: Any], _ source: String = "tabs") -> [BrowserRow] {
             let base: [String: Any] = ["id": 1, "window": 4, "title": "Inbox", "url": "https://mail.example/", "incognito": false, "front": true]
-            let m = BrowserMessage(try! JSONSerialization.data(withJSONObject: ["op": "browser.rows", "source": "tabs", "first": true, "last": true, "rows": [base.merging(o) { $1 }]]))
+            let m = BrowserMessage(try! JSONSerialization.data(withJSONObject: ["op": "browser.rows", "source": source, "first": true, "last": true, "rows": [base.merging(o) { $1 }]]))
             guard case .rows(let rows, _, _)? = m?.change else { return [] }
             return rows
         }
         XCTAssertEqual(rows([:]).map(\.popup), [false])
         XCTAssertEqual(rows(["popup": true, "app": "mail-1"]).map(\.app), ["mail-1"])
         for bad in ["A", "", "a b", String(repeating: "a", count: 41)] { XCTAssertEqual(rows(["app": bad]).map(\.app), [nil], bad) }
+        XCTAssertTrue(WebApps.fits(rows([:])[0]))
+        XCTAssertFalse(WebApps.fits(rows(["app": "mail-1"])[0]), "an app already")
+        XCTAssertFalse(WebApps.fits(rows(["url": "chrome://settings"])[0]))
+        for (source, fits) in [("bookmarks", true), ("history", true), ("groups", false), ("downloads", false)] {
+            XCTAssertEqual(rows([:], source).map(WebApps.fits), [fits], source)
+        }
+        for (row, badge) in [(rows([:])[0], "Tab"), (rows(["app": "mail-1"])[0], "App"), (rows(["app": "mail-1", "audible": true])[0], "Playing")] {
+            XCTAssertEqual(BrowserListing.rows([BrowserHit(BrowserWindows.Front(one, row))], listed: [], app: { $0 }).map(\.badge), [badge])
+        }
         let app = BrowserWindows.Front(one, rows(["popup": true, "app": "mail-1"])[0]), plain = BrowserWindows.Front(one, rows([:])[0])
         XCTAssertEqual(BrowserWindows.place(here: [7, 8], all: [7, 8], known: [7: app, 8: plain], peers: [one]), .tab(one, window: 4, id: 8))
         XCTAssertEqual(BrowserWindows.place(here: [7], all: [7, 8], known: [7: app], peers: [one]), .window(one), "only an app's window is here")

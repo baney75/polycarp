@@ -54,4 +54,6 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
 - **R-B15 Web apps.** "Make This an App" keeps a page's name, address, browser and icon in `webapps.json`, because the person
   made it; removing the app removes them, and Polycarp keeps nothing else of the browser's. An app is one page in one browser.
   It opens in a window with no tab strip, and one that is open is gone to instead. The extension says which window is which
-  app's until the browser quits. A window with no tab strip never takes a new tab.
+  app's until the browser quits. A window with no tab strip never takes a new tab. The launcher lists apps by name above
+  the pages and opens one on the workspace the person is on, starting its browser if it has to; without the extension it opens
+  as any page does. Cmd-Tab shows an app's window with the site's icon in place of the browser's.
