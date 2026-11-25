@@ -834,6 +834,39 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertFalse(view.contains("lookup") || view.contains("computed("), "no tile asks the cascade")
     }
 
+    func testTheNotificationsBookHoldsEveryPartAndWhatItAdds() {
+        let n = StyleBook(sheet("""
+        notifications { color: #010101; padding: 4px 6px; }
+        notifications .row:hover { color: #020202; background: #333333; }
+        notifications .title { color: #030303; }
+        notifications .title:hover { color: #040404; }
+        notifications .button:hover { color: #050505; }
+        notifications .heading { font-size: 24px; }
+        notifications .footer { padding: 10px; }
+        notifications .time { display: none; }
+        """), dark: true, roles: [:]).notifications
+        func hex(_ r: NotificationsStyles.Row) -> [String?] { [r.box, r.title, r.text].map { $0.color?.hex } }
+        XCTAssertEqual(hex(n.row(hover: false)), ["#010101", "#030303", "#010101"])
+        XCTAssertEqual(hex(n.row(hover: true)), ["#020202", "#040404", "#020202"])
+        XCTAssertEqual([n.button(hover: false), n.button(hover: true)].map { $0.color?.hex }, ["#010101", "#050505"])
+        XCTAssertEqual([n.heading, n.section, n.footer].map { $0.color?.hex }, Array(repeating: "#010101", count: 3))
+        XCTAssertTrue(n.row(hover: false).time.isHidden)
+        XCTAssertTrue(n.row(hover: true).marked)
+        XCTAssertFalse(n.row(hover: false).marked)
+        // 8 of panel padding, 12 of footer padding over its own 8, and 10 points of heading at 1.3.
+        XCTAssertEqual(n.more, 8 + 12 + 13, accuracy: 0.001)
+        XCTAssertEqual(StyleBook.empty.notifications.more, 0)
+    }
+
+    func testTheNotificationsDrawFromTheSheet() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/NoticePanel.swift")
+        for part in ["styles.book.notifications", "sheet.panel", "sheet.heading", "sheet.section", "sheet.icon", "sheet.footer", "- sheet.more", "c.box", "c.title", "c.text", "c.time",
+                     "style: sheet.button", "style: styles.book.notifications.button", "style?(over) ?? .empty"] {
+            XCTAssertTrue(code.contains(part), part)
+        }
+        XCTAssertFalse(code.contains("lookup") || code.contains("computed("), "no row asks the cascade")
+    }
+
     func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("StyleSheetStore.shared.start("), "AppDelegate starts the style sheet store")

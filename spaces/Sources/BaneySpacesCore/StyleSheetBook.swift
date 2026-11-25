@@ -72,6 +72,43 @@ public final class StyleBook {
     public private(set) lazy var launcher = LauncherStyles(lookup)
     public private(set) lazy var switcher = SwitcherStyles(lookup)
     public private(set) lazy var overview = OverviewStyles(lookup)
+    public private(set) lazy var notifications = NotificationsStyles(lookup)
+}
+
+/// The list the bell opens.
+public final class NotificationsStyles {
+    /// A notification and what it holds, under the pointer or not.
+    public final class Row {
+        public let box, title, text, time: ComputedStyle
+        /// The sheet marks this state itself (`ComputedStyle.marks`).
+        public let marked: Bool
+
+        init(_ l: StyleLookup, _ states: Set<StyleState>) {
+            func part(_ name: String) -> ComputedStyle { l.computed(surface: .notifications, part: name, states: states) }
+            box = part("row"); title = part("title"); text = part("text"); time = part("time")
+            marked = box.marks(over: l.computed(surface: .notifications, part: "row"))
+        }
+    }
+
+    public let panel, heading, section, icon, footer: ComputedStyle
+    /// What the sheet's padding and larger text add to the panel's height above and below the list.
+    public let more: Double
+    private let rows: [Row]
+    private let buttons: [ComputedStyle]
+
+    init(_ l: StyleLookup) {
+        func part(_ name: String, _ states: Set<StyleState> = []) -> ComputedStyle { l.computed(surface: .notifications, part: name, states: states) }
+        panel = l.computed(surface: .notifications)
+        heading = part("heading"); section = part("section"); icon = part("icon"); footer = part("footer")
+        rows = [Row(l, []), Row(l, [.hover])]
+        buttons = [part("button"), part("button", [.hover])]
+        func down(_ c: ComputedStyle, _ own: Double) -> Double { c.padding.map { max(0, $0.top + $0.bottom - own) } ?? 0 }
+        func grown(_ c: ComputedStyle, _ own: Double) -> Double { max(0, (c.fontSize ?? own) - own) * 1.3 }
+        more = down(panel, 0) + down(footer, 8) + grown(heading, 14) + grown(footer, 12) + buttons.map { grown($0, 12) }.max()!
+    }
+
+    public func row(hover: Bool) -> Row { rows[hover ? 1 : 0] }
+    public func button(hover: Bool) -> ComputedStyle { buttons[hover ? 1 : 0] }
 }
 
 /// The overview of every workspace.
