@@ -77,3 +77,13 @@ test('a bad edit is listed, not thrown, and the rest still apply', () => {
 test('every change has a line a person can read', () => {
   for (const c of cases.accept) for (const ch of E.check(c.edit).edit.changes) assert.ok(E.describe(ch).length > 4, c.case);
 });
+
+test('Chrome can read every script it puts in a page', () => {
+  // A content script holding a noncharacter (U+FFFE, U+FFFF) is not UTF-8 to Chrome, which then loads no part of the extension.
+  const root = new URL('../', import.meta.url);
+  const manifest = JSON.parse(fs.readFileSync(new URL('manifest.json', root)));
+  for (const f of new Set(manifest.content_scripts.flatMap((c) => [...(c.js || []), ...(c.css || [])]))) {
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(fs.readFileSync(new URL(f, root)));
+    assert.ok(![...text].some((c) => (c.codePointAt(0) & 0xfffe) === 0xfffe || (c >= "\ufdd0" && c <= "\ufdef")), f);
+  }
+});

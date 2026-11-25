@@ -8,7 +8,7 @@ An edit stays with the sites it names and applies each time you open them. It ch
 
 Agents' edits are in `edits.json`, beside `filters.json` in `~/Library/Application Support/Polycarp/`. The extension asks Polycarp for them through its native host, so they work on a Mac with Polycarp installed. The edits you make in the browser stay in the browser.
 
-Open pages pick a change up within 30 seconds, new pages at once. The first time an agent's edit reaches a page, the page says so and offers Undo.
+Open pages pick a change up within 30 seconds, new pages at once.
 
 ## From a terminal
 
@@ -50,10 +50,10 @@ An edit needs at least one change or `css`. Each change names where it acts with
 | `style` | `style`: `{property: value}` | Sets CSS properties. |
 | `text` | `text`, `find` | Replaces the words, or only the words in `find`. |
 | `attr` | `name`, `value` | Sets `alt`, `aria-label`, `dir`, `lang` or `title`. `null` removes it. |
-| `move` | `to`, `where` | Moves the first match `before`, `after`, or inside `to` as its `first` or `last` part. |
+| `move` | `to`, `where` | Shows a copy of the first match `before`, `after`, or inside `to` as its `first` or `last` part, and hides the page's own. |
 | `insert` | `where`, `blocks` | Adds a note: `heading`, `text`, `list` and `link` blocks. Plain words, never HTML. |
 
-`hide` and `insert` hold up best. A page that rebuilds itself, as web apps do, can undo a `move` or trip over one, and a part that holds a button, a field, a frame or an editor stays where it is.
+`hide` and `insert` hold up best. A moved part is a copy, so the page keeps its own where it put it and can't trip over the move. The copy follows the original, its links work, and the edits that hide, restyle or reword the part show in it. The page's scripts don't see it, and it has ids of its own, so a stylesheet (an edit's `css` too) that names the part's id doesn't reach it. A note can't go inside a part that moved. A part that holds a button, a field, a frame, a video, an editor or an element of the page's own making stays where it is.
 
 Styles may not load anything, because a stylesheet that can load something can tell another site what is on the page. So `css` and style values may not hold a backslash, `url(`, `image(` or another function that loads, or any at-rule but `@media`, `@supports`, `@container`, `@keyframes`, `@layer` and `@starting-style`.
 
