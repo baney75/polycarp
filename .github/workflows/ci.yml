@@ -260,10 +260,14 @@ jobs:
           key: spaces-bundle
       - name: Bundle the app
         run: BANEYSPACES_ADHOC=1 BANEYSPACES_ARM64_ONLY=1 scripts/bundle.sh
-      - name: The app is signed and carries no browser helper or computer use engine (they were removed)
+      - name: The app is signed, carries what Polycarp Browser is built from, and no computer use engine (it was removed)
         run: |
           codesign --verify --deep --strict build/Polycarp.app
-          test ! -e build/Polycarp.app/Contents/Resources/browser
+          cd build/Polycarp.app/Contents/Resources/browser
+          test "$(ls | LC_ALL=C sort | tr '\n' ' ')" = "LICENSE changes.toml icon-32.png icon.icns launcher signing-identity.sh "
+          test -x launcher
+          for part in *; do test -s "$part"; done
+          cd "$GITHUB_WORKSPACE/spaces"
           test ! -e build/Polycarp.app/Contents/Frameworks
   ci-ok:
     if: always()

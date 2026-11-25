@@ -2,9 +2,10 @@
 //! Polycarp Browser's main program. It becomes Helium's own program, which sits beside it, with Polycarp's extension
 //! loaded. It keeps no state and starts nothing else.
 
-#[cfg(unix)]
+use std::ffi::OsString;
+use std::os::unix::process::CommandExt;
+
 fn main() {
-    use std::os::unix::process::CommandExt;
     let error = match std::env::current_exe().and_then(std::fs::canonicalize) {
         Ok(me) => {
             let contents = me.ancestors().nth(2).unwrap_or(&me);
@@ -19,38 +20,29 @@ fn main() {
     std::process::exit(126);
 }
 
-#[cfg(not(unix))]
-fn main() {}
-
-use std::ffi::OsString;
-
-const LOAD: &str = "load-extension=";
-
 /// What the person gave, with Polycarp's extension among the ones to load. The browser restarts itself with the
 /// arguments it was started with, so the extension may be there already. Remote debugging hands the whole browser to
-/// any program on the Mac, so it is never turned on.
-#[cfg_attr(not(unix), allow(dead_code))]
+/// any program on the Mac, so it is never turned on. Read as Chromium reads them: without the space around them.
 fn arguments(extension: OsString, given: impl Iterator<Item = OsString>) -> Vec<OsString> {
     let mut load = vec![extension.clone()];
     let mut rest = Vec::new();
     let mut switches = true;
     for arg in given {
         let text = arg.to_string_lossy();
+        let text = text.trim_matches(|c| matches!(c, ' ' | '\t'..='\r'));
         switches &= text != "--";
+        let switch = text.trim_start_matches('-');
+        let (name, value) = switch.split_once('=').unwrap_or((switch, ""));
         if !switches || !text.starts_with('-') {
             rest.push(arg);
-        } else if let Some(more) = text.trim_start_matches('-').strip_prefix(LOAD) {
-            let more = more.split(',').filter(|m| !m.is_empty());
+        } else if name == "load-extension" {
+            let more = value.split(',').filter(|m| !m.is_empty());
             load.extend(more.map(OsString::from).filter(|m| *m != extension));
-        } else if !text
-            .trim_start_matches('-')
-            .starts_with("remote-debugging-")
-        {
+        } else if !name.starts_with("remote-debugging-") {
             rest.push(arg);
         }
     }
-    let mut first = OsString::from("--");
-    first.push(LOAD);
+    let mut first = OsString::from("--load-extension=");
     for (i, one) in load.iter().enumerate() {
         if i > 0 {
             first.push(",");
@@ -76,6 +68,12 @@ mod tests {
         assert_eq!(got(&[]), ["--load-extension=/a/ext"]);
         let mine = ["-load-extension=/b,/a/ext", "https://example.com"];
         assert_eq!(got(&mine), ["--load-extension=/a/ext,/b", mine[1]]);
+        // A bare one after ours would take its place.
+        assert_eq!(got(&["--load-extension"]), ["--load-extension=/a/ext"]);
+        assert_eq!(
+            got(&["\t--load-extension=/b "]),
+            ["--load-extension=/a/ext,/b"]
+        );
         let once: Vec<String> = got(&mine);
         let again: Vec<&str> = once.iter().map(String::as_str).collect();
         assert_eq!(got(&again), once);
@@ -86,6 +84,8 @@ mod tests {
         let given = [
             "--remote-debugging-port=9222",
             "-remote-debugging-pipe",
+            " --remote-debugging-port=9222",
+            "\u{b}--remote-debugging-port=9222\n",
             "x",
         ];
         assert_eq!(got(&given), ["--load-extension=/a/ext", "x"]);
@@ -98,5 +98,7 @@ mod tests {
             got(&given),
             ["--load-extension=/a/ext", "--", "--load-extension=/b"]
         );
+        let given = [" -- ", "--load-extension=/b"];
+        assert_eq!(got(&given)[1..], given);
     }
 }

@@ -338,7 +338,7 @@ public enum NewTabHost {
         public var failed: [String] = []
 
         public var line: String {
-            if written.isEmpty && current.isEmpty && failed.isEmpty { return "newtab host: no Helium, Chrome or Chromium folder, nothing registered" }
+            if written.isEmpty && current.isEmpty && failed.isEmpty { return "newtab host: no Polycarp Browser, Helium, Chrome or Chromium folder, nothing registered" }
             var parts: [String] = []
             if !written.isEmpty { parts.append("written for \(written.joined(separator: ", "))") }
             if !current.isEmpty { parts.append("already current for \(current.joined(separator: ", "))") }
