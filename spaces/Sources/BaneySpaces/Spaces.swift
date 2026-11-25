@@ -61,6 +61,8 @@ final class Spaces {
     private var seenOnScreen: [WindowID: pid_t] = [:]
     /// The windows in `pendingLayout` a switch held because their app didn't answer (`holdUnanswered`), not saved ones.
     private var heldWindows = Set<WindowID>()
+    /// How often a workspace was applied again for a window its switch couldn't bring home (`LeftAway`).
+    private var awayTries: [WindowID: Int] = [:]
     /// Accessibility scans run here, never on the main thread (2026-11-21, `ScanPlan`).
     private static let scanQueue = DispatchQueue(label: "com.baney.polycarp.scan", qos: .userInitiated)
     /// Short Accessibility questions (which window has focus, has a new window appeared), asked off the main thread.
@@ -467,6 +469,12 @@ final class Spaces {
             let hiddenByUs = saved.hiddenApps.contains(entry.pid) && NSRunningApplication(processIdentifier: entry.pid)?.isHidden == true
             returned = returned || UnansweredWindows.appliesAgain(workspaceShown: model.isShown(entry.workspace), appHiddenByUs: hiddenByUs)
         }
+        // An app that answers now had a window the last switch couldn't bring home: the workspace applies again.
+        if !switching {
+            let back = leftAway().filter { id in windows[id].map { fresh[$0.pid]?.answered == true } ?? false }
+            awayTries = LeftAway.counted(awayTries, tried: back, parked: Set(saved.frames.keys))
+            returned = returned || !back.isEmpty
+        }
         // A held window its app answered for in full without listing it as a window isn't one (an overlay): let it go.
         for id in Array(heldWindows) where pendingLayout[id].map({ answered.contains($0.pid) }) ?? true {
             pendingLayout[id] = nil
@@ -756,6 +764,25 @@ final class Spaces {
         }.keys)
     }
 
+    /// The windows of a workspace in sight that its switch couldn't bring home (`LeftAway`). It asks no app.
+    private func leftAway() -> Set<WindowID> {
+        guard !saved.frames.isEmpty else { return [] }
+        let shown = Set(saved.frames.keys.filter { windows[$0] != nil && model.workspace(of: $0).map(model.isShown) == true })
+        guard !shown.isEmpty else { return [] }
+        return LeftAway.windows(parked: Set(saved.frames.keys), shown: shown, frames: Windows.serverWindows().compactMapValues(\.bounds),
+                                screens: Windows.screens(), minimized: Set(details.filter(\.value.minimized).keys), tries: awayTries)
+    }
+
+    /// At the end of a switch: says which windows it left away, and asks their apps again when they may be asked.
+    private func noteLeftAway() {
+        awayTries = LeftAway.counted(awayTries, tried: [], parked: Set(saved.frames.keys))
+        let away = leftAway()
+        guard !away.isEmpty else { return }
+        let apps = Set(away.compactMap { windows[$0]?.appName })
+        Trace.log(LeftAway.line(apps: Array(apps), windows: away.count, workspace: model.current))
+        scheduleRetry()
+    }
+
     /// Re-reads apps that a scan couldn't, once they're willing to answer again, in the
     /// background between switches, so the wait never lands on a key press.
     private var retry: (work: DispatchWorkItem, due: Date)?
@@ -771,13 +798,14 @@ final class Spaces {
             self.retry = nil
             guard self.active else { return }
             self.watcher.retry()
-            guard let unsure = self.lastScan?.unsure, unsure.contains(where: Windows.isResponsive) else {
-                if self.lastScan?.unsure.isEmpty == false || self.watcher.missing { self.scheduleRetry() }
+            let waiting = (self.lastScan?.unsure ?? []).union(self.leftAway().compactMap { self.windows[$0]?.pid })
+            guard waiting.contains(where: Windows.isResponsive) else {
+                if !waiting.isEmpty || self.watcher.missing { self.scheduleRetry() }
                 return
             }
             if self.switching { return self.scheduleRetry() }
             // Only the apps that didn't answer are asked; the scan runs in the background and saves what it changes.
-            self.refresh(full: false, asking: unsure.filter(Windows.isResponsive), then: nil)
+            self.refresh(full: false, asking: waiting.filter(Windows.isResponsive), then: nil)
         }
         retry = (work, due)
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
@@ -2053,6 +2081,7 @@ final class Spaces {
             park(how, parkedApps: parkedApps, screens: screens, gen: gen) { [self] in
                 clock.mark(.parked)
                 clock.log(to: Spaces.folder.appendingPathComponent("timing.log"))
+                noteLeftAway()
                 persist()
                 finish()
             }
