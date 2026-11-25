@@ -8,6 +8,7 @@ not written here does not ship on one platform alone.
 | [workspaces.md](workspaces.md) | The workspace rules, each with an id (`R-S1`, ...) |
 | [launcher.md](launcher.md) | What the launcher finds and in what order (`R-L1`, ...), with its ranking table |
 | [player.md](player.md) | The built-in player: which files, the folder playlist, keys, speed and resume (`R-P1`, ...), and what Windows uses |
+| [default-apps.md](default-apps.md) | Which app does each job, and who decides (`R-D1`, ...) |
 | [keys.json](keys.json) | The key map per platform, and what Linux replaces in Omarchy |
 | [envelope.md](envelope.md) | The JSON envelope every CLI and MCP result uses, and the error codes |
 | [cli.md](cli.md) | The command family and which commands exist on which platform |
