@@ -53,6 +53,8 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   (`BarGeometry`, `BarSides`). Windows: not yet.
 - macOS: the marker at the workspace you're on slides when you switch, and the wheel over the numbers goes to the
   one before or after, one a trackpad gesture or wheel click and none while a trackpad glides (`BarScroll`). Windows: not yet.
+- macOS: two or more apps' status items fold behind a chevron that opens under the pointer, and stays open on a click
+  (`bar.tray`; `BarTray`). Windows has no tray yet.
 
 ## Colors and type
 

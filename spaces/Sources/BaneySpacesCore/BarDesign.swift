@@ -43,6 +43,25 @@ public enum BarSides {
     }
 }
 
+/// What the drawer in the `status` module holds and when it is open.
+public enum BarTray {
+    /// The places in the status row: your apps' items, which fold away, and macOS's own, which stay. Each keeps its
+    /// place in the list, which is what a click presses.
+    public static func split(_ items: [BarStatus.Item]) -> (apps: [Int], system: [Int]) {
+        let places = Array(items.indices)
+        return (places.filter { !items[$0].isSystem }, places.filter { items[$0].isSystem })
+    }
+
+    /// One item takes no more room than the button that would hide it, so it stays out.
+    public static func folds(_ apps: Int) -> Bool { apps > 1 }
+
+    /// How many of the drawer's items open over a row with this much room.
+    public static func open(_ apps: Int, room: Double) -> Int { max(0, min(apps, Int(room / BarGeometry.slot))) }
+
+    /// How long the pointer can leave the drawer before it closes.
+    public static let linger = 0.35
+}
+
 /// The wheel over the workspaces: one workspace a step, however the wheel reports itself.
 public struct BarScroll: Equatable, Sendable {
     private var carried = 0.0

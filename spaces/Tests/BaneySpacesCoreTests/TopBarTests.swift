@@ -130,6 +130,19 @@ final class TopBarTests: XCTestCase {
         XCTAssertTrue(parts.contains("override func hitTest(_ point: NSPoint) -> NSView? { nil }"), "the hover area takes no clicks")
     }
 
+    func testTheTrayFoldsAppsAndKeepsMacOSsOwn() {
+        let items = [BarStatus.Item(owner: "com.example.a"), BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.wifi"),
+                     BarStatus.Item(owner: "com.example.b")]
+        let parts = BarTray.split(items)
+        XCTAssertEqual(parts.apps, [0, 2], "each keeps the place a click presses")
+        XCTAssertEqual(parts.system, [1])
+        XCTAssertFalse(BarTray.folds(0)); XCTAssertFalse(BarTray.folds(1), "a lone item stays out"); XCTAssertTrue(BarTray.folds(2))
+        XCTAssertEqual(BarTray.open(9, room: 100), 3, "only whole slots")
+        XCTAssertEqual(BarTray.open(2, room: 500), 2)
+        XCTAssertEqual(BarTray.open(2, room: -10), 0)
+        XCTAssertEqual(Surfaces.defaults.bar.tray, .drawer)
+    }
+
     func testTheWheelStepsOneWorkspaceAtATime() {
         var wheel = BarScroll()
         XCTAssertEqual(wheel.step(-1, precise: false, at: 0), 1, "a click down is the next")

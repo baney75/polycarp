@@ -149,6 +149,7 @@ for none, `from` `paper` or the place's own path). Error codes, beyond the surfa
 | `bar.modules.right` | `["status","\|","notifications"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
+| `bar.tray` | `"drawer"` | `drawer` (your apps' status items fold behind a chevron) or `row` (they stay in the row with macOS's). |
 
 Module ids: `mark`, `workspaces`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
 `battery`, `network`, `notifications`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
@@ -166,7 +167,7 @@ What each one draws:
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
-| `status` | The status items of macOS and your apps, in the macOS bar's order, in one row like Waybar's tray: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Two or more of your apps' fold into a drawer behind a chevron: point at it and they slide out, click it and they stay out. With `bar.tray` row they are all in one row. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
 | `notifications` | A bell, with how many notifications are new. Click it for the list, by app: open one, dismiss it, clear an app or all of them, keep an app quiet, or open Notification Center. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
 
