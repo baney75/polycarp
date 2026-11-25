@@ -6,6 +6,7 @@
 | `spaces/` | MIT |
 | `spaces/extension/` | GPL-3.0-or-later |
 | `browser/` | GPL-3.0-or-later |
+| `plugins/omarchy/` | MIT |
 
 Each directory keeps its own `LICENSE` file, and those files govern that directory. `spaces/extension/` is
 GPL-3.0-or-later because it bundles the eSpeak NG phonemizer (GPL-3.0); its fonts and other libraries keep their own
