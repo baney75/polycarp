@@ -33,7 +33,7 @@ public enum Edits {
     /// Attributes an edit may set: words a person reads, never a target, a source, a handler or a form's value.
     public static let attributes = ["alt", "aria-label", "dir", "lang", "title"]
     /// Elements only hide and style may act on.
-    public static let never = ["embed", "iframe", "input", "noscript", "object", "option", "script", "select", "style", "template", "textarea"]
+    public static let never = ["base", "embed", "iframe", "input", "link", "meta", "noscript", "object", "option", "script", "select", "source", "style", "template", "textarea", "track"]
 
     public static func path(surfacesFile: String = SurfacesFile.path()) -> String {
         URL(fileURLWithPath: surfacesFile).deletingLastPathComponent().appendingPathComponent(name).path
@@ -187,7 +187,7 @@ public enum Edits {
         for (i, item) in list.enumerated() {
             let at = "\(p)\(key)[\(i)]"
             guard let s = item.string, s.utf16.count <= chars, !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw SurfacesIssue(at, "must be a string of 1 to \(chars) characters") }
-            do { let n = try norm(s); if !unique || !out.contains(n) { out.append(n) } } catch let w as Why { throw SurfacesIssue(at, w.message) }
+            do { let n = try norm(s); if !unique || !out.contains(where: { $0.utf8.elementsEqual(n.utf8) }) { out.append(n) } } catch let w as Why { throw SurfacesIssue(at, w.message) }
         }
         return out
     }
@@ -241,7 +241,8 @@ public enum Edits {
 
     static func webURL(_ s: String) -> Bool {
         guard s.range(of: "^https?://[A-Za-z0-9.-]+(:[0-9]+)?([/?#][^\\s\\\\]*)?\\z", options: .regularExpression) != nil, !control(s) else { return false }
-        return URLComponents(string: s)?.host?.isEmpty == false
+        guard let u = URLComponents(string: s), u.host?.isEmpty == false else { return false }
+        return (u.port ?? 0) <= 65535
     }
 
     /// Why a stylesheet or a value is refused, or nil. A stylesheet that can load something from the network can tell
@@ -252,7 +253,7 @@ public enum Edits {
         if css.holds("\\") { return "may not hold a backslash" }
         if css.holds("\0") { return "may not hold a null character" }
         let low = css.lowercased()
-        for f in ["url(", "src(", "image(", "image-set(", "cross-fade(", "element(", "paint(", "expression("] where low.holds(f) {
+        for f in ["url(", "src(", "image(", "image-set(", "image-rect(", "filter(", "cross-fade(", "element(", "paint(", "expression("] where low.holds(f) {
             return "may not use \(f)...): an edit loads nothing from the network"
         }
         if low.holds("</") { return "may not hold </" }

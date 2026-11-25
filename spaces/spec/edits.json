@@ -1,7 +1,7 @@
 {
- "about": "Page edits: what Edits.swift and the extension's src/shared/edits.js both take and both refuse. Each refused case names the field the refusal must point at.",
- "rules": {"about": "What any code that applies an edit must keep to, whatever a selector matches. text, attr, insert and move leave an element in never or in editors, or inside one, or any other a person types in (isContentEditable), as it is. move also leaves one that is or holds an element in never, editors or carry, so no field or button lands in another form.",
-  "never": ["embed", "iframe", "input", "noscript", "object", "option", "script", "select", "style", "template", "textarea"], "editors": ["[contenteditable]:not([contenteditable=false])", "[role=textbox]"], "carry": ["button"]},
+ "about": "Page edits: what Edits.swift and the extension's src/shared/edits.js both take and both refuse. Each refused case names the field the refusal must point at; an accepted case with sites says what they become.",
+ "rules": {"about": "What any code that applies an edit must keep to, whatever a selector matches. text, attr, insert and move leave an element in never or in editors, or inside one, or any other a person types in (isContentEditable), as it is. move also leaves one that is or holds an element in never, editors or carry, so no field or button lands in another form. text with no find leaves an element that holds one of those, a video, audio or canvas: it swaps the words, never what else is there.",
+  "never": ["base", "embed", "iframe", "input", "link", "meta", "noscript", "object", "option", "script", "select", "source", "style", "template", "textarea", "track"], "editors": ["[contenteditable]:not([contenteditable=false])", "[role=textbox]"], "carry": ["button"]},
  "accept": [
   {"case": "hide", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "#ads, .promo"}]}},
   {"case": "style", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "style", "at": "article", "style": {"font-size": "18px", "max-width": "calc(100% - 2rem)", "--gap": "4px"}}]}},
@@ -19,10 +19,11 @@
   {"case": "css that only scrolls smoothly", "edit": {"id": "a", "sites": ["example.com"], "css": "html{scroll-behavior:smooth} .card--big:hover::before{content:\"@home\"} /* me@example.com */"}},
   {"case": "a list that says a thing twice", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "list", "items": ["Eggs", "Eggs"]}]}]}},
   {"case": "localhost", "edit": {"id": "a", "sites": ["localhost:3000"], "css": "a{}"}},
-  {"case": "a www host stays one", "edit": {"id": "a", "sites": ["www.gov.uk"], "css": "a{}"}},
+  {"case": "a www host stays one", "sites": ["www.gov.uk"], "edit": {"id": "a", "sites": ["www.gov.uk"], "css": "a{}"}},
   {"case": "hide what only hide and style may name", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "hide", "at": "div > iframe.ad"}]}},
   {"case": "text in a class named like a tag", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "style-guide .style, #textarea", "text": "x"}]}},
   {"case": "a custom element named like a tag", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "main > style-guide, select-menu.x", "text": "x"}]}},
+  {"case": "sites as hosts", "sites": ["x.com", "sub.example.com"], "edit": {"id": "a", "sites": ["https://X.com:443/home", "x.com", " Sub.Example.com "], "css": "a{filter:blur(2px)}"}},
   {"case": "data in a word, not a fetch", "edit": {"id": "a", "sites": ["example.com"], "css": ".curl-up{color:red}"}}
  ],
  "refuse": [
@@ -90,6 +91,9 @@
   {"case": "text in an editor", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "text", "at": "div[ContentEditable]", "text": "x"}]}, "path": "changes[0].at"},
   {"case": "move into an editor", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "p", "to": "[contenteditable='']", "where": "last"}]}, "path": "changes[0].to"},
   {"case": "css with a string past a bracketed semicolon in a custom property", "edit": {"id": "a", "sites": ["example.com"], "css": "a{--e:;--x:var(--e,[;])\"https://evil.example/a\" 1x}"}, "path": "css"},
-  {"case": "a link that ends in a line separator", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org/\u2028"}]}]}, "path": "changes[0].blocks[0].url"}
+  {"case": "a link that ends in a line separator", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org/\u2028"}]}]}, "path": "changes[0].blocks[0].url"},
+  {"case": "move a stylesheet", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "move", "at": "link[rel=stylesheet]", "to": "body", "where": "last"}]}, "path": "changes[0].at"},
+  {"case": "css filter that fetches", "edit": {"id": "a", "sites": ["example.com"], "css": "a{background:filter('https://evil.example/a', blur(0))}"}, "path": "css"},
+  {"case": "a link with a port there isn't", "edit": {"id": "a", "sites": ["example.com"], "changes": [{"do": "insert", "at": "p", "where": "after", "blocks": [{"kind": "link", "text": "x", "url": "https://example.org:99999/"}]}]}, "path": "changes[0].blocks[0].url"}
  ]
 }

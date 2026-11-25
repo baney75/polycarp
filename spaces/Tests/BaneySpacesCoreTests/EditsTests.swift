@@ -31,7 +31,9 @@ final class EditsTests: XCTestCase {
             switch Edits.edit(c["edit"]!) {
             case .failure(let i): XCTFail("\(name) refused: \(i)")
             // What comes out goes back in unchanged, so a saved file loads.
-            case .success(let e): XCTAssertEqual(try Edits.edit(e).get(), e, name)
+            case .success(let e):
+                XCTAssertEqual(try Edits.edit(e).get(), e, name)
+                if let sites = c["sites"] { XCTAssertEqual(e.object?["sites"], sites, name) }
             }
         }
         for c in refuse.compactMap(\.object) {
