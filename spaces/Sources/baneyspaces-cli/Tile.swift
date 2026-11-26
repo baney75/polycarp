@@ -42,6 +42,7 @@ enum TileCommand {
         case "invalid_args": "Run `polycarp-spaces tile help` for the commands."
         case "refused": "Run `polycarp-spaces tile status` to see how tiling stands."
         case "app_too_old": "Run `polycarp update`, then try again."
+        case "timeout": "Run `polycarp-spaces tile status` before trying again."
         default: "Open Polycarp, then try again."
         }
         let f = SurfacesFailure(code, message, suggestion: next, exit: status)

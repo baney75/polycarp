@@ -90,4 +90,4 @@ The gaps, the keys and the rest of the settings are one group of surfaces.json: 
 | `tiling_run` | `polycarp-spaces tile <command> --json`, with `workspace` for `on` and `off` |
 
 `tiling_run` moves the person's windows, so an agent calls it only when they asked. Through the
-[gateway](agents.md) `tiling_status` needs the read scope and `tiling_run` the act scope.
+[gateway](agents.md) `tiling_status` needs the read scope and `tiling_run` the act scope, so a web assistant or another device given act may arrange this Mac's windows. The remote socket never takes a tile request.
