@@ -17,7 +17,12 @@ pub const KINDS: [&str; 5] = ["settings", "bookmarks", "cookies", "prefs", "exte
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Item {
-    /// The value, or None for a tombstone.
+    /// The value, or None for a tombstone. On the wire a tombstone has no `value` key, so a JSON null is a value.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
     pub value: Option<Json>,
     /// Milliseconds since 1970 when this value was made.
     pub updated: u64,
@@ -31,9 +36,15 @@ pub struct Bundle {
     pub items: BTreeMap<String, Item>,
 }
 
-/// True when `a` beats `b`: newer, or the same time from a greater device id.
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Json>, D::Error> {
+    Json::deserialize(d).map(Some)
+}
+
+/// True when `a` beats `b`: newer, or the same time from a greater device id. Two devices that share an id (a cloned
+/// disk) can still make the same stamp with different values, so the value's text decides last, and a tombstone loses.
 pub fn wins(a: &Item, b: &Item) -> bool {
-    (a.updated, a.device.as_str()) > (b.updated, b.device.as_str())
+    let text = |i: &Item| i.value.as_ref().map(Json::to_string);
+    (a.updated, a.device.as_str(), text(a)) > (b.updated, b.device.as_str(), text(b))
 }
 
 /// One bundle from two, item by item. Pure, and the same answer whichever side comes first.
@@ -181,6 +192,26 @@ mod tests {
             assert_eq!(merge(&c.a, &c.b), c.want, "{}", c.name);
             assert_eq!(merge(&c.b, &c.a), c.want, "{} (other order)", c.name);
         }
+    }
+
+    #[test]
+    fn a_null_value_is_not_a_tombstone_on_the_wire() {
+        let b = bundle(&[
+            ("null", item(Some(Json::Null), 1, "A")),
+            ("dead", item(None, 1, "A")),
+        ]);
+        let wire = serde_json::to_string(&b).unwrap();
+        assert_eq!(serde_json::from_str::<Bundle>(&wire).unwrap(), b);
+    }
+
+    #[test]
+    fn one_stamp_with_two_values_merges_the_same_either_way() {
+        let a = bundle(&[("x", item(Some(json!(1)), 10, "A"))]);
+        let b = bundle(&[("x", item(Some(json!(2)), 10, "A"))]);
+        let c = bundle(&[("x", item(None, 10, "A"))]);
+        assert_eq!(merge(&a, &b), merge(&b, &a));
+        assert_eq!(merge(&a, &c), merge(&c, &a));
+        assert_eq!(merge(&a, &c), a);
     }
 
     #[test]
