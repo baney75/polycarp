@@ -1,6 +1,6 @@
 import Foundation
 
-/// The sheet as the top bar reads it: one `StyleLookup` for a sheet, a mode and the theme's roles,
+/// The sheet as the views read it: one `StyleLookup` for a sheet, a mode and the theme's roles,
 /// so each part's style is worked out once per change and kept, never once per frame. Nil in a `ComputedStyle` still
 /// means the view draws what it drew before the sheet, so an empty sheet changes nothing. Not thread safe: the app
 /// keeps one on the main thread and builds a new one when the sheet or the theme changes.
@@ -59,6 +59,43 @@ public final class StyleBook {
         }
     }
 
+    // MARK: The other surfaces
+    //
+    // A panel opens on a key press, so everything it can need is worked out once for the book, at the first open, and
+    // read from there: no row asks the cascade anything.
+
+    public private(set) lazy var launcher = LauncherStyles(lookup)
+}
+
+/// The launcher, every part in every state.
+public final class LauncherStyles {
+    /// A row and what it holds, in one state. A class, so a view takes a reference and copies nothing.
+    public final class Row {
+        public let box, title, subtitle, badge, icon: ComputedStyle
+
+        init(_ l: StyleLookup, _ states: Set<StyleState>) {
+            func part(_ name: String) -> ComputedStyle { l.computed(surface: .launcher, part: name, states: states) }
+            box = part("row"); title = part("title"); subtitle = part("subtitle"); badge = part("badge"); icon = part("icon")
+        }
+
+        fileprivate var all: [ComputedStyle] { [box, title, subtitle, badge, icon] }
+    }
+
+    public let panel, field, section, footer: ComputedStyle
+    /// A rule changes something under the pointer, so rows watch for it.
+    public let hovers: Bool
+    private let rows: [Row]
+
+    init(_ l: StyleLookup) {
+        panel = l.computed(surface: .launcher)
+        field = l.computed(surface: .launcher, part: "field")
+        section = l.computed(surface: .launcher, part: "section")
+        footer = l.computed(surface: .launcher, part: "footer")
+        rows = [[], [.selected], [.hover], [.selected, .hover]].map { Row(l, $0) }
+        hovers = rows[0].all != rows[2].all || rows[1].all != rows[3].all
+    }
+
+    public func row(selected: Bool, hover: Bool = false) -> Row { rows[(selected ? 1 : 0) + (hover ? 2 : 0)] }
 }
 
 extension ComputedStyle {

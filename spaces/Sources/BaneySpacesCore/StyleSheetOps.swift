@@ -660,8 +660,14 @@ extension StyleSheet {
     public static var propertyTable: String {
         var rows = ["| Property | Takes | Applies to | Inherited | What it does |", "| --- | --- | --- | --- | --- |"]
         for p in StyleProperty.all {
-            let on = p.targets.count == StyleTarget.allCases.count ? "everything" : p.targets.map(\.rawValue).joined(separator: ", ")
-            rows.append("| `\(p.name)` | \(p.takes) | \(on) | \(p.inherited ? "yes" : "no") | \(p.help) |")
+            // A whole surface by its name alone, else what of it.
+            let on = StyleSurface.allCases.compactMap { surface -> String? in
+                let all = StyleTarget.allCases.filter { $0.surface == surface }, some = all.filter(p.applies)
+                if some.isEmpty { return nil }
+                return some.count == all.count ? "all of \(surface.rawValue)" : some.map(\.rawValue).joined(separator: ", ")
+            }
+            let everything = p.targets.count == StyleTarget.allCases.count
+            rows.append("| `\(p.name)` | \(p.takes) | \(everything ? "everything" : on.joined(separator: "; ")) | \(p.inherited ? "yes" : "no") | \(p.help) |")
         }
         return rows.joined(separator: "\n")
     }
