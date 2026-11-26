@@ -22,6 +22,8 @@ public struct TilingDrag: Equatable, Sendable {
     public private(set) var phase = Phase.still
     /// Escape was pressed: the window goes back, whatever happens next.
     public var cancelled = false
+    /// The overview had the window on the way: where it was let go is no tile the person was shown.
+    public private(set) var covered = false
     private var last: CGRect?
     private var looks = 0
     private var same = 0
@@ -34,6 +36,7 @@ public struct TilingDrag: Equatable, Sendable {
     /// Where the window is now. The first change says what the drag is, and it stays that: a window that is moved may
     /// change size on the way (one filled shrinks), and an edge pulled on the left moves the window too.
     public mutating func saw(_ frame: CGRect?) {
+        if frame == nil, phase == .moving { covered = true }
         guard let frame, phase == .still else { return }
         if abs(frame.width - press.width) > 1 || abs(frame.height - press.height) > 1 { phase = .resizing }
         else if abs(frame.minX - press.minX) > 1 || abs(frame.minY - press.minY) > 1 { phase = .moving }
@@ -43,7 +46,7 @@ public struct TilingDrag: Equatable, Sendable {
     /// in the overview took the window; `under` is the display the pointer is over and `home` the one the window tiles on.
     public func release(at point: CGPoint?, floating: Bool, taken: Bool, under: DisplayKey?, home: DisplayKey?) -> Release {
         guard !taken, phase != .still else { return .nothing }
-        guard !cancelled, let point else { return .back }
+        guard !cancelled, !covered, let point else { return .back }
         if phase == .resizing { return .resize }
         if floating { return .float }
         if let under, let home, under != home { return .across(under, point) }

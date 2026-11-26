@@ -42,6 +42,15 @@ final class TilingDragTests: XCTestCase {
         XCTAssertEqual(end(pulled, under: "side"), .resize)
     }
 
+    func testADragTheOverviewCoveredAndDidNotTakeGoesBack() {
+        let covered = drag(frame.offsetBy(dx: 0, dy: -30), nil, frame.offsetBy(dx: 200, dy: 0))
+        XCTAssertTrue(covered.covered)
+        XCTAssertEqual(end(covered), .back, "let go over the overview, over no tile it showed")
+        XCTAssertEqual(end(covered, under: "side"), .back)
+        XCTAssertEqual(end(covered, taken: true), .nothing, "a workspace took it")
+        XCTAssertFalse(drag(frame, nil, frame.offsetBy(dx: 30, dy: 0)).covered, "no frame before it moved is no overview")
+    }
+
     func testEscapeSendsItBack() {
         for var d in [drag(frame.offsetBy(dx: 30, dy: 0)), drag(CGRect(x: 100, y: 100, width: 440, height: 300))] {
             d.cancelled = true
