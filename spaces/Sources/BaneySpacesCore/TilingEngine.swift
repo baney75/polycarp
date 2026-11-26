@@ -137,6 +137,8 @@ public struct TilingEngine: Equatable, Sendable {
         var focused: WindowID?
         var groups: [TilingGroup] = []
         var zoomed: [WindowID: TilingZoom] = [:]
+        /// How wide the person made the only window (TilingWidth.swift).
+        var width: Double?
     }
 
     /// What was last asked of a window.
@@ -178,6 +180,8 @@ public struct TilingEngine: Equatable, Sendable {
     /// Saved windows still to turn up, each under a number no window has, and the windows that were (TilingSaved.swift).
     var waiting: [WindowID: Waiting] = [:]
     var claimed: Set<WindowID> = []
+    /// The widths a person kept, the latest last.
+    var widths: [TilingWidth] = []
     /// Windows scrolled out of sight, and where each comes back in reach when tiling lets go of it.
     public internal(set) var stowed: [WindowID: CGRect] = [:]
     /// Windows over a workspace that are another native tab since the last look: the one before, and the one now.
@@ -199,6 +203,7 @@ public struct TilingEngine: Equatable, Sendable {
                 slots[key]!.layout.setStyle(new.style, area: slots[key]!.area)
             }
         }
+        if old.lone != new.lone { for key in slots.keys { slots[key]!.width = nil } }
         // A new gap or width is a new target for every window, so the count of tries starts over by itself.
     }
 
@@ -430,7 +435,7 @@ public struct TilingEngine: Equatable, Sendable {
     /// The tiles of the windows that have one of their own, and the windows that share another's.
     func tiles(_ workspace: Int) -> (own: [WindowID: CGRect], stacked: [WindowID]) {
         guard let key = key(workspace), let slot = slots[key], slot.layout.style != .floating else { return ([:], []) }
-        let lone = options.lone.width(in: slot.area).map { CGSize(width: $0, height: .infinity) }
+        let lone = self.lone(slot)
         let least = needs(slot)
         func solve(_ l: TileLayout) -> [WindowID: CGRect] {
             // A strip scrolls on what is solved: a window stacked or rounded up moves the columns after it.

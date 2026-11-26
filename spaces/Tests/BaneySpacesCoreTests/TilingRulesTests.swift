@@ -13,7 +13,7 @@ final class TilingEnginePropertyTests: XCTestCase {
     private func step(_ f: inout FakeWindows, _ r: inout TileRandom, _ next: inout WindowID) {
         let ids = f.wins.keys.sorted()
         let id = ids.isEmpty ? 0 : ids[r.below(ids.count)]
-        switch r.below(20) {
+        switch r.below(21) {
         case 0, 1, 2:
             guard ids.count < 12 else { return }
             next += 1
@@ -74,6 +74,10 @@ final class TilingEnginePropertyTests: XCTestCase {
         case 19:
             guard let w = f.wins[id]?.w else { return }
             _ = f.engine.run(.zoom(r.below(2) == 0 ? .screen : .width), on: w.workspace, focused: id)
+        case 20:
+            guard let w = f.wins[id]?.w else { return }
+            let commands: [TilingCommand] = [.keepWidth, .restoreWidth, .balance] + TileDirection.allCases.map { .grow($0) }
+            for _ in 0..<(1 + r.below(8)) { _ = f.engine.run(commands[r.below(commands.count)], on: w.workspace, focused: id) }
         case 14: if f.wins[id] != nil { f.engine.choice[id] = r.below(2) == 0 }
         default:
             guard f.wins[id] != nil else { return }

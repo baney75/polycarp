@@ -11,6 +11,8 @@ public enum TilingCommand: Equatable, Sendable {
     case balance, flip, promote, float, full
     /// The window's tile fills the display, or the width of it, or goes back to its place.
     case zoom(TilingZoom)
+    /// Keeps the window's width for its app here, or gives it the one kept.
+    case keepWidth, restoreWidth
     /// The window's tile becomes a group of windows in tabs, or the group comes apart.
     case group
     /// Into the tile that way, or out of its group.
@@ -46,6 +48,8 @@ public enum TilingCommand: Equatable, Sendable {
         add("full", "Give the window the whole area, or put it back", .full)
         add("fullscreen", "Fill the display with the tile, or put it back", .zoom(.screen))
         add("full-width", "Give the tile the whole width, or put it back", .zoom(.width))
+        add("width-keep", "Keep the window's width for its app", .keepWidth)
+        add("width-restore", "Give the window the width kept for its app", .restoreWidth)
         add("group", "Make the tile a group of tabs, or take it apart", .group)
         for d in TileDirection.allCases { add("group-\(d.rawValue)", "Move the window into the tile \(d.phrase), or out of its group", .join(d)) }
         add("group-next", "Focus the next window of the group", .groupCycle(backward: false))
@@ -140,8 +144,18 @@ extension TilingEngine {
             guard isTiled else { return .nothing("the window in front isn't tiled") }
             Self.toggle(z, id, &slots[key]!)
             return .changed
-        case .grow where Self.zoom(of: id, slot) != nil: return .nothing("the window is at full size")
+        case .grow where Self.zoom(of: id, slot) != nil, .keepWidth where Self.zoom(of: id, slot) != nil,
+             .restoreWidth where Self.zoom(of: id, slot) != nil: return .nothing("the window is at full size")
+        case .grow(let d) where slot.isAlone && d.axis == .horizontal:
+            let now = layout.frames(in: area, gaps: gaps, minimums: minimums, loneMax: lone(slot))[id]?.width ?? 0
+            setWidth(now + (d == .right ? Self.step : -Self.step), &slots[key]!)
+            return slots[key] == slot ? .nothing("there is nothing to change") : .changed
         case .grow(let d): grow(id, d, &layout, area, minimums)
+        case .keepWidth: return isTiled ? keepWidth(id, workspace, slot) : .nothing("the window in front isn't tiled")
+        case .restoreWidth: return isTiled ? restoreWidth(id, workspace, key) : .nothing("the window in front isn't tiled")
+        case .balance where slot.width != nil && slot.isAlone:
+            slots[key]!.width = nil
+            return .changed
         case .balance: layout.balance(nil)
         case .flip: layout.flip(id, area: area)
         case .promote:
@@ -321,10 +335,11 @@ extension TilingEngine {
             guard options.tiles(workspace), var slot = slots[key], slot.layout.contains(id), slot.layout.style != .floating else { continue }
             // A zoomed window has no edge of its own to pull: it goes back.
             if Self.zoom(of: id, slot) != nil { return false }
-            let was = slot.layout
+            let was = slot
+            if slot.isAlone, let f = start ?? frames(workspace)[id], abs(f.width - frame.width) >= 1 { setWidth(frame.width, &slot) }
             slot.layout.resize(id, to: frame, from: start, area: slot.area, gaps: options.gaps, minimums: needs(slot))
             slots[key] = slot
-            return slot.layout != was
+            return slot != was
         }
         return false
     }

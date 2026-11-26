@@ -15,6 +15,7 @@ public struct TilingSaved: Codable, Equatable, Sendable {
         /// The windows of each group, in tab order. Nil in a file from before there were any.
         var groups: [[WindowID]]?
         var zoomed: [WindowID: TilingZoom]?
+        var width: Double?
     }
 
     struct Window: Codable, Equatable, Sendable {
@@ -28,13 +29,18 @@ public struct TilingSaved: Codable, Equatable, Sendable {
     var version = TilingSaved.version
     var slots: [Slot] = []
     var windows: [Window] = []
+    var widths: [TilingWidth]?
 
     /// A file that can't be read, was cut short or is another version gives nothing, and every layout starts fresh.
     public static func read(_ data: Data?, now: Double) -> TilingSaved? {
         guard let data, var saved = try? JSONDecoder().decode(TilingSaved.self, from: data), saved.version == version else { return nil }
         saved.windows.removeAll { now - $0.record.at > keep || !($0.before.map(Self.sane) ?? true) }
+        saved.widths = saved.widths?.filter { Self.wide($0.width) }.suffix(TilingEngine.mostWidths)
+        for i in saved.slots.indices where !(saved.slots[i].width.map(Self.wide) ?? true) { saved.slots[i].width = nil }
         return saved
     }
+
+    private static func wide(_ w: Double) -> Bool { w.isFinite && w >= 1 && w < 100_000 }
 
     public func data() -> Data? {
         let e = JSONEncoder()
@@ -72,9 +78,10 @@ extension TilingEngine {
             for id in unknown { s.layout.remove(id, area: s.area) }
             if !s.layout.windows.isEmpty {
                 out.slots.append(.init(key: key, layout: s.layout, focused: s.focused, groups: s.groups.isEmpty ? nil : s.groups.map(\.members),
-                                       zoomed: Self.kept(s.zoomed, s)))
+                                       zoomed: Self.kept(s.zoomed, s), width: s.width))
             }
         }
+        out.widths = widths.isEmpty ? nil : widths
         // A saved window still away is kept too, in a layout or not: one owed a frame or a float waits for the next run.
         for id in Set(before.keys).union(choice.keys).union(waiting.keys) { _ = know(id) }
         out.windows = known.sorted { $0.key < $1.key }.map { id, r in
@@ -87,6 +94,7 @@ extension TilingEngine {
 
     /// Takes the layouts back. Their windows wait under numbers of their own until `claim` finds them.
     public mutating func restore(_ saved: TilingSaved) {
+        if widths.isEmpty { widths = saved.widths ?? [] }
         // A window still waiting when the file was written is saved under its stand-in number: no new one may be the same.
         let used = Set(saved.windows.map(\.record.window)).union(saved.slots.flatMap(\.layout.windows))
         var number = WindowID.max
@@ -106,6 +114,7 @@ extension TilingEngine {
             var slot = Slot(layout: layout, focused: s.focused.flatMap { phantom[$0] })
             slot.restore((s.groups ?? []).map { $0.compactMap { phantom[$0] } })
             for (id, z) in s.zoomed ?? [:] { if let p = phantom[id], slot.holds(p) { slot.zoomed[p] = z } }
+            slot.width = s.width
             slots[s.key] = slot
             lastDisplay[s.key.workspace] = s.key.display
         }
