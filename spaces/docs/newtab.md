@@ -70,7 +70,8 @@ Chrome starts the host's `path` with the page's origin as the first argument
 `chrome-extension://`, it runs the host before reading any other argument. `polycarp-spaces newtab-host` runs the same
 host by name, for trying it by hand.
 
-The host reads one request, writes one reply, and exits 0. It writes nothing else to stdout. With no whole request on
+The host reads one request, writes one reply, and exits 0 (one message, `browser.join`, keeps it: see
+[the port that stays open](#the-port-that-stays-open)). It writes nothing else to stdout. With no whole request on
 stdin it writes nothing and exits 1.
 
 It reads surfaces.json and bangs.json from disk the way `polycarp-spaces surfaces get` does, so `page` needs no running
@@ -182,6 +183,29 @@ hour later; `"page":null` removes it now. `{"ok":true}`, or `{"ok":false,"error"
 
 An unknown `op` (the retired `name` and `go` included), a missing `op`, or a request that isn't a JSON object gets
 `{"ok":false,"error":...}`.
+
+### The port that stays open
+
+`{"op":"browser.join"}` as the first message keeps the host running until the browser closes the port. It carries each
+later message to the app over `browser.sock` (mode 600, beside the app's own socket) and the app's messages back, reads
+none of them and keeps nothing. The app takes the browser's name from the process that started the host, never from a
+message, and turns away a host that no Chromium browser it knows started. `spec/browser.md` says what may come and what is kept.
+
+| From the app | Means |
+| --- | --- |
+| `{"op":"browser.want","sources":[...]}` | Send these, whole first and then what changes: `tabs`, `bookmarks`, `history`, `downloads`. Sent on joining and when a switch changes. |
+| `{"op":"browser.go","tab":4}` | Bring that tab and its window forward. |
+| `{"op":"browser.show","download":7}` | Show that download in Finder. |
+| `{"op":"browser.away"}` | From the host itself: the app isn't there, on joining or when it goes. Nothing sent now is kept; wait for the next `browser.want`. |
+
+| From the extension | Means |
+| --- | --- |
+| `{"op":"browser.rows","source":"tabs","first":true,"last":true,"rows":[...]}` | All of a source, in pieces under 1 MiB; the old rows answer until `last`. |
+| `{"op":"browser.change","source":"tabs","rows":[...],"gone":[...]}` | Rows added or replaced, and the ids of those gone. |
+
+A tab is `{id, window, title, url, incognito, group?, audible, pinned, front}`, a bookmark `{id, title, url}`, a visited
+page `{title, url, visits, last}` (milliseconds) and a download `{id, title, url, incognito, state, received, total}`. A tab or
+download without `"incognito":false` is left out.
 
 ## Where the manifest goes
 
