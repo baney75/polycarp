@@ -26,7 +26,7 @@ curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | 
 
 This downloads the signed app for Apple silicon, puts `polycarp` in `~/.local/bin` and opens the app, with no developer tools needed. A welcome window walks you through the permissions. Accessibility is the only one Polycarp can't run without. Polycarp's browser extension comes inside the app: in `helium://extensions` (or `chrome://extensions`), turn on Developer mode, click **Load unpacked**, press Command-Shift-G in the file picker and paste `~/Applications/Polycarp.app/Contents/Resources/extension`. After that it updates with the app ([spaces/extension/README.md](https://github.com/baney75/polycarp/blob/main/spaces/extension/README.md)).
 
-To add Polycarp's companions in the same run, name them: `curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash -s -- --with silas,shotate` (or `--with all`). Silas is dictation and Shotate takes screenshots and recordings. Each installs from its own installer and stays its own app. Run at a terminal without `--with`, the installer asks once, and Return means none.
+To add Polycarp's companions in the same run, name them: `curl -fsSL https://raw.githubusercontent.com/baney75/polycarp/main/install.sh | bash -s -- --with silas,yapshot` (or `--with all`). Silas is dictation and Yapshot (once called Shotate, a name the installer still takes) takes screenshots and recordings. Each installs from its own installer and stays its own app. Run at a terminal without `--with`, the installer asks once, and Return means none.
 
 If you have BaneySpaces, it goes to the Trash, because the two can't run together, and Polycarp copies its settings. `baneyspaces` keeps working as a name for `polycarp-spaces`.
 

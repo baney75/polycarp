@@ -680,7 +680,7 @@ extension NSWindow {
 /// A short record of ⌘Tab gestures in trace.log, to diagnose a switcher that misbehaves. It
 /// notes only the gesture (Tab, ⌘ let go, Esc) and workspace numbers, never other keys.
 ///
-/// Each line also goes to the unified log (subsystem com.baney.baneyspaces), so a Shotate debug
+/// Each line also goes to the unified log (subsystem com.baney.baneyspaces), so a Yapshot debug
 /// recording and `log show --predicate 'subsystem == "com.baney.baneyspaces"'` carry it next to
 /// what macOS logged. The file rotates at 200 KB (trace.log, .1, .2) instead of deleting history.
 /// Lines hold workspace numbers, window ids and app names, never window titles, so they're public.

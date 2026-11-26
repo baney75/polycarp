@@ -1,5 +1,5 @@
 // Draws the Spaces README banner and the GitHub social card from the Polycarp icon, in the same layout as
-// Shotate's:
+// Yapshot's:
 //   swift scripts/make-brand.swift build/Polycarp.iconset/icon_512x512@2x.png docs
 // `make brand` draws the icon first, then runs this.
 import AppKit

@@ -1,6 +1,6 @@
 # Polycarp agent rules
 
-Polycarp is a personal tool for Donovan. The repository, releases and page stay public (Donovan, 2026-11-24). Updates are one stream, and its only sibling apps are Silas and Shotate.
+Polycarp is a personal tool for Donovan. The repository, releases and page stay public (Donovan, 2026-11-24). Updates are one stream, and its only sibling apps are Silas, Yapshot and Flick.
 
 Polycarp is its own OS on macOS and Windows: Spaces, the bar, the launcher and themes (Donovan, 2026-11-23; the Workspace Dock was removed the same day). Its browser extension for reading and the new tab (`spaces/extension`, Donovan, 2026-11-21) is the accessibility extension that was Phont: it works on its own, with no Polycarp app, and joins Polycarp (new tab host, updates with the app) when Polycarp is installed on the same computer (Donovan, 2026-11-23). The agent browser extension (the side panel), its CLI helper, MCP server and computer-use tools were removed from Polycarp. The voice app moved to Silas: https://github.com/baney75/silas. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. On Omarchy, Polycarp is a plugin for Omarchy's own shell (`plugins/omarchy/`, Donovan, 2026-11-25): it adds Polycarp's parts to that shell and replaces nothing.
 

@@ -24,7 +24,7 @@ version is on the way; see [the plan](PLAN.md). It grew from [BaneySpaces](https
 Every keyboard shortcut, by group and with where it works, is in [docs/keys.md](docs/keys.md); `polycarp-spaces keys`
 prints the same list with your modifier.
 
-Dictation is [Silas](https://github.com/baney75/silas) and screenshots are [Shotate](https://github.com/baney75/shotate).
+Dictation is [Silas](https://github.com/baney75/silas) and screenshots are [Yapshot](https://github.com/baney75/yapshot). Media plays in [Flick](https://github.com/baney75/flick).
 Each is its own app: install and update it on its own.
 
 ## Install on a Mac
