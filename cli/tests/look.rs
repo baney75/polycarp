@@ -1402,3 +1402,25 @@ fn save_refuses_a_theme_that_fails_the_health_check() {
         assert!(!sb.at("cfg/looks/mine.polycarp-look").exists());
     }
 }
+
+#[test]
+fn each_field_is_listed_once() {
+    // Two branches can each add the same row in different places and still merge clean.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let table = fs::read_to_string(root.join("cli/src/look/fields.rs")).unwrap();
+    let tight: String = table.split_whitespace().collect();
+    let mut seen = std::collections::HashSet::new();
+    for row in tight.split("(\"").skip(1) {
+        let Some((path, rest)) = row.split_once('"') else {
+            continue;
+        };
+        if !rest.starts_with(",true,") && !rest.starts_with(",false,") {
+            continue;
+        }
+        assert!(
+            seen.insert(path.to_string()),
+            "{path} is listed twice in look/fields.rs"
+        );
+    }
+    assert!(seen.len() > 25, "the table was not read: {}", seen.len());
+}
