@@ -760,6 +760,7 @@ struct SetupView: View {
     }
 
     @ViewBuilder private var appearanceSections: some View {
+        if ThemeCommand.shared.available { LooksGroup() }
         SettingsGroup("Theme") {
             SettingsRow("Theme") {
                 Picker("Theme", selection: binding({ themes.pendingName ?? appearance.polycarp?.name ?? ThemeChoice.ownColors }, { themes.pick(name: $0) })) {

@@ -192,20 +192,31 @@ struct ThemeShelfTile: View {
     var body: some View {
         Button(action: action) {
             VStack(spacing: 5) {
-                HStack(spacing: 0) {
-                    half(tile.light)
-                    half(tile.dark)
-                }
-                .frame(width: 84, height: 44)
-                .clipShape(Chrome.shape(.settingsTile))
-                .overlay(Chrome.shape(.settingsTile).strokeBorder(selected ? Chrome.accent : Chrome.edge(0.2),
-                                                                  lineWidth: Chrome.width(.settingsTile, focused: selected)))
-                Text(tile.theme.title).font(Chrome.font(11, selected ? .semibold : .regular)).lineLimit(1).frame(width: 84)
+                ThemePages(light: tile.light, dark: tile.dark)
+                    .overlay(Chrome.shape(.settingsTile).strokeBorder(selected ? Chrome.accent : Chrome.edge(0.2),
+                                                                      lineWidth: Chrome.width(.settingsTile, focused: selected)))
+                Text(tile.theme.title).font(Chrome.font(11, selected ? .semibold : .regular)).lineLimit(1).frame(width: ThemePages.size.width)
             }
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(tile.theme.title) theme\(tile.theme.builtIn ? "" : ", yours")\(selected ? ", in use" : "")")
         .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// A theme's light and dark pages side by side, each four colors: page, surface, text and accent.
+struct ThemePages: View {
+    static let size = CGSize(width: 84, height: 44)
+    let light: [RGB]
+    let dark: [RGB]
+
+    var body: some View {
+        HStack(spacing: 0) {
+            half(light)
+            half(dark)
+        }
+        .frame(width: Self.size.width, height: Self.size.height)
+        .clipShape(Chrome.shape(.settingsTile))
     }
 
     /// Page, a surface card with a line of text, and the accent.

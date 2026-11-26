@@ -103,12 +103,13 @@ public enum ThemeImport {
         return .ask("You already have a theme named \"\(name)\". Replace it with the dropped file?")
     }
 
-    /// Files the Appearance tab takes: theme files, and pictures for a palette.
-    public enum Dropped: Equatable, Sendable { case theme, picture, other }
+    /// Files the Appearance tab takes: theme files, looks, and pictures for a palette.
+    public enum Dropped: Equatable, Sendable { case theme, look, picture, other }
 
     public static func kind(_ path: String) -> Dropped {
         switch (path as NSString).pathExtension.lowercased() {
         case "toml": .theme
+        case LookCommands.fileExtension: .look
         case "png", "jpg", "jpeg", "heic", "gif", "tif", "tiff", "webp", "bmp": .picture
         default: .other
         }

@@ -54,7 +54,7 @@ struct ThemeEditorView: View {
                 switch ThemeImport.kind(url.path) {
                 case .picture: model.propose(from: url)
                 case .theme: ThemeLibrary.shared.importTheme(url)
-                case .other: model.notice = "Drop a picture here to take its colors."
+                case .look, .other: model.notice = "Drop a picture here to take its colors."
                 }
             }
             return true

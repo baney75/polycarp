@@ -39,14 +39,25 @@ enum ThemeEditorRender {
             offered.proposal = ThemeEditorPalette.propose(sample, light: draft.colors("light"), dark: draft.colors("dark"))
             guard save(AnyView(ThemeEditorView(model: offered)), "theme-editor-picture-\(mode).png", ThemeEditorView.size) else { return 1 }
 
-            // Settings > Appearance with the shelf, once the library has read every theme.
+            // Settings > Appearance with the looks and the shelf, once the libraries have read every look and theme.
             ThemeLibrary.shared.reload()
-            let until = Date().addingTimeInterval(15)
-            while ThemeLibrary.shared.tiles.isEmpty, Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
+            LookLibrary.shared.reload()
+            let until = Date().addingTimeInterval(30)
+            while ThemeLibrary.shared.tiles.isEmpty || LookLibrary.shared.looks.isEmpty, Date() < until { RunLoop.current.run(until: Date().addingTimeInterval(0.1)) }
             let setup = SetupModel()
             setup.tab = .appearance
+            let tall = CGSize(width: SettingsSidebar.windowSize.width, height: 900)
+            guard save(AnyView(SetupView(model: setup, close: {}, height: tall.height).background(Color(nsColor: .windowBackgroundColor))),
+                       "theme-shelf-\(mode).png", tall) else { return 1 }
+
+            // The Looks group asking: a name being typed, one of the person's own with that name, and a refused file's words.
+            let looks = LookLibrary.shared
+            looks.newTitle = "Evening desk"
+            looks.replacing = .init(what: .save(title: "Evening desk"), question: "You already have a look named \"evening-desk\". Replace it?")
+            looks.notice = ("the look is refused\nsurfaces.search.engines: not a setting a look can hold", .urgent)
             guard save(AnyView(SetupView(model: setup, close: {}).background(Color(nsColor: .windowBackgroundColor))),
-                       "theme-shelf-\(mode).png", SettingsSidebar.windowSize) else { return 1 }
+                       "looks-asking-\(mode).png", SettingsSidebar.windowSize) else { return 1 }
+            looks.newTitle = nil; looks.replacing = nil; looks.notice = nil
         }
         return 0
     }

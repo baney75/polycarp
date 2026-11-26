@@ -137,8 +137,11 @@ final class ThemeLibrary: ObservableObject {
         guard let url = urls.first else { return }
         switch ThemeImport.kind(url.path) {
         case .theme: importTheme(url)
+        case .look:
+            guard available else { notice = ("Looks need the polycarp command, and this Polycarp has none.", .urgent); return }
+            LookLibrary.shared.importFile(url)
         case .picture: proposePalette(url, base: current ?? "polycarp")
-        case .other: notice = ("Drop a theme file (.toml) to add it, or a picture to take its colors.", .quiet)
+        case .other: notice = ("Drop a theme file (.toml) or a look (.polycarp-look) to add it, or a picture to take its colors.", .quiet)
         }
     }
 
