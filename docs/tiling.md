@@ -131,9 +131,10 @@ of the title when only some of its windows are meant.
 `float` and `tile` say whether its windows take a tile; the first one that matches wins, over `tiling.float` and the
 built-in utilities. `pin` keeps a new window in sight on every workspace of its display, and a workspace 1 to 9 sends a new
 window there; the first of those that matches says where a new window goes. A rule never moves a window to or from the
-agent workspace, a window of an app working there, a window an agent claimed, or one that waits on you. A window is judged
-once, when it first has a title: a title that changes later moves nothing. Titles stay in memory and are never written to a
-file or a log.
+agent workspace, a window of an app working there, a window an agent claimed, or one that waits on you. Pin and workspace
+rules place new windows whether or not tiling is on. A window is judged once, when it first has a title (a new window waits
+up to 2 seconds for one): a title that changes later moves nothing. Polycarp reads titles only of apps a rule has words
+for; they stay in memory and are never written to a file or a log.
 
 ## The command
 

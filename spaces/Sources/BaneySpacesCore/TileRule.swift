@@ -107,6 +107,25 @@ public struct TileRules: Equatable, Sendable {
         }?.action
     }
 
+    /// How long a new window's placement waits for a title its app's rule needs.
+    public static let titleWait: TimeInterval = 2
+
+    /// Whether a rule for `bundle` has title words, so its windows' titles are worth reading.
+    public func readsTitles(of bundle: String) -> Bool {
+        rules.contains { $0.title != nil && $0.bundle.caseInsensitiveCompare(bundle) == .orderedSame }
+    }
+
+    /// Whether a new window with no title yet, `waited` seconds old, waits for one before it is placed: a pin or workspace
+    /// rule of its app has title words, and it has waited less than `titleWait`.
+    public func waitsForTitle(bundle: String, title: String, waited: TimeInterval) -> Bool {
+        guard title.isEmpty, waited < Self.titleWait else { return false }
+        return rules.contains { r in
+            guard r.title != nil, r.bundle.caseInsensitiveCompare(bundle) == .orderedSame else { return false }
+            if case .workspace = r.action { return true }
+            return r.action == .pin
+        }
+    }
+
     public enum Placed: Equatable, Sendable { case stay, pin, to(Int) }
 
     /// What becomes of a new window that opened on `here`. A rule never takes a window to or from the agent workspace, nor

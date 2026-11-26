@@ -365,7 +365,8 @@ final class Spaces {
     /// them again in the background when they open; a change reloads them. At most one read runs, and not more often
     /// than every half second.
     /// `pid` reads only that app's windows, unthrottled: the app in front, whose tab or window just changed.
-    func refreshDetails(of pid: pid_t? = nil) {
+    /// `then` runs on the main thread once `pid`'s titles are read, changed or not.
+    func refreshDetails(of pid: pid_t? = nil, then: (() -> Void)? = nil) {
         guard active else { return }
         if pid == nil {
             guard !readingDetails, Date().timeIntervalSince(detailsReadAt) > 0.5 else { return }
@@ -379,6 +380,7 @@ final class Spaces {
                 guard let self else { return }
                 if pid == nil { self.readingDetails = false }
                 let merged = self.details.merging(read) { _, new in new }.filter { self.windows[$0.key] != nil }
+                defer { then?() }
                 guard merged != self.details else { return }
                 self.details = merged
                 if !self.switching { self.onChange?() }
@@ -686,17 +688,28 @@ final class Spaces {
     }
 
     /// New windows a pin or workspace rule names (`tiling.rules`). True when one went somewhere out of sight.
+    /// A new window held back by placeByRule until it has the title its app's rule needs, and since when.
+    private var titleWait: [WindowID: Date] = [:]
+    private var titleAsked = false
+
     private func placeByRule(_ added: [WindowID]) -> Bool {
         let rules = TileRules(lines: SurfacesStore.shared.current.tiling.rules, float: [])
-        guard !rules.rules.isEmpty else { return false }
+        guard !rules.rules.isEmpty else { titleWait = [:]; return false }
         let agent = Self.agentWorkspace
+        let now = Date()
         var away = false
         for id in added {
+            let since = titleWait.removeValue(forKey: id) ?? now
             guard let w = windows[id], let here = model.workspace(of: id),
                   let bundle = NSRunningApplication(processIdentifier: w.pid)?.bundleIdentifier else { continue }
+            let title = rules.readsTitles(of: bundle) ? title(of: id) : ""
+            if rules.waitsForTitle(bundle: bundle, title: title, waited: now.timeIntervalSince(since)) {
+                titleWait[id] = since
+                continue
+            }
             let agentApp = agent.map { a in windows.values.contains { $0.pid == w.pid && $0.id != id && model.workspace(of: $0.id) == a } } ?? false
             let waits = asking.contains { $0.id == id && $0.modal == true }
-            switch rules.place(bundle: bundle, title: title(of: id), at: here, agent: agent, agentApp: agentApp, waits: waits) {
+            switch rules.place(bundle: bundle, title: title, at: here, agent: agent, agentApp: agentApp, waits: waits) {
             case .stay: continue
             case .pin:
                 pin(id, true)
@@ -707,7 +720,35 @@ final class Spaces {
                 away = away || !model.isShown(n)
             }
         }
+        if !titleWait.isEmpty { askTitles() }
         return away
+    }
+
+    /// Reads the titles of windows placeByRule holds, a quarter second on, and places them again: once titled, or once
+    /// they have waited `TileRules.titleWait`.
+    private func askTitles() {
+        guard !titleAsked else { return }
+        titleAsked = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
+            guard let self else { return }
+            self.titleAsked = false
+            guard self.active else { self.titleWait = [:]; return }
+            for pid in Set(self.titleWait.keys.compactMap { self.windows[$0]?.pid }) {
+                self.refreshDetails(of: pid) { [weak self] in
+                    guard let self, self.active else { return }
+                    let held = self.titleWait.keys.filter { self.windows[$0]?.pid == pid }
+                    guard !held.isEmpty, self.placeByRule(held) else { return }
+                    let again: () -> Void = { [weak self] in
+                        guard let self, self.active, !self.switching else { return }
+                        self.switchTo(self.model.current, takeFocus: false, announce: false)
+                    }
+                    if self.switching { self.enqueue(again) } else { again() }
+                }
+            }
+            // A held window that closed has no app to ask.
+            self.titleWait = self.titleWait.filter { self.windows[$0.key] != nil }
+            if !self.titleWait.isEmpty { self.askTitles() }
+        }
     }
 
     /// Whether workspace `n` holds any window: `agent on N` refuses a workspace someone is using.

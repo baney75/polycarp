@@ -75,9 +75,10 @@ A kept width is by app and workspace, the app's latest elsewhere. It changes the
 Bundle ids match in any case and title words as a case-insensitive part of the title. The first float or tile rule that
 matches decides, then `tiling.float`, then the built-in utilities; a person's ⌃⌥F wins over all of them. The decision is
 made once a window has a title when its app has a rule with title words, at once otherwise, and kept until the rules
-change. Pin and workspace rules apply once, to a new window no agent claimed, after claims; never to or from the agent
-workspace, nor to a window of an app with a window there or one that waits on you. Titles are read only while a rule has
-title words, and never reach a trace line or a saved file.
+change. Pin and workspace rules apply once, to a new window no agent claimed, after claims, whether or not tiling is on;
+one with title words waits up to 2 s for an untitled window's title. Never to or from the agent workspace, nor to a window
+of an app with a window there or one that waits on you. Only the titles of apps a rule has words for are read, and they
+never reach a trace line or a saved file.
 
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget

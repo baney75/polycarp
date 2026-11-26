@@ -52,6 +52,27 @@ final class TileRuleTests: XCTestCase {
         XCTAssertEqual(TileRules([rule("com.apple.Music float"), rule("com.apple.Music pin")]).placement(bundle: "com.apple.Music", title: ""), .pin)
     }
 
+    /// A window whose app sets its title a moment late waits for it before a pin or workspace rule with words judges it.
+    func testAPlacementWaitsForTheTitleItsRuleNeeds() {
+        let r = TileRules([rule("com.apple.Safari 3 Settings"), rule("com.apple.Notes pin Quick"), rule("com.apple.Mail 4"), rule("com.apple.Maps float Route")])
+        XCTAssertTrue(r.waitsForTitle(bundle: "com.apple.Safari", title: "", waited: 0))
+        XCTAssertTrue(r.waitsForTitle(bundle: "com.apple.safari", title: "", waited: 1.9), "bundle ids in any case")
+        XCTAssertTrue(r.waitsForTitle(bundle: "com.apple.Notes", title: "", waited: 0), "a pin rule waits too")
+        XCTAssertFalse(r.waitsForTitle(bundle: "com.apple.Safari", title: "", waited: TileRules.titleWait), "never past the wait")
+        XCTAssertFalse(r.waitsForTitle(bundle: "com.apple.Safari", title: "Settings", waited: 0))
+        XCTAssertFalse(r.waitsForTitle(bundle: "com.apple.Mail", title: "", waited: 0), "a rule with no words needs no title")
+        XCTAssertFalse(r.waitsForTitle(bundle: "com.apple.Maps", title: "", waited: 0), "floating is the engine's to wait for")
+        XCTAssertFalse(r.waitsForTitle(bundle: "com.apple.Terminal", title: "", waited: 0))
+        // Once titled, it goes where the rule says; untitled to the end, it stays.
+        XCTAssertEqual(r.place(bundle: "com.apple.Safari", title: "Settings", at: 1, agent: 9, agentApp: false, waits: false), .to(3))
+        XCTAssertEqual(r.place(bundle: "com.apple.Safari", title: "", at: 1, agent: 9, agentApp: false, waits: false), .stay)
+        // Only the titles of an app a rule has words for are read.
+        XCTAssertTrue(r.readsTitles(of: "com.apple.SAFARI"))
+        XCTAssertTrue(r.readsTitles(of: "com.apple.Maps"))
+        XCTAssertFalse(r.readsTitles(of: "com.apple.Mail"))
+        XCTAssertFalse(r.readsTitles(of: "com.apple.Terminal"))
+    }
+
     func testANewWindowGoesWhereItsRuleSaysButNeverToOrFromTheAgent() {
         let r = TileRules([rule("com.apple.Notes 3"), rule("com.apple.Music pin"), rule("com.apple.Mail 9")])
         func place(_ bundle: String, at here: Int = 1, agentApp: Bool = false, waits: Bool = false) -> TileRules.Placed {
@@ -168,7 +189,11 @@ final class TileRuleTests: XCTestCase {
         let claim = try XCTUnwrap(SourceText.block(after: "private func placeClaimed(", in: code))
         XCTAssertTrue(claim.contains("claimed.insert(id)\n            guard WaitingWindow.claimKeeps"), "a claimed window is the agent's, even one that waits")
         let place = try XCTUnwrap(SourceText.block(after: "private func placeByRule(", in: code))
-        XCTAssertTrue(place.contains("rules.place(bundle: bundle, title: title(of: id), at: here, agent: agent, agentApp: agentApp, waits: waits)"))
+        XCTAssertTrue(place.contains("rules.place(bundle: bundle, title: title, at: here, agent: agent, agentApp: agentApp, waits: waits)"))
+        XCTAssertTrue(place.contains("let title = rules.readsTitles(of: bundle) ? title(of: id) : \"\""), "only a ruled app's titles are read")
+        XCTAssertTrue(place.contains("if rules.waitsForTitle(bundle: bundle, title: title, waited: now.timeIntervalSince(since)) {\n                titleWait[id] = since"))
+        let ask = try XCTUnwrap(SourceText.block(after: "private func askTitles()", in: code))
+        XCTAssertTrue(ask.contains("self.placeByRule(held)"), "a held window is placed once its title is read")
         XCTAssertTrue(place.contains("model.workspace(of: $0.id) == a"))
         XCTAssertTrue(place.contains("$0.id == id && $0.modal == true"))
         XCTAssertTrue(place.contains("away = away || !model.isShown(n)"))
@@ -178,7 +203,7 @@ final class TileRuleTests: XCTestCase {
         }
         // Titles reach the engine only when a rule has words of one.
         let look = try XCTUnwrap(SourceText.block(after: "func look()", in: SourceText.code("Sources/BaneySpaces/Tiling.swift")))
-        XCTAssertTrue(look.contains("if titled { facts[i].title = spaces.title(of: facts[i].id) }"))
-        XCTAssertTrue(look.contains("let titled = engine.options.rules.contains { $0.title != nil }"))
+        XCTAssertTrue(look.contains("if titled, ruled.readsTitles(of: facts[i].bundle) { facts[i].title = spaces.title(of: facts[i].id) }"))
+        XCTAssertTrue(look.contains("let titled = ruled.rules.contains { $0.title != nil }"))
     }
 }
