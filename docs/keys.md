@@ -80,6 +80,10 @@ only while a Settings switch is on; Always means it always works there.
 | ⌃⌥Return | Make the window the main one | Anywhere | While this workspace tiles |
 | ⌃⌥F | Float the window, or tile it again | Anywhere | While this workspace tiles |
 | ⌃⌥M | Give the window the whole area, or put it back | Anywhere | While this workspace tiles |
+| ⌃⌥G | Make the tile a group of tabs, or take it apart | Anywhere | While this workspace tiles |
+| ⌃⌥⇧⌘←→↑↓ | Move the window into the tile that way, or out of its group | Anywhere | While this workspace tiles |
+| ⌃⌥Tab | Focus the next window of the group | Anywhere | While this workspace tiles |
+| ⌃⌥⇧Tab | Focus the previous window of the group | Anywhere | While this workspace tiles |
 | ⌃⌥N | Send the window to the next display | Anywhere | While this workspace tiles |
 
 ## Terminal

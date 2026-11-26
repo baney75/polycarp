@@ -118,6 +118,8 @@ public struct TilingEngine: Equatable, Sendable {
         /// The layout it left, with it.
         var whole: TileLayout
         var beside: WindowID?
+        /// The windows of the group it was in, itself among them.
+        var mates: [WindowID] = []
     }
 
     struct Slot: Equatable, Sendable {
@@ -125,6 +127,7 @@ public struct TilingEngine: Equatable, Sendable {
         var area = CGRect.zero
         var away: [WindowID: Away] = [:]
         var focused: WindowID?
+        var groups: [TilingGroup] = []
     }
 
     /// What was last asked of a window.
@@ -293,14 +296,13 @@ public struct TilingEngine: Equatable, Sendable {
         let gone = Set(tiling.filter(\.away).map(\.id)).union(waiting.keys), present = Set(tiling.filter { !$0.away }.map(\.id))
         // Windows that leave together each remember the layout with all of them in it.
         let whole = slot.layout
-        for id in whole.windows where !present.contains(id) {
-            if gone.contains(id) { slot.away[id] = Away(whole: whole, beside: Self.sibling(of: id, in: whole)) }
-            slot.layout.remove(id, area: place.area)
-        }
+        slot.remember(gone, beside: { Self.sibling(of: $0, in: whole) })
+        slot.ungroup(Set(slot.all).subtracting(present))
+        for id in slot.layout.windows where !present.contains(id) { slot.layout.remove(id, area: place.area) }
         slot.away = slot.away.filter { gone.contains($0.key) || present.contains($0.key) }
         for w in tiling where !w.away { if let was = slot.away.removeValue(forKey: w.id) { bring(w.id, back: was, present, &slot) } }
         // Windows tiled for the first time keep the order they stand in; later ones come beside the focused one.
-        let new = tiling.filter { !$0.away && !slot.layout.contains($0.id) }
+        let new = tiling.filter { !$0.away && !slot.holds($0.id) }
         let order = fresh ? new.sorted { ($0.frame.minX, $0.frame.minY, $0.id) < ($1.frame.minX, $1.frame.minY, $1.id) }
                           : new.sorted { $0.id < $1.id }
         var beside = fresh ? nil : slot.focused
@@ -311,9 +313,12 @@ public struct TilingEngine: Equatable, Sendable {
         // In `floating` a window stays where it is put, so there is no frame to go back to.
         for w in tiling where !w.away && before[w.id] == nil && slot.layout.style != .floating { before[w.id] = w.frame }
         slot.layout.sync(slot.layout.windows, focused: nil, area: place.area)
-        if let f = focused, slot.layout.contains(f) { slot.focused = f }
+        if let f = focused, slot.holds(f) {
+            slot.show(f)
+            slot.focused = f
+        }
         if let f = slot.focused, !slot.layout.contains(f) { slot.focused = nil }
-        slot.layout.reveal(slot.focused, area: place.area, gaps: options.gaps, minimums: minimums)
+        slot.layout.reveal(slot.focused, area: place.area, gaps: options.gaps, minimums: needs(slot))
         slots[key] = slot
         lastDisplay[workspace] = place.display
     }
@@ -332,8 +337,10 @@ public struct TilingEngine: Equatable, Sendable {
 
     mutating func insert(_ id: WindowID, beside: WindowID?, mirrored: Bool, _ slot: inout Slot) {
         let neighbor = beside.flatMap { slot.layout.contains($0) ? $0 : nil } ?? slot.layout.windows.last
+        // A window opened in a group joins it.
+        if landing[id] == nil, let beside, slot.group(beside) != nil { return slot.join(id, to: beside, showing: false) }
         slot.layout.insert(id, beside: beside, area: slot.area)
-        if let point = landing.removeValue(forKey: id), let drop = slot.layout.drop(id, at: point, area: slot.area, gaps: options.gaps, minimums: minimums) {
+        if let point = landing.removeValue(forKey: id), let drop = slot.layout.drop(id, at: point, area: slot.area, gaps: options.gaps, minimums: needs(slot)) {
             slot.layout.apply(drop, to: id, area: slot.area)
         } else if mirrored, let neighbor, neighbor != id {
             slot.layout.swap(id, neighbor)
@@ -343,6 +350,12 @@ public struct TilingEngine: Equatable, Sendable {
     /// A window back from the Dock or from hiding takes the place it left, when the rest of the layout is as it was.
     /// Else it goes beside the window it was beside.
     func bring(_ id: WindowID, back was: Away, _ present: Set<WindowID>, _ slot: inout Slot) {
+        if let mate = was.mates.last(where: { $0 != id && slot.holds($0) }) { return slot.join(id, to: mate, showing: false, mates: was.mates) }
+        defer {
+            // Whatever its memory held, it has a tile.
+            if slot.group(id) == nil, !slot.layout.contains(id) { slot.layout.insert(id, beside: was.beside, area: slot.area) }
+            if !was.mates.isEmpty, slot.group(id) == nil { slot.groups.append(TilingGroup(members: [id])) }
+        }
         var whole = was.whole
         let now = Set(slot.layout.windows)
         for other in whole.windows where other != id && !now.contains(other) { whole.remove(other, area: slot.area) }
@@ -374,6 +387,7 @@ public struct TilingEngine: Equatable, Sendable {
     public func frames(_ workspace: Int) -> [WindowID: CGRect] {
         guard let key = key(workspace), let slot = slots[key] else { return [:] }
         var (out, stacked) = tiles(workspace)
+        if Self.strips(slot) { for g in slot.groups { if let f = slot.front(of: g), let t = out[f] { out[f] = TilingGroup.inner(t) } } }
         let order = slot.layout.windows
         for id in stacked {
             let i = order.firstIndex(of: id)!
@@ -381,13 +395,13 @@ public struct TilingEngine: Equatable, Sendable {
             guard let host, var f = out[host] else { continue }
             // One wider or higher than that tile lies over the next, and not off the display.
             if let m = minimums[id], let box = options.gaps.inset(slot.area) {
-                // In a strip its tile may be out of view already.
                 let end = CGPoint(x: max(box.x0 + box.width, f.maxX), y: max(box.y0 + box.height, f.maxY))
                 f.size = CGSize(width: max(f.width, min(m.width, box.width)), height: max(f.height, min(m.height, box.height)))
                 f.origin = CGPoint(x: min(f.minX, end.x - f.width), y: min(f.minY, end.y - f.height))
             }
             out[id] = f
         }
+        for g in slot.groups { if let f = slot.front(of: g).flatMap({ out[$0] }) { for m in g.members { out[m] = f } } }
         return out
     }
 
@@ -395,16 +409,17 @@ public struct TilingEngine: Equatable, Sendable {
     func tiles(_ workspace: Int) -> (own: [WindowID: CGRect], stacked: [WindowID]) {
         guard let key = key(workspace), let slot = slots[key], slot.layout.style != .floating else { return ([:], []) }
         let lone = options.lone.width(in: slot.area).map { CGSize(width: $0, height: .infinity) }
+        let least = needs(slot)
         func solve(_ l: TileLayout) -> [WindowID: CGRect] {
             // A strip scrolls on what is solved: a window stacked or rounded up moves the columns after it.
             var l = l
-            l.reveal(slot.focused, area: slot.area, gaps: options.gaps, minimums: minimums)
-            let out = l.frames(in: slot.area, gaps: options.gaps, minimums: minimums, loneMax: lone)
-            guard !l.full, let least = roundedUp(l, out, slot.area) else { return out }
             l.reveal(slot.focused, area: slot.area, gaps: options.gaps, minimums: least)
-            return l.frames(in: slot.area, gaps: options.gaps, minimums: least, loneMax: lone)
+            let out = l.frames(in: slot.area, gaps: options.gaps, minimums: least, loneMax: lone)
+            guard !l.full, let more = roundedUp(l, out, slot, least) else { return out }
+            l.reveal(slot.focused, area: slot.area, gaps: options.gaps, minimums: more)
+            return l.frames(in: slot.area, gaps: options.gaps, minimums: more, loneMax: lone)
         }
-        guard !slot.layout.full, !fits(slot.layout, slot.area, minimums) else { return (solve(slot.layout), []) }
+        guard !slot.layout.full, !fits(slot.layout, slot.area, least) else { return (solve(slot.layout), []) }
         var out = Set<WindowID>()
         func left() -> TileLayout {
             var l = slot.layout
@@ -412,27 +427,29 @@ public struct TilingEngine: Equatable, Sendable {
             return l
         }
         let byUse = slot.layout.windows.sorted { rank($0, slot) > rank($1, slot) }
-        for id in byUse where !fits(left(), slot.area, minimums) { out.insert(id) }
+        for id in byUse where !fits(left(), slot.area, least) { out.insert(id) }
         // One that left before it did any good has a tile after all.
         for id in byUse.reversed() where out.contains(id) {
             out.remove(id)
-            if !fits(left(), slot.area, minimums) { out.insert(id) }
+            if !fits(left(), slot.area, least) { out.insert(id) }
         }
         return (solve(left()), byUse.filter(out.contains))
     }
 
     /// The minimums with what windows rounded these tiles up to, as far as there is room. Nil when none did.
-    private func roundedUp(_ layout: TileLayout, _ tiles: [WindowID: CGRect], _ area: CGRect) -> [WindowID: CGSize]? {
-        var out = minimums
+    private func roundedUp(_ layout: TileLayout, _ tiles: [WindowID: CGRect], _ slot: Slot, _ least: [WindowID: CGSize]) -> [WindowID: CGSize]? {
+        var out = least
         for (id, r) in rounded.sorted(by: { $0.key < $1.key }) {
             guard let t = tiles[id] else { continue }
-            for (side, length, tile) in [(\CGSize.width, r.width, t.width), (\.height, r.height, t.height)] where length > tile && length - tile <= Self.grid {
+            // A group's window is its strip less high than its tile.
+            let strip = slot.group(id) != nil && Self.strips(slot) ? t.height - TilingGroup.inner(t).height : 0
+            for (side, length, tile) in [(\CGSize.width, r.width, t.width), (\.height, r.height + strip, t.height)] where length > tile && length - tile <= Self.grid {
                 var more = out
                 more[id, default: .zero][keyPath: side] = length
-                if fits(layout, area, more) { out = more }
+                if fits(layout, slot.area, more) { out = more }
             }
         }
-        return out == minimums ? nil : out
+        return out == least ? nil : out
     }
 
     /// How long ago a window had the focus: the layout's own focused window first, one never seen focused last.
@@ -492,16 +509,20 @@ public struct TilingEngine: Equatable, Sendable {
     mutating func rename(_ old: WindowID, to new: WindowID) {
         for key in slots.keys {
             slots[key]!.away[new] = nil
+            // Two windows of one group once, tabs of one now: one place is enough.
+            if slots[key]!.holds(old) { slots[key]!.take(new) }
             slots[key]!.layout.replace(old, with: new)
+            for i in slots[key]!.groups.indices { slots[key]!.groups[i].members = slots[key]!.groups[i].members.map { $0 == old ? new : $0 } }
             if slots[key]!.focused == old { slots[key]!.focused = new }
             if let a = slots[key]!.away.removeValue(forKey: old) {
                 var whole = a.whole
                 whole.replace(old, with: new)
-                slots[key]!.away[new] = Away(whole: whole, beside: a.beside)
+                slots[key]!.away[new] = Away(whole: whole, beside: a.beside, mates: a.mates)
             }
             for id in slots[key]!.away.keys {
                 slots[key]!.away[id]!.whole.replace(old, with: new)
                 if slots[key]!.away[id]!.beside == old { slots[key]!.away[id]!.beside = new }
+                slots[key]!.away[id]!.mates = slots[key]!.away[id]!.mates.map { $0 == old ? new : $0 }
             }
         }
         func carry<T>(_ d: inout [WindowID: T]) { if d[new] == nil, let v = d[old] { d[new] = v } }
@@ -520,9 +541,9 @@ public struct TilingEngine: Equatable, Sendable {
         recent.removeAll { now[$0] == nil }
         claimed.formIntersection(now.keys)
         for key in slots.keys {
-            for id in slots[key]!.layout.windows where now[id]?.workspace != key.workspace && waiting[id] == nil {
-                slots[key]!.layout.remove(id, area: slots[key]!.area)
-            }
+            let left = Set(slots[key]!.all.filter { now[$0]?.workspace != key.workspace && waiting[$0] == nil })
+            if !left.isEmpty { slots[key]!.ungroup(left) }
+            for id in left { slots[key]!.layout.remove(id, area: slots[key]!.area) }
             slots[key]!.away = slots[key]!.away.filter { now[$0.key]?.workspace == key.workspace || waiting[$0.key] != nil }
         }
     }

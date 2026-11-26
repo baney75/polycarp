@@ -12,6 +12,8 @@ public struct TilingSaved: Codable, Equatable, Sendable {
         var key: TilingKey
         var layout: TileLayout
         var focused: WindowID?
+        /// The windows of each group, in tab order. Nil in a file from before there were any.
+        var groups: [[WindowID]]?
     }
 
     struct Window: Codable, Equatable, Sendable {
@@ -64,8 +66,12 @@ extension TilingEngine {
             var s = slot
             // The windows that are away are kept in their places.
             for id in slot.away.keys.sorted() { if let was = s.away.removeValue(forKey: id) { bring(id, back: was, [], &s) } }
-            for id in s.layout.windows where know(id) == nil { s.layout.remove(id, area: s.area) }
-            if !s.layout.windows.isEmpty { out.slots.append(.init(key: key, layout: s.layout, focused: s.focused)) }
+            let unknown = Set(s.all.filter { know($0) == nil })
+            s.ungroup(unknown)
+            for id in unknown { s.layout.remove(id, area: s.area) }
+            if !s.layout.windows.isEmpty {
+                out.slots.append(.init(key: key, layout: s.layout, focused: s.focused, groups: s.groups.isEmpty ? nil : s.groups.map(\.members)))
+            }
         }
         // A saved window still away is kept too, in a layout or not: one owed a frame or a float waits for the next run.
         for id in Set(before.keys).union(choice.keys).union(waiting.keys) { _ = know(id) }
@@ -95,7 +101,9 @@ extension TilingEngine {
                 if let p = phantom[id] { layout.replace(id, with: p) } else { layout.remove(id, area: .zero) }
             }
             guard !layout.windows.isEmpty else { continue }
-            slots[s.key] = Slot(layout: layout, focused: s.focused.flatMap { phantom[$0] })
+            var slot = Slot(layout: layout, focused: s.focused.flatMap { phantom[$0] })
+            slot.restore((s.groups ?? []).map { $0.compactMap { phantom[$0] } })
+            slots[s.key] = slot
             lastDisplay[s.key.workspace] = s.key.display
         }
         dropUnneeded()
@@ -126,7 +134,7 @@ extension TilingEngine {
         guard let w = waiting.removeValue(forKey: phantom) else { return }
         claimed.insert(id)
         // Tiled already, before its app gave it a title: it leaves that place for its own.
-        for key in slots.keys { slots[key]!.layout.remove(id, area: slots[key]!.area) }
+        for key in slots.keys { slots[key]!.take(id) }
         rename(phantom, to: id)
         if let b = w.before { before[id] = b }
         if let f = w.floats { choice[id] = f }
@@ -137,7 +145,7 @@ extension TilingEngine {
     mutating func dropUnneeded() {
         guard !waiting.isEmpty else { return }
         var placed = Set<WindowID>()
-        for s in slots.values { placed.formUnion(s.layout.windows); placed.formUnion(s.away.keys) }
+        for s in slots.values { placed.formUnion(s.all); placed.formUnion(s.away.keys) }
         waiting = waiting.filter { placed.contains($0.key) || $0.value.floats != nil || $0.value.before != nil }
     }
 }

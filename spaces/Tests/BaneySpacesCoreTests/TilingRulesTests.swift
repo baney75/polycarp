@@ -13,7 +13,7 @@ final class TilingEnginePropertyTests: XCTestCase {
     private func step(_ f: inout FakeWindows, _ r: inout TileRandom, _ next: inout WindowID) {
         let ids = f.wins.keys.sorted()
         let id = ids.isEmpty ? 0 : ids[r.below(ids.count)]
-        switch r.below(16) {
+        switch r.below(18) {
         case 0, 1, 2:
             guard ids.count < 12 else { return }
             next += 1
@@ -57,6 +57,15 @@ final class TilingEnginePropertyTests: XCTestCase {
             f.engine.apply(FakeWindows.options {
                 $0.style = style; $0.gaps = TileGaps(inner: inner, outer: inner); $0.side = side; $0.off = off; $0.floatApps = ["float"]
             })
+        case 16:
+            // Groups made, taken apart, joined and left.
+            guard let w = f.wins[id]?.w, f.shown[w.workspace] != nil else { return }
+            let commands: [TilingCommand] = [.group, .groupCycle(backward: false)] + TileDirection.allCases.map { .join($0) }
+            _ = f.engine.run(commands[r.below(commands.count)], on: w.workspace, focused: id)
+            f.focused = id
+        case 17:
+            guard let w = f.wins[id]?.w, let strip = f.engine.tabs(w.workspace).first?.frame else { return }
+            f.engine.drop(id, on: CGPoint(x: strip.midX, y: strip.midY))
         case 14: if f.wins[id] != nil { f.engine.choice[id] = r.below(2) == 0 }
         default:
             guard f.wins[id] != nil else { return }
@@ -82,9 +91,20 @@ final class TilingEnginePropertyTests: XCTestCase {
             let targets = f.engine.frames(n)
             XCTAssertEqual(Set(targets.keys), should, where_)
             let shared = Set(f.engine.tiles(n).stacked)
+            let slot = f.engine.slots[f.engine.key(n)!]!
+            let grouped = slot.groups.flatMap(\.members)
+            XCTAssertEqual(grouped.count, Set(grouped).count, "\(where_): in two groups")
+            for g in slot.groups {
+                XCTAssertEqual(g.members.filter(slot.layout.contains).count, 1, "\(where_): one front")
+                XCTAssertEqual(Set(g.members.map { "\(targets[$0] ?? .null)" }).count, 1, "\(where_): a group is one tile")
+            }
+            for strip in f.engine.tabs(n) {
+                XCTAssertTrue(place.area.contains(strip.frame), "\(where_): a strip outside")
+                for (id, t) in targets { XCTAssertFalse(strip.frame.intersects(t), "\(where_): \(id) over a strip") }
+            }
             for (id, t) in targets {
                 XCTAssertTrue(place.area.contains(t), "\(where_): \(id) at \(t) outside \(place.area)")
-                for (other, o) in targets where other > id && !shared.contains(id) && !shared.contains(other) {
+                for (other, o) in targets where other > id && o != t && !shared.contains(id) && !shared.contains(other) {
                     XCTAssertFalse(t.intersects(o), "\(where_): \(id) \(t) over \(other) \(o)")
                 }
             }

@@ -116,6 +116,10 @@ public enum TilingKeys {
         add("promote", "Make the window the main one", "ctrl+opt+Return")
         add("float", "Float the window, or tile it again", "ctrl+opt+F")
         add("full", "Give the window the whole area, or put it back", "ctrl+opt+M")
+        add("group", "Make the tile a group of tabs, or take it apart", "ctrl+opt+G")
+        for d in sides { add("group-" + d.name, "Move the window into the tile " + d.phrase + ", or out of its group", "ctrl+opt+shift+cmd+" + d.key) }
+        add("group-next", "Focus the next window of the group", "ctrl+opt+Tab")
+        add("group-previous", "Focus the previous window of the group", "ctrl+opt+shift+Tab")
         add("next-display", "Send the window to the next display", "ctrl+opt+N")
         for style in ["dwindle", "columns", "main", "scrolling", "floating"] { add("style-" + style, "Tile in the " + style + " style", "") }
         return rows
