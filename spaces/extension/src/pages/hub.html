@@ -54,6 +54,14 @@
     <div class="cbar"><button class="btn quiet" id="laterCancel" type="button">Cancel</button></div>
   </form>
 </dialog>
+<dialog class="rules leave" id="leave" aria-labelledby="leaveTitle" aria-describedby="leaveWhat">
+  <form method="dialog" id="leaveForm">
+    <h2 id="leaveTitle">Leave this list?</h2>
+    <p id="leaveWhat"></p>
+    <pre id="leaveReq" aria-label="What will be sent"></pre>
+    <div class="cbar"><button class="btn primary" id="leaveGo" type="submit">Send the request</button><button class="btn quiet" id="leaveCancel" type="button">Cancel</button></div>
+  </form>
+</dialog>
 <div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button class="btn quiet" id="toastUndo" type="button">Undo <kbd>Z</kbd></button></div>
 <script src="../shared/core.js"></script>
 <script src="../shared/icons.js"></script>
@@ -67,6 +75,7 @@
 <script src="../hub/search.js"></script>
 <script src="../hub/rules.js"></script>
 <script src="../hub/later.js"></script>
+<script src="../hub/unsubscribe.js"></script>
 <script src="../hub/outbox.js"></script>
 <script src="hub-compose.js"></script>
 <script src="hub.js"></script>

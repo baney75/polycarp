@@ -113,6 +113,7 @@
     function add(raw, kind) { box.set(raw.remoteId, Object.assign({}, raw)); log.push({ kind: kind || "put", id: raw.remoteId }); }
     for (const raw of corpus(Object.assign({ me: o.address }, o))) add(raw);
     let next = 1;
+    const unsubscribed = [];
     const guard = (name) => { if (o.fail.includes(name)) throw new Error("the made-up account refused " + name); };
     const change = (ids, fn) => { for (const id of ids) { const m = box.get(id); if (m) { fn(m); log.push({ kind: "put", id }); } } return true; };
 
@@ -164,10 +165,13 @@
         for (const id of ids) { const m = box.get(id); if (m) messages.push(Object.assign({}, m)); else removed.push(id); }
         return { messages, removed, cursor: log.length };
       },
+      // Made-up lists take a one-click unsubscribe here, so made-up mail never reaches the network.
+      async unsubscribe(p) { guard("unsubscribe"); unsubscribed.push(p.url); return { ok: true, status: 200 }; },
       // Test hooks: new mail arrives, or a message goes away on the account's side.
       deliver(raw) { add(raw); },
       drop(id) { box.delete(id); log.push({ kind: "del", id }); },
-      sent
+      sent,
+      unsubscribed
     };
   }
 
