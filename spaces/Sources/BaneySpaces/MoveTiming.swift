@@ -17,23 +17,9 @@ enum MoveTiming {
         func number(_ key: String, _ standard: Int) -> Int { env[key].flatMap(Int.init) ?? standard }
         let apps = number("BANEYSPACES_RENDER_MOVE_APPS", 4), each = number("BANEYSPACES_RENDER_MOVE_WINDOWS", 2)
         let delay = number("BANEYSPACES_RENDER_MOVE_DELAY", 0)
-        guard AXIsProcessTrusted() else { print("move timing: no Accessibility permission here"); return 2 }
-        var helpers: [(process: Process, stop: Pipe)] = []
-        defer { for h in helpers { h.stop.fileHandleForWriting.closeFile(); h.process.waitUntilExit() } }
-        var windows: [Window] = []
-        for _ in 0..<apps {
-            let p = Process(), stop = Pipe(), said = Pipe()
-            p.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
-            p.arguments = ["--render", NSTemporaryDirectory()]
-            p.environment = env.merging(["BANEYSPACES_RENDER_MOVE_HELPER": "\(each) \(delay)"]) { $1 }
-            p.standardInput = stop
-            p.standardOutput = said
-            do { try p.run() } catch { print("move timing: \(error)"); return 2 }
-            helpers.append((p, stop))
-            _ = said.fileHandleForReading.availableData
-            windows += list(p.processIdentifier)
-        }
-        guard windows.count == apps * each else { print("move timing: \(windows.count) of \(apps * each) helper windows"); return 2 }
+        let helpers = Helpers()
+        defer { helpers.stop() }
+        guard let windows = helpers.start(apps: apps, each: each, delay: delay) else { return 2 }
         let screens = Windows.screens(), spot = Geometry.hidingSpot(screens: screens)
         let home = Dictionary(uniqueKeysWithValues: windows.enumerated().map { i, w in
             (w.id, CGRect(x: 100 + 40 * Double(i), y: 120 + 30 * Double(i), width: 400, height: 300))
@@ -105,6 +91,33 @@ enum MoveTiming {
         return lost == 0 ? 0 : 1
     }
 
+    /// The copies of the app whose windows are moved.
+    final class Helpers {
+        private var running: [(process: Process, stop: Pipe)] = []
+
+        func stop() { for h in running { h.stop.fileHandleForWriting.closeFile(); h.process.waitUntilExit() } }
+
+        /// Their windows, or nil with the reason printed.
+        @MainActor func start(apps: Int, each: Int, delay: Int) -> [Window]? {
+            guard AXIsProcessTrusted() else { print("move timing: no Accessibility permission here"); return nil }
+            var windows: [Window] = []
+            for _ in 0..<apps {
+                let p = Process(), stop = Pipe(), said = Pipe()
+                p.executableURL = URL(fileURLWithPath: CommandLine.arguments[0])
+                p.arguments = ["--render", NSTemporaryDirectory()]
+                p.environment = ProcessInfo.processInfo.environment.merging(["BANEYSPACES_RENDER_MOVE_HELPER": "\(each) \(delay)"]) { $1 }
+                p.standardInput = stop
+                p.standardOutput = said
+                do { try p.run() } catch { print("move timing: \(error)"); return nil }
+                running.append((p, stop))
+                _ = said.fileHandleForReading.availableData
+                windows += list(p.processIdentifier)
+            }
+            guard windows.count == apps * each else { print("move timing: \(windows.count) of \(apps * each) helper windows"); return nil }
+            return windows
+        }
+    }
+
     /// A helper: its windows, until its standard input closes.
     static func help(_ asked: String) -> Int32 {
         let numbers = asked.split(separator: " ").compactMap { Int($0) }
@@ -134,7 +147,7 @@ enum MoveTiming {
     }
 
     /// An app's windows as a scan would list them. A read that fails here is not held against the app.
-    private static func list(_ pid: pid_t) -> [Window] {
+    fileprivate static func list(_ pid: pid_t) -> [Window] {
         let ax = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(ax, 0.25)
         var raw: CFTypeRef?
@@ -145,8 +158,8 @@ enum MoveTiming {
         }
     }
 
-    private static func spin(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
-    private static func now() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e6 }
+    static func spin(_ seconds: Double) { RunLoop.current.run(until: Date().addingTimeInterval(seconds)) }
+    static func now() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1e6 }
 }
 
 /// A window whose app is slow to answer: each Accessibility read or move of it takes `delay` µs on the app's main thread.

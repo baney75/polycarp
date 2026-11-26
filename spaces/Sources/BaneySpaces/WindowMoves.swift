@@ -19,7 +19,9 @@ enum WindowMoves {
 
     /// Where the window server has these windows now; one it doesn't list isn't in the answer. It asks no app, and asks the
     /// server for these alone: its whole list takes 5 ms, and a switch looks every 10.
-    static func bounds(of ids: Set<WindowID>) -> [WindowID: CGRect] {
+    static func bounds(of ids: Set<WindowID>) -> [WindowID: CGRect] { describe(ids) { _, bounds in bounds } }
+
+    static func describe<T>(_ ids: Set<WindowID>, _ take: ([String: Any], CGRect) -> T) -> [WindowID: T] {
         // The window server wants the bare numbers in the array, not NSNumbers.
         var raw = ids.map { UnsafeRawPointer(bitPattern: UInt($0)) }
         guard !raw.isEmpty, let array = CFArrayCreate(nil, &raw, raw.count, nil) else { return [:] }
@@ -27,7 +29,7 @@ enum WindowMoves {
         return Dictionary(list.compactMap { w in
             guard let id = (w[kCGWindowNumber as String] as? NSNumber)?.uint32Value,
                   let b = (w[kCGWindowBounds as String] as? NSDictionary).flatMap({ CGRect(dictionaryRepresentation: $0) }) else { return nil }
-            return (id, b)
+            return (id, take(w, b))
         }) { $1 }
     }
 

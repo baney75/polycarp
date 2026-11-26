@@ -11,7 +11,7 @@ final class Spaces {
     private(set) var model = Workspaces()
     private var saved: SavedFrames
     private var windows: [WindowID: Window] = [:]
-    private(set) var switching = false
+    private(set) var switching = false { didSet { Window.gate.set(shut: switching) } }
     /// Set with `switching` while a switch (or a key press held in order with switches) waits on a background scan
     /// before anything moves: a scan landing then is applied, since nothing it saw has moved yet.
     private var holding = false
@@ -127,14 +127,20 @@ final class Spaces {
         set { UserDefaults.standard.set(newValue ?? 0, forKey: "agentWorkspace") }
     }
     private var screensWork: DispatchWorkItem?
+    /// A display change macOS may still be moving windows for.
+    var displaysSettling: Bool { screensWork != nil }
     var onChange: (() -> Void)?
+    /// A scan was applied or a switch ended: the window list is as new as it gets. For tiling (`Tiling.look`).
+    var onSettled: () -> Void = {}
+    /// A window got the focus on its workspace.
+    var onFocus: (WindowID) -> Void = { _ in }
 
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Polycarp")
     static let framesURL = folder.appendingPathComponent("frames.json")
     static let stateURL = folder.appendingPathComponent("state.json")
     static let layoutURL = folder.appendingPathComponent("layout.json")
-    private static let writer = DispatchQueue(label: "com.baney.polycarp.persist", qos: .utility)
+    static let writer = DispatchQueue(label: "com.baney.polycarp.persist", qos: .utility)
 
     init() {
         saved = SavedFrames.load(from: Spaces.framesURL)
@@ -337,6 +343,7 @@ final class Spaces {
             persist()
             onChange?()
         }
+        if !switching { onSettled() }
     }
 
     /// Launch, quit and lost permission only: every app asked, with the main thread waiting. `start` places every
@@ -1198,6 +1205,7 @@ final class Spaces {
     private func noteFocus(_ id: WindowID) {
         model.noteFocus(id)
         windowOrder.note(id)
+        onFocus(id)
         guard let pid = windows[id]?.pid, let n = model.workspace(of: id) else { return }
         activations.note("\(pid)", on: n, at: Date().timeIntervalSinceReferenceDate)
     }
@@ -1536,7 +1544,9 @@ final class Spaces {
     func screensChanged() {
         screensWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            guard let self, self.active else { return }
+            guard let self else { return }
+            self.screensWork = nil
+            guard self.active else { return }
             if self.switching { return self.enqueue { [weak self] in self?.screensChanged() } }
             // A display plugged in shows a workspace of its own; one unplugged stops showing its.
             self.noteDisplays()
@@ -1559,6 +1569,16 @@ final class Spaces {
 
     /// A window's title as the last background read found it (`details`); "" before the first.
     func title(of id: WindowID) -> String { details[id]?.title ?? "" }
+
+    // What tiling reads (`tilingView`).
+    /// The window in front on the workspace in use, by the window server's stacking order.
+    func front() -> WindowID? {
+        Windows.front(in: windows) { [saved] id in saved.frames[id] == nil }.flatMap { model.workspace(of: $0.id) == model.current ? $0.id : nil }
+    }
+    func window(_ id: WindowID) -> Window? { windows[id] }
+    func isMinimized(_ id: WindowID) -> Bool { details[id]?.minimized ?? false }
+    /// Out of sight with its workspace.
+    func isParked(_ id: WindowID) -> Bool { saved.frames[id] != nil }
 
     /// The windows on workspace `n`, for the viewer, the dock and the switcher. Titles are the last background read's
     /// (`refreshDetails`): nothing here asks an app.
@@ -2120,6 +2140,7 @@ final class Spaces {
             }
         }
         followIfPending()
+        if !switching { DispatchQueue.main.async { [weak self] in self?.onSettled() } }
     }
 
     /// One check of an activation BaneySpaces didn't cause, once no switch runs.

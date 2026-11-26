@@ -32,13 +32,20 @@ struct Window {
     var title: String { Windows.isResponsive(pid) ? element.string(kAXTitleAttribute) ?? "" : "" }
     var isFullScreen: Bool { Windows.isResponsive(pid) && element.bool("AXFullScreen") }
 
+    /// Writes off the main thread ask this whether they may still go (`WriteGate`): a switch shuts it, and any write on
+    /// the main thread ends what was under way.
+    static let gate = WriteGate()
+    private static func cutGate() { if Thread.isMainThread { gate.cut() } }
+
     func setOrigin(_ p: CGPoint, file: String = #fileID, line: Int = #line) {
         guard Windows.isResponsive(pid) else { return }
+        Window.cutGate()
         DragFrameTrace.write(id, .origin, origin: p, size: nil, file: file, line: line)
         withoutAnimation { element.set(kAXPositionAttribute, p, .cgPoint) }
     }
     func setSize(_ s: CGSize, file: String = #fileID, line: Int = #line) {
         guard Windows.isResponsive(pid) else { return }
+        Window.cutGate()
         DragFrameTrace.write(id, .size, origin: nil, size: s, file: file, line: line)
         withoutAnimation { element.set(kAXSizeAttribute, s, .cgSize) }
     }
@@ -50,6 +57,7 @@ struct Window {
 
     func setFrame(_ r: CGRect, file: String = #fileID, line: Int = #line) {
         guard Windows.isResponsive(pid) else { return }
+        Window.cutGate()
         DragFrameTrace.write(id, .frame, origin: r.origin, size: r.size, file: file, line: line)
         // Size, move, size again: a window that would cross a screen edge gets clamped otherwise.
         withoutAnimation {
@@ -57,6 +65,24 @@ struct Window {
             element.set(kAXPositionAttribute, r.origin, .cgPoint)
             element.set(kAXSizeAttribute, r.size, .cgSize)
         }
+    }
+
+    /// `place` off the main thread, stopped between two messages once `go` says no. True when all of it was sent.
+    func place(_ r: CGRect, currentSize: CGSize, while go: () -> Bool, file: String = #fileID, line: Int = #line) -> Bool {
+        guard Windows.isResponsive(pid), go() else { return false }
+        DragFrameTrace.write(id, .frame, origin: r.origin, size: r.size, file: file, line: line)
+        var whole = true
+        func step(_ send: () -> Void) {
+            guard whole, go() else { whole = false; return }
+            send()
+        }
+        withoutAnimation {
+            let resizes = currentSize != r.size
+            if resizes { step { element.set(kAXSizeAttribute, r.size, .cgSize) } }
+            step { element.set(kAXPositionAttribute, r.origin, .cgPoint) }
+            if resizes { step { element.set(kAXSizeAttribute, r.size, .cgSize) } }
+        }
+        return whole
     }
 
     /// While an app has AXEnhancedUserInterface on, AppKit animates every move made through
