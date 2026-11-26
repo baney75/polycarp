@@ -73,6 +73,39 @@ public final class StyleBook {
     public private(set) lazy var switcher = SwitcherStyles(lookup)
     public private(set) lazy var overview = OverviewStyles(lookup)
     public private(set) lazy var notifications = NotificationsStyles(lookup)
+    public private(set) lazy var hud = HUDStyles(lookup)
+}
+
+/// The small notices: the switch HUD, toasts and an agent's notice.
+public final class HUDStyles {
+    public final class Cell {
+        public let box: ComputedStyle
+        /// The sheet marks this state itself (`ComputedStyle.marks`), and colors its number itself.
+        public let marked, recolored: Bool
+
+        init(_ l: StyleLookup, _ states: Set<StyleState>) {
+            let plain = l.computed(surface: .hud, part: "cell")
+            box = l.computed(surface: .hud, part: "cell", states: states)
+            marked = box.marks(over: plain)
+            recolored = box.color != plain.color
+        }
+    }
+
+    public let panel, label, text, icon: ComputedStyle
+    /// A toast's symbol: the accent until `.icon` itself has a color, since `hud`'s is its text's.
+    public let symbol: StyleColor?
+    private let cells: [Cell]
+
+    init(_ l: StyleLookup) {
+        panel = l.computed(surface: .hud)
+        label = l.computed(surface: .hud, part: "label")
+        text = l.computed(surface: .hud, part: "text")
+        icon = l.computed(surface: .hud, part: "icon")
+        symbol = l.cascade(surface: .hud, part: "icon", region: nil, states: [])?.last?.own["color"] == nil ? nil : icon.color
+        cells = [Cell(l, []), Cell(l, [.current])]
+    }
+
+    public func cell(current: Bool) -> Cell { cells[current ? 1 : 0] }
 }
 
 /// The list the bell opens.

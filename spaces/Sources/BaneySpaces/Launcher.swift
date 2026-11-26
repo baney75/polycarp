@@ -1910,12 +1910,18 @@ enum Toast {
         let symbol: String
 
         var body: some View {
+            let sheet = Styles.shared.book.hud, label = sheet.label, icon = sheet.icon
             HStack(spacing: 10) {
-                Image(systemName: symbol).font(Chrome.font(16, .semibold)).foregroundStyle(Chrome.accent)
-                Text(text).font(Chrome.font(13, .semibold)).foregroundStyle(Chrome.wash())
+                if !icon.isHidden {
+                    Image(systemName: symbol).font(Chrome.font(16, .semibold)).opacity(icon.opacity ?? 1)
+                        .foregroundStyle(sheet.symbol?.swiftUI ?? Chrome.accent)
+                }
+                Text(label.cased(text)).spaced(label).font(Styled.font(label, .ui, 13, .semibold)).foregroundStyle(label.ink(Chrome.wash()))
+                    .opacity(label.opacity ?? 1)
             }
-            .padding(.horizontal, 16).padding(.vertical, 11)
-            .background(Chrome.panelBackground(.launcherMini))
+            .padding(sheet.panel, else: EdgeInsets(top: 11, leading: 16, bottom: 11, trailing: 16))
+            .background(Chrome.panelBackground(.launcherMini, style: sheet.panel))
+            .opacity(sheet.panel.opacity ?? 1)
             .padding(24)
             .environment(\.colorScheme, Chrome.scheme)
         }

@@ -867,6 +867,36 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertFalse(code.contains("lookup") || code.contains("computed("), "no row asks the cascade")
     }
 
+    func testTheHUDBookHoldsEveryPartAndKeepsTheThemesMark() {
+        let h = StyleBook(sheet("""
+        hud { color: #010101; }
+        hud .cell { color: #020202; background: #222222; }
+        hud .text { color: #030303; display: none; }
+        """), dark: true, roles: [:]).hud
+        XCTAssertEqual([h.panel, h.label, h.icon].map { $0.color?.hex }, ["#010101", "#010101", "#010101"])
+        XCTAssertNil(h.symbol, "a toast's symbol is the accent until .icon has a color")
+        XCTAssertTrue(h.text.isHidden)
+        XCTAssertFalse(h.cell(current: true).marked)
+        XCTAssertFalse(h.cell(current: true).recolored, "the number that reads on the workspace's own color stays")
+        let own = StyleBook(sheet("hud { color: #010101; } hud .icon { color: #010101; } hud .cell.current { background: #333333; color: #040404; }"), dark: true, roles: [:]).hud
+        XCTAssertEqual(own.symbol?.hex, "#010101")
+        XCTAssertTrue(own.cell(current: true).marked)
+        XCTAssertTrue(own.cell(current: true).recolored)
+        XCTAssertEqual(own.cell(current: true).box.color?.hex, "#040404")
+        XCTAssertFalse(own.cell(current: false).marked)
+    }
+
+    func testTheHUDAndTheToastsDrawFromTheSheet() throws {
+        func view(_ file: String, _ after: String) throws -> String { try XCTUnwrap(SourceText.block(after: after, in: try SourceText.code("Sources/BaneySpaces/" + file))) }
+        let grid = try view("SwitchHUD.swift", "struct HUDView"), toast = try view("Launcher.swift", "struct Message"), agent = try view("Session/SessionController.swift", "struct ToastView")
+        for part in ["styles.book.hud", "sheet.panel", "sheet.label", "sheet.text", "sheet.icon", "sheet.cell(current: on)", ".marking(own)"] { XCTAssertTrue(grid.contains(part), part) }
+        for part in ["book.hud", "sheet.panel", "sheet.label", "sheet.icon", "sheet.symbol"] { XCTAssertTrue(toast.contains(part), part) }
+        for part in ["styles.book.hud", "sheet.panel", "sheet.label", "sheet.text", "sheet.icon"] { XCTAssertTrue(agent.contains(part), part) }
+        let panel = try view("Session/SessionController.swift", "final class ToastPanel")
+        XCTAssertTrue(panel.contains("max(64, text.fittingSize.height)"), "larger text gets room")
+        XCTAssertTrue(panel.contains("sheet.borderRadius") && panel.contains("sheet.opacity ?? 1"))
+    }
+
     func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("StyleSheetStore.shared.start("), "AppDelegate starts the style sheet store")

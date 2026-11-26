@@ -26,7 +26,8 @@ enum StyleProof {
     }
     private static let digits: Set<StyleTarget> = [.launcher, .launcherRow, .launcherTitle, .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint,
                                               .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle,
-                                              .notifications, .notificationsSection, .notificationsRow, .notificationsTitle, .notificationsText, .notificationsTime]
+                                              .notifications, .notificationsSection, .notificationsRow, .notificationsTitle, .notificationsText, .notificationsTime,
+                                              .hud, .hudCell, .hudLabel]
 
     static func run() -> Int32 {
         var failed: [String] = [], tried = 0
@@ -101,6 +102,14 @@ enum StyleProof {
             }
             watcher.sample(shelf, quiet: ["com.apple.Music": "Music"])
             return [{ AnyView(NoticeList(watcher: watcher, room: 620) {}) }]
+        case .hud:
+            // The grid with an app and without, a toast, and an agent's notice.
+            let icon = NSWorkspace.shared.icon(forFile: "/System/Applications/Mail.app")
+            let full = HUDModel(), empty = HUDModel()
+            full.occupied = [1, 2]
+            full.icons = [icon]
+            return [{ AnyView(HUDView(model: full)) }, { AnyView(HUDView(model: empty)) }, { AnyView(Toast.Message(text: "Sent to 11", symbol: "star")) },
+                    { AnyView(ToastView(title: "Agent: finished 11", detail: "Invoice 117", bundleID: "com.apple.mail").frame(width: 320, height: 64)) }]
         }
     }
 
