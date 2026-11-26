@@ -1,0 +1,22 @@
+#!/bin/bash
+# One look at what is running, for lib/Agents.js: processes, the folder of each one that has a terminal, and tmux and
+# herdr panes where those are running. Reads no settings and no accounts, and asks nothing on the network.
+set -u
+ps=$(ps -ww -eo pid=,ppid=,tty=,args= | cut -c1-240)
+echo "#ps"
+printf '%s\n' "$ps"
+echo "#cwd"
+mapfile -t dirs < <(awk '$3 != "?" { print "/proc/" $1 "/cwd" }' <<<"$ps")
+if ((${#dirs[@]})); then find "${dirs[@]}" -maxdepth 0 -printf '%h\t%l\n' 2>/dev/null | sed 's|^/proc/||'; fi
+if grep -qE '(^|/| )tmux' <<<"$ps" && command -v tmux >/dev/null; then
+  # -u: without a UTF-8 locale tmux writes tabs and marks as "_". A pane whose program set no title has the host's name.
+  echo "#panes"
+  tmux -u list-panes -a -F $'#{pane_pid}\t#{pane_id}\t#{session_name}\t#{?#{==:#{pane_title},#{host}},,#{pane_title}}' 2>/dev/null
+  echo "#clients"
+  tmux -u list-clients -F $'#{client_pid}\t#{client_session}' 2>/dev/null
+fi
+if grep -qE '(^|/| )herdr' <<<"$ps" && command -v herdr >/dev/null; then
+  echo "#herdr"
+  timeout 2 herdr agent list 2>/dev/null
+fi
+exit 0

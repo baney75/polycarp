@@ -1,0 +1,223 @@
+// The line to the Polycarp app (src/shared/bridge.js) with a made-up browser: what is sent, what never is, and what the
+// app may ask. Run: node --test tests/bridge.test.mjs
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import '../src/shared/bridge.js';
+
+const B = globalThis.PolycarpBridge;
+const event = () => { const fns = new Set(); return { addListener: (f) => fns.add(f), fire: (...a) => [...fns].map((f) => f(...a)) }; };
+const tab = (id, title, more = {}) => ({ id, windowId: 1, title, url: `https://site${id}.example/`, incognito: false, active: false, groupId: -1, ...more });
+
+function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], fails = '' } = {}) {
+  const ports = [], timers = [], did = [];
+  const granted = new Set(perms);
+  const chrome = {
+    runtime: { lastError: null, connectNative: (name) => {
+      const port = { name, sent: [], onMessage: event(), onDisconnect: event(), disconnect() { port.off = true; }, postMessage: (m) => port.sent.push(structuredClone(m)) };
+      ports.push(port);
+      if (fails) queueMicrotask(() => { chrome.runtime.lastError = { message: fails }; port.onDisconnect.fire(); chrome.runtime.lastError = null; });
+      return port;
+    } },
+    permissions: { contains: async ({ permissions }) => permissions.every((p) => granted.has(p)) },
+    storage: { local: { get: async (k) => ({ [k]: set }) } },
+    tabs: { query: async (q) => tabs.filter((t) => q.windowId === undefined || t.windowId === q.windowId), get: async (id) => { const t = tabs.find((x) => x.id === id); if (!t) throw new Error('no tab'); return t; },
+      update: async (id, o) => { did.push(['tab', id, o]); return tabs.find((t) => t.id === id); },
+      onCreated: event(), onUpdated: event(), onAttached: event(), onReplaced: event(), onRemoved: event(), onActivated: event() },
+    windows: { update: async (id, o) => did.push(['window', id, o]) },
+    bookmarks: { getTree: async () => marks, onCreated: event(), onRemoved: event(), onChanged: event(), onMoved: event() },
+    history: { search: async () => history, onVisited: event(), onVisitRemoved: event() },
+    downloads: { show: (id) => did.push(['show', id]), search: async (q) => (q.id === undefined ? downloads : downloads.filter((d) => d.id === q.id)), onCreated: event(), onChanged: event(), onErased: event() },
+  };
+  const b = B.make(chrome, { later: (f) => timers.push(f), now: () => 1e12 });
+  b.listenTabs();
+  const settle = async () => { for (let i = 0; i < 12; i++) { await new Promise((r) => setImmediate(r)); for (const f of timers.splice(0)) f(); } };
+  return { b, chrome, ports, did, tabs, downloads, granted, set, settle, port: () => ports[ports.length - 1],
+    async open(sources) { await b.start(); ports[ports.length - 1].onMessage.fire({ op: 'browser.want', sources }); await settle(); },
+    sent: (op, source) => ports[ports.length - 1].sent.filter((m) => m.op === op && (!source || m.source === source)) };
+}
+
+test('nothing is sent before the app asks, and only what it asks', async () => {
+  const x = browser({ tabs: [tab(1, 'One')], perms: ['nativeMessaging', 'history'], set: { history: true }, history: [{ url: 'https://h.example/', title: 'H' }] });
+  await x.b.start();
+  await x.settle();
+  assert.deepEqual(x.port().sent, [{ op: 'browser.join' }]);
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs', 'passwords'] });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.rows').map((m) => m.source), ['tabs']);
+  assert.deepEqual(x.sent('browser.rows')[0].rows, [{ id: 1, window: 1, title: 'One', url: 'https://site1.example/', incognito: false, front: false }]);
+});
+
+test('nothing private is ever sent, by any road', async () => {
+  const secret = tab(2, 'Secret', { incognito: true, windowId: 9, url: 'https://secret.example/' });
+  const unsaid = { ...tab(3, 'Unsaid'), incognito: undefined };
+  const x = browser({ tabs: [tab(1, 'Open'), secret, unsaid], perms: ['nativeMessaging', 'downloads'], set: { downloads: true },
+    downloads: [{ id: 1, filename: '/a/b/plain.zip', url: 'https://d.example/', incognito: false, state: 'complete' }, { id: 3, filename: '/a/b/local.pdf', url: 'file:///Folder/secret/local.pdf', incognito: false, state: 'complete' }, { id: 2, filename: '/a/secret.zip', url: 'https://secret.example/', incognito: true, state: 'complete' }] });
+  await x.open(['tabs', 'downloads']);
+  const t = x.chrome.tabs, d = x.chrome.downloads;
+  t.onCreated.fire(secret); t.onUpdated.fire(2, { title: 'Secret' }); t.onAttached.fire(2); t.onActivated.fire({ tabId: 2, windowId: 9 }); t.onRemoved.fire(2);
+  t.onUpdated.fire(3, { title: 'Unsaid' }); t.onReplaced.fire(2, 2);
+  d.onCreated.fire(x.downloads[2]); d.onChanged.fire({ id: 2 });
+  await x.settle();
+  const all = JSON.stringify(x.port().sent);
+  for (const word of ['Secret', 'secret', 'Unsaid']) assert.ok(!all.includes(word), word);
+  assert.deepEqual(x.sent('browser.change'), [], 'not even that a private tab went away');
+  assert.deepEqual(x.sent('browser.rows', 'downloads')[0].rows.map((r) => [r.title, r.url]), [['plain.zip', 'https://d.example/'], ['local.pdf', '']], "a file's name and never its folder, not even in a local address");
+});
+
+test('a source that is off, or that the browser was not asked to allow, gives nothing', async () => {
+  const more = { history: [{ url: 'https://h.example/', title: 'H' }], marks: [{ children: [{ id: '5', title: 'B', url: 'https://b.example/' }] }] };
+  for (const [perms, set] of [[['nativeMessaging'], { history: true, bookmarks: true }], [['nativeMessaging', 'history', 'bookmarks'], {}], [['nativeMessaging', 'history', 'bookmarks'], { history: 'yes', bookmarks: 1 }]]) {
+    const x = browser({ perms, set, ...more });
+    await x.open(['bookmarks', 'history']);
+    assert.deepEqual(x.port().sent, [{ op: 'browser.join' }]);
+  }
+  const x = browser({ perms: ['nativeMessaging', 'history', 'bookmarks'], set: { history: true, bookmarks: true }, ...more });
+  await x.open(['tabs', 'bookmarks', 'history']);
+  assert.deepEqual(x.sent('browser.rows', 'bookmarks')[0].rows, [{ id: '5', title: 'B', url: 'https://b.example/' }]);
+  x.set.history = false;
+  await x.b.refresh();
+  x.chrome.history.onVisited.fire({ url: 'https://later.example/', title: 'Later' });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.rows', 'history').at(-1).rows, [], 'switched off: the app is told to drop it');
+  assert.ok(!JSON.stringify(x.port().sent).includes('later.example'));
+});
+
+test('without the native messaging permission no port is opened', async () => {
+  const x = browser({ perms: [] });
+  await x.b.start();
+  assert.equal(x.ports.length, 0);
+});
+
+test('changes are gathered into one message, the last word on each', async () => {
+  const x = browser({ tabs: [tab(1, 'One'), tab(2, 'Two')] });
+  await x.open(['tabs']);
+  x.tabs[0].title = 'One again'; x.tabs[0].audible = true;
+  x.chrome.tabs.onUpdated.fire(1, { title: 'x' });
+  x.chrome.tabs.onUpdated.fire(1, { audible: true });
+  x.chrome.tabs.onUpdated.fire(1, { favIconUrl: 'x' });
+  x.tabs.splice(1, 1);
+  x.chrome.tabs.onRemoved.fire(2);
+  await x.settle();
+  assert.deepEqual(x.sent('browser.change'), [{ op: 'browser.change', source: 'tabs', gone: [2],
+    rows: [{ id: 1, window: 1, title: 'One again', url: 'https://site1.example/', incognito: false, front: false, audible: true }] }]);
+});
+
+test('a visit is news, a page cleared from history goes, and all of it cleared is an empty list', async () => {
+  const x = browser({ perms: ['nativeMessaging', 'history'], set: { history: true, tabs: false }, history: [{ url: 'https://a.example/', title: 'A', visitCount: 3, lastVisitTime: 5.4 }, { url: 'chrome://settings', title: 'no' }] });
+  await x.open(['tabs', 'history']);
+  assert.deepEqual(x.sent('browser.rows').map((m) => m.rows), [[{ url: 'https://a.example/', title: 'A', visits: 3, last: 5 }]]);
+  x.chrome.history.onVisited.fire({ url: 'https://b.example/', title: 'B' });
+  x.chrome.history.onVisitRemoved.fire({ allHistory: false, urls: ['https://a.example/', 'file:///Folder/taxes.pdf', 'chrome://settings'] });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.change').map((m) => [m.rows.map((r) => r.url), m.gone]), [[['https://b.example/'], ['https://a.example/']]]);
+  x.chrome.history.onVisited.fire({ url: 'https://c.example/', title: 'C' });
+  x.chrome.history.onVisitRemoved.fire({ allHistory: true });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.rows').at(-1), { op: 'browser.rows', source: 'history', first: true, last: true, rows: [] });
+  assert.ok(!JSON.stringify(x.port().sent).includes('c.example'));
+});
+
+test('the app goes to the exact tab, and asks for nothing else', async () => {
+  const x = browser({ tabs: [tab(1, 'One'), tab(2, 'Two', { windowId: 8 }), tab(3, 'Secret', { incognito: true })] });
+  await x.open(['tabs']);
+  for (const m of [{ op: 'browser.go', tab: 2 }, { op: 'browser.go', tab: 3 }, { op: 'browser.go', tab: '1' }, { op: 'browser.show', download: 5 }, { op: 'browser.go' }, { op: 'browser.run', code: 'x' }, null]) x.port().onMessage.fire(m);
+  await x.settle();
+  assert.deepEqual(x.did, [['tab', 2, { active: true }], ['window', 8, { focused: true }]]);
+});
+
+test('a download is shown in its folder only while downloads are sent', async () => {
+  const x = browser({ perms: ['nativeMessaging', 'downloads'], set: { downloads: true } });
+  await x.open(['tabs']);
+  x.port().onMessage.fire({ op: 'browser.show', download: 5 });
+  await x.settle();
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['downloads'] });
+  await x.settle();
+  for (const m of [{ op: 'browser.show', download: 6 }, { op: 'browser.show', download: '7' }]) x.port().onMessage.fire(m);
+  await x.settle();
+  assert.deepEqual(x.did, [['show', 6]]);
+});
+
+test('an app from before the line, or none, is asked once a start', async () => {
+  const none = browser({ fails: 'Specified native messaging host not found.' });
+  await none.b.start();
+  await none.settle();
+  await none.b.start();
+  assert.equal(none.ports.length, 1);
+  await none.b.again();
+  assert.equal(none.ports.length, 2);
+  const old = browser();
+  await old.b.start();
+  old.port().onMessage.fire({ ok: false, error: 'there is no request called browser.join' });
+  old.port().onDisconnect.fire();
+  await old.b.start();
+  assert.equal(old.ports.length, 1);
+  assert.equal(old.port().off, true, 'the line to an app from before it is closed');
+  const now = browser({ tabs: [tab(1, 'One')] });
+  await now.open(['tabs']);
+  now.port().onMessage.fire({ ok: false, error: 'not that one' });
+  assert.equal(now.b.open, true, 'a working app turning down one message keeps the line');
+  now.port().onDisconnect.fire();
+  await now.b.start();
+  assert.equal(now.ports.length, 2, 'and the line opens again when that app restarts');
+});
+
+test('a port that closes is opened again, and an app that comes back gets all of it again', async () => {
+  const x = browser({ tabs: [tab(1, 'One')] });
+  await x.open(['tabs']);
+  x.port().onDisconnect.fire();
+  assert.equal(x.b.open, false);
+  await x.open(['tabs']);
+  assert.equal(x.ports.length, 2);
+  x.port().onMessage.fire({ op: 'browser.away' });
+  x.chrome.tabs.onUpdated.fire(1, { title: 'x' });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.change'), []);
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+  await x.settle();
+  assert.equal(x.sent('browser.rows').length, 2);
+});
+
+test('a list goes in pieces the host takes, first and last marked', () => {
+  const rows = Array.from({ length: 2000 }, (_, i) => ({ id: i, url: 'https://a.example/' + 'é'.repeat(i % 2 === 0 ? 1900 : 10) }));
+  const out = B.pieces('tabs', rows);
+  assert.ok(out.length > 4);
+  for (const m of out) assert.ok(Buffer.byteLength(JSON.stringify(m)) < 1 << 20);
+  assert.deepEqual(out.flatMap((m) => m.rows), rows);
+  assert.deepEqual(out.map((m) => [m.first, m.last]), out.map((_, i) => [i === 0, i === out.length - 1]));
+  assert.deepEqual(B.pieces('downloads', []), [{ op: 'browser.rows', source: 'downloads', first: true, last: true, rows: [] }]);
+  assert.equal(B.pieces('downloads', Array.from({ length: 900 }, (_, id) => ({ id }))).flatMap((m) => m.rows).length, 500);
+});
+
+test('what a row may carry: no tab without a real id, no sound when muted, web bookmarks only, no extension downloads', () => {
+  assert.equal(B.tabRow(tab(-1, 'Tools')), null);
+  assert.equal(B.tabRow(tab(1, 'Muted', { audible: true, mutedInfo: { muted: true } })).audible, undefined);
+  assert.deepEqual(B.bookmarkRows([{ children: [{ id: '1', title: 'Web', url: 'https://w.example/' }, { id: '2', title: 'Script', url: 'javascript:alert(1)' }, { id: '3', title: 'Inner', url: 'chrome://flags' }] }]).map((r) => r.id), ['1']);
+  assert.equal(B.downloadRow({ id: 1, filename: '/a/x.zip', url: 'https://d.example/', incognito: false, byExtensionId: 'abc' }), null);
+});
+
+test('an app that asks again gets all of it again, and one that goes gets no change made before it went', async () => {
+  const x = browser({ tabs: [tab(1, 'One')] });
+  await x.open(['tabs']);
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+  await x.settle();
+  assert.equal(x.sent('browser.rows', 'tabs').length, 2);
+  x.tabs[0].title = 'Changed';
+  x.chrome.tabs.onUpdated.fire(1, { title: 'Changed' });
+  await new Promise((r) => setImmediate(r));
+  x.port().onMessage.fire({ op: 'browser.away' });
+  await x.settle();
+  assert.deepEqual(x.sent('browser.change'), []);
+});
+
+test('a list read while the app went away is not sent', async () => {
+  const x = browser({ tabs: [tab(1, 'One')] });
+  let give;
+  x.chrome.tabs.query = () => new Promise((r) => { give = r; });
+  await x.b.start();
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+  await x.settle();
+  x.port().onMessage.fire({ op: 'browser.away' });
+  give(x.tabs);
+  await x.settle();
+  assert.deepEqual(x.sent('browser.rows'), []);
+});

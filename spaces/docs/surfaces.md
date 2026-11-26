@@ -6,7 +6,8 @@ nothing restarts.
 
 Colors, fonts and the theme's wallpaper stay in the theme (`polycarp theme`, `themes/*.toml`). This file says what each
 surface shows; the theme says what it looks like. To restyle the bar past the theme (a glass bar, a gold
-clock), use the style sheet: [style.md](style.md).
+clock), use the style sheet: [style.md](style.md). `polycarp look` saves, shares and applies these settings' looks with
+the theme, the sheet and the paper: [looks.md](../../docs/looks.md) lists which fields.
 
 The Workspace Dock was removed on 2026-11-23. Workspaces are on ⌘1 to ⌘9 and the top bar's numbers; the overview is on
 the Mission Control key, the hot corner and the status menu; apps running with no window are in the launcher (⌃⌘K)
@@ -149,6 +150,7 @@ for none, `from` `paper` or the place's own path). Error codes, beyond the surfa
 | `bar.modules.right` | `["status","\|","notifications"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
+| `bar.tray` | `"drawer"` | `drawer` (your apps' status items fold behind a chevron) or `row` (they stay in the row with macOS's). |
 
 Module ids: `mark`, `workspaces`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
 `battery`, `network`, `notifications`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
@@ -157,16 +159,16 @@ What each one draws:
 
 | Module | Shows |
 | --- | --- |
-| `mark` | Polycarp's vine mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
-| `workspaces` | A number for each workspace with windows and the one you're on, in order: `1 2 4`. The one you're on is bright over a short accent line (on an accent block in a `number-block` theme, such as Omarchy); the others are muted. Click one to go there. |
+| `mark` | Polycarp's olive branch mark. Click it for Polycarp's menu (Settings, Quit and the rest), which `status` leaves out. |
+| `workspaces` | A number for each workspace with windows and the one you're on, in order: `1 2 4`. The one you're on is bright on a soft accent pill (a `dot` theme), over a short accent line (`bar`) or on an accent block (`number-block`, such as Omarchy), which slides when you switch; the others are muted. Click one to go there, or turn the wheel over them for the one before or after. |
 | `hour` | The day and the hour in words: "Saturday, Terce". Sunday is the Lord's Day. |
-| `clock` | Saturday 10:04 PM by default; Saturday 22:04 with `clockFormat` day-24h, 3:05 with 12h, 15:05 with 24h. |
+| `clock` | Saturday 10:04 PM by default, the time in full and the rest a step quieter; Saturday 22:04 with `clockFormat` day-24h, 3:05 with 12h, 15:05 with 24h. |
 | `date` | November 21. |
 | `verse` | The desktop's verse for now, with its reference. |
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
-| `status` | The status items of macOS and your apps, in the macOS bar's order, in one row like Waybar's tray: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
+| `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Two or more of your apps' fold into a drawer behind a chevron: point at it and they slide out, click it and they stay out. With `bar.tray` row they are all in one row. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
 | `notifications` | A bell, with how many notifications are new. Click it for the list, by app: open one, dismiss it, clear an app or all of them, keep an app quiet, or open Notification Center. |
 | `custom:<name>` | Kept in the file, not drawn yet. |
 
@@ -176,8 +178,11 @@ desktop, as many Omarchy and Waybar setups draw theirs: the theme's surface colo
 island whose modules draw nothing (the battery on a desktop Mac, the network while online) isn't drawn. `solid` is
 Omarchy's own look: one strip in the theme's background color. Either way the bar has one monospace face for all
 of it (the Polycarp theme's `type.mono` stack when one is in force, else SF Mono) at 12 points, the app's name in
-semibold and its menus regular, modules 14 points apart with no separators, and no color but the accent under the
-workspace you're on. By default the bar shows the mark, the numbers, the app's menus, the clock, the status row and the bell,
+semibold and its menus regular, and no color but the accent at the workspace you're on. Every icon has one slot,
+27 points, whatever its own shape, and everything you can click lights a soft face under the pointer and presses in; the
+whole height of the bar takes the click, so the pointer can rest on the screen's edge. Groups between `"|"` are a little
+apart and there are no lines between them. On a screen with a notch the middle's modules sit beside the camera, on its
+right, and the right's at the screen's edge. By default the bar shows the mark, the numbers, the app's menus, the clock, the status row and the bell,
 nothing else.
 
 **Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
@@ -308,6 +313,54 @@ screen saver, lock or display sleep has the screen; those still come in their ti
 | `rooms.menu` | `true` | A Rooms section in the status menu: the five rooms, and what waits in the Inbox. |
 
 What the rooms do in the launcher and the menu: [rooms.md](rooms.md).
+
+### `tiling`: windows side by side
+
+Off until you turn it on. Nothing reads these fields yet.
+
+| Path | Default | Takes |
+| --- | --- | --- |
+| `tiling.enabled` | `false` | Tile every workspace that isn't in `tiling.off`. A workspace in `tiling.on` tiles either way. |
+| `tiling.on` | `[]` | Workspaces, `"1"` to `"9"`, that tile while `tiling.enabled` is off. |
+| `tiling.off` | `[]` | Workspaces that don't tile while `tiling.enabled` is on. |
+| `tiling.style` | `"dwindle"` | `dwindle` splits the window you are in, `columns` puts windows side by side, `main` keeps one large window beside a stack. |
+| `tiling.gaps.inner` | `8` | Points between tiled windows, 0 to 64. |
+| `tiling.gaps.outer` | `8` | Points around them, 0 to 64. |
+| `tiling.gaps.top` | `0` | Points more at the top edge, 0 to 400, for something that stays there. |
+| `tiling.gaps.bottom` | `0` | Points more at the bottom edge, 0 to 400, for something that stays there. |
+| `tiling.gaps.left` | `0` | Points more at the left edge, 0 to 400, for something that stays there. |
+| `tiling.gaps.right` | `0` | Points more at the right edge, 0 to 400, for something that stays there. |
+| `tiling.loneWidth` | `"smart"` | How wide a workspace's only window gets: `smart` (a 16:10 shape on a wide display, all of any other), `fill`, or `points:<width>`. |
+| `tiling.newWindow` | `"after"` | Which side of the window you are in a new one goes on: `after` (right or below) or `before`. |
+| `tiling.float` | `["com.apple.calculator","com.apple.Stickies"]` | Apps whose windows are never tiled, by bundle id. |
+| `tiling.floatModifier` | `"shift"` | The key held while a tiled window is let go that leaves it floating: `shift`, `control`, `option`, `command` or `none`. |
+| `tiling.keys.toggle` | `"ctrl+opt+T"` | Tile this workspace, or stop. |
+| `tiling.keys.focus-left` | `"ctrl+opt+Left"` | Focus the window to the left. |
+| `tiling.keys.focus-right` | `"ctrl+opt+Right"` | Focus the window to the right. |
+| `tiling.keys.focus-up` | `"ctrl+opt+Up"` | Focus the window above. |
+| `tiling.keys.focus-down` | `"ctrl+opt+Down"` | Focus the window below. |
+| `tiling.keys.focus-next` | `"ctrl+opt+]"` | Focus the next tiled window. |
+| `tiling.keys.focus-previous` | `"ctrl+opt+["` | Focus the previous tiled window. |
+| `tiling.keys.move-left` | `"ctrl+opt+shift+Left"` | Move the tiled window left. |
+| `tiling.keys.move-right` | `"ctrl+opt+shift+Right"` | Move the tiled window right. |
+| `tiling.keys.move-up` | `"ctrl+opt+shift+Up"` | Move the tiled window up. |
+| `tiling.keys.move-down` | `"ctrl+opt+shift+Down"` | Move the tiled window down. |
+| `tiling.keys.grow-left` | `"ctrl+opt+cmd+Left"` | Move the tiled window's edge left. |
+| `tiling.keys.grow-right` | `"ctrl+opt+cmd+Right"` | Move the tiled window's edge right. |
+| `tiling.keys.grow-up` | `"ctrl+opt+cmd+Up"` | Move the tiled window's edge up. |
+| `tiling.keys.grow-down` | `"ctrl+opt+cmd+Down"` | Move the tiled window's edge down. |
+| `tiling.keys.balance` | `"ctrl+opt+B"` | Even out every split. |
+| `tiling.keys.flip` | `"ctrl+opt+R"` | Turn the window's split. |
+| `tiling.keys.style` | `"ctrl+opt+S"` | Next tiling style: dwindle, columns, main. |
+| `tiling.keys.promote` | `"ctrl+opt+Return"` | Make the window the main one. |
+| `tiling.keys.float` | `"ctrl+opt+F"` | Float the window, or tile it again. |
+| `tiling.keys.full` | `"ctrl+opt+M"` | Give the window the whole area, or put it back. |
+| `tiling.keys.next-display` | `"ctrl+opt+N"` | Send the window to the next display. |
+| `tiling.keys.style-dwindle` | `""` | Tile in the dwindle style. |
+| `tiling.keys.style-columns` | `""` | Tile in the columns style. |
+| `tiling.keys.style-main` | `""` | Tile in the main style. |
+
+A key is modifiers and one key joined with `+`: `ctrl`, `opt`, `shift`, `cmd`, then a letter, an arrow, `F1` to `F20`, `Return`, `Space`, `Tab`, `Delete`, `Home`, `End`, `PageUp`, `PageDown` or one of `0 - = [ ] ; ' , . / \` and the backtick. A key takes `ctrl` and another modifier, or `cmd` and `opt`, so none is taken from the app in front; 1 to 9 are the workspaces'. Empty is no key. A key you give one command leaves the command that has it by default without one; two commands in the file can't share a key.
 
 ## Examples
 

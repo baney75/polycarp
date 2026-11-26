@@ -98,6 +98,12 @@ final class TileMoveTests: XCTestCase {
         XCTAssertEqual(columns, layout(.columns, 3))
         columns.swap(1, 3)
         XCTAssertEqual(columns.windows, [3, 2, 1])
+        // What a minimum pushed is judged where it is on screen, as the focus judges it.
+        var pushed = layout(.main, 3)
+        let tall: [WindowID: CGSize] = [3: CGSize(width: 0, height: 700)]
+        XCTAssertEqual(pushed.neighbor(of: 1, toward: .right, in: wide, gaps: none, minimums: tall), 3)
+        XCTAssertTrue(pushed.move(1, toward: .right, area: wide, gaps: none, minimums: tall))
+        XCTAssertEqual(pushed.windows, [3, 2, 1])
     }
 
     // MARK: Sizes

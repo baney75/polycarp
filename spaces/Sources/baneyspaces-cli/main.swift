@@ -34,11 +34,11 @@ usage: \(me) <command>
   contacts call|facetime|message|email <query> [--text TEXT]
                               open the Phone app, FaceTime, Messages with a draft, or Mail for one person;
                               Polycarp never sends a message: the owner presses Send (docs/contacts.md)
-  set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal, appearance.palette auto|<name>,
-                              dock.enabled true|false; applies at once, no restart
-  get [setting]               read one setting, or all three
+  set <setting> <value>       appearance.theme omarchy|baneyspaces|minimal or appearance.palette auto|<name>;
+                              applies at once, no restart
+  get [setting]               read one setting, or both
   surfaces get|set|reset|schema|validate [--json]
-                              the one file every surface reads: bar, desktop, dock, menu,
+                              the one file every surface reads: bar, desktop, menu,
                               new tab, idle screen (surfaces help, docs/surfaces.md)
   paper set <what> [--on desktop,newtab,idle|all] | get | reset [--on ...] [--json]
                               what lies behind the desktop, the new tab and the idle screen: a picture,
@@ -49,8 +49,11 @@ usage: \(me) <command>
                               what the extension changes on the pages of sites you name
                               (edits help, docs/edits.md)
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
-                              style.css: restyle the bar and the dock on top of the theme
+                              style.css: restyle the top bar on top of the theme
                               (style help, docs/style.md)
+  defaults [get|candidates|set|reset] [--json]
+                              which app does each job: agent, browser, terminal and more
+                              (defaults help, docs/default-apps.md)
   keys [--json]               every Polycarp shortcut, grouped, with your modifier (docs/keys.md)
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
   --version                   this command's version and the commit it was built from
@@ -277,6 +280,11 @@ case "edits", "edit":
     EditsCommand.run(rest, remote: remoteHost != nil)
 case "style":
     StyleCommand.run(rest, remote: remoteHost != nil)
+case "defaults":
+    DefaultsCommand.run(rest, remote: remoteHost != nil)
+case TerminalJob.verb where remoteHost == nil:
+    RunJobCommand.run(rest)
+
 case "keys":
     KeysCommand.run(rest, remote: remoteHost != nil)
 case "contacts", "contact":

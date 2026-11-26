@@ -8,13 +8,16 @@ not written here does not ship on one platform alone.
 | [workspaces.md](workspaces.md) | The workspace rules, each with an id (`R-S1`, ...) |
 | [launcher.md](launcher.md) | What the launcher finds and in what order (`R-L1`, ...), with its ranking table |
 | [player.md](player.md) | The built-in player: which files, the folder playlist, keys, speed and resume (`R-P1`, ...), and what Windows uses |
+| [default-apps.md](default-apps.md) | Which app does each job, and who decides (`R-D1`, ...) |
 | [keys.json](keys.json) | The key map per platform, and what Linux replaces in Omarchy |
 | [envelope.md](envelope.md) | The JSON envelope every CLI and MCP result uses, and the error codes |
 | [cli.md](cli.md) | The command family and which commands exist on which platform |
 | [mcp-tools.json](mcp-tools.json) | The MCP tools, as `tools/list` returns them (generated from the Rust core) |
 | [shell.md](shell.md) | The shell's feed: what a bar or launcher hears from the daemon, and who may subscribe |
 | [switcher.md](switcher.md) | The ⌘Tab switcher: what it lists, in what order, when its panel comes up (`R-W1`, ...) |
+| [tiling.md](tiling.md) | Tiled windows: what is tiled, who may write, what is never touched (`R-T1`, ...) |
 | [bar.md](bar.md) | The top bar: its switch, which workspaces it shows, the clock's words, its height and colors |
+| [browser.md](browser.md) | A browser's tabs, bookmarks, history and downloads in the launcher, and what Polycarp keeps of them (`R-B1`, ...) |
 | [conformance/](conformance/) | Cases as JSON: inputs, the effects they must produce, the state they must leave |
 
 ## Conformance cases

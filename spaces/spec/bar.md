@@ -47,6 +47,14 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   area is whole again. A daemon killed outright (`taskkill /F`) runs no cleanup, and the shell drops the bar with its
   window: on the CI runner the work area was whole again within 3 s (the live suite logs it after each run).
 - The bar never takes the front: a click on it leaves your window in front.
+- macOS: every icon sits in one slot (27 pt), and what is under the pointer gets one face, in the theme's corners, with
+  a small press on a click (none under Reduce Motion). The whole height of the bar takes the click. The middle's modules
+  take the width they need up to 44% and the sides get the rest; on a screen with a notch they sit on the camera's right
+  (`BarGeometry`, `BarSides`). Windows: not yet.
+- macOS: the marker at the workspace you're on slides when you switch, and the wheel over the numbers goes to the
+  one before or after, one a trackpad gesture or wheel click and none while a trackpad glides (`BarScroll`). Windows: not yet.
+- macOS: two or more apps' status items fold behind a chevron that opens under the pointer, and stays open on a click
+  (`bar.tray`; `BarTray`). Windows has no tray yet.
 
 ## Colors and type
 

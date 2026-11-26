@@ -45,14 +45,14 @@ then theme_set it.
 Themes you did not make in this session belong to the person: theme_delete and a theme_apply that would replace \
 one are refused unless you pass force true, which you do only after the person agrees. theme_delete removes \
 a theme you made and no longer need.
-Surfaces (what the top bar, desktop scene, dock tiles, status menu, new tab page and idle screen show) are one \
+Surfaces (what the top bar, desktop scene, status menu, new tab page and idle screen show) are one \
 file of their own, not the theme: read surfaces_schema, then surfaces_get the path, then surfaces_set it. A refused \
 set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_set the value surfaces_get gave before.
 To change what lies behind the desktop, the browser's new tab page and the idle screen (wallpaper, background), \
 use paper_set with a picture path, an https URL to a picture, a #RRGGBB color or a scene (field, olive, water, \
 parchment, solid), in one call; on limits it to some places. paper_get shows each place's paper; paper_reset puts \
 the theme's wallpaper and each place's old look back.
-To restyle one part of the top bar or the dock past the theme (a gold clock, square dock tiles, a hairline bar), use \
+To restyle one part of the top bar past the theme (a gold clock, square workspace numbers, a hairline bar), use \
 the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
 error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
 For a whole look in one call (omarchy), style_preset; style_restore undoes it, putting back the sheet that was there.
@@ -237,7 +237,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "theme_preview",
-            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the dock and window bar, the dictation pill, the browser extension on a page, the site) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
+            description: "Show the theme on product UI, written only into the previews folder of the config folder. With format \"png\" it writes one image per product and mode (the workspace tiles and window bar, the dictation pill, the browser extension on a page, the site) and returns data.images, a list of {surface, mode, path}: look at each image, fix what is wrong, and preview again. Needs no browser. With format \"html\" (the default) it writes one page with every product, to open in a browser and show the person. Call it after every change.",
             schema: obj(json!({
                 "name": name,
                 "mode": {"type":"string","enum":["light","dark","both"],"description":"Default both: side by side in html, one image each in png."},
@@ -303,7 +303,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "surfaces_schema",
-            description: "Read this before surfaces_get or surfaces_set. Returns the JSON Schema (draft 2020-12) for surfaces.json, the one file that says what each Polycarp surface shows: the top bar (bar), the desktop scene and its verse (desktop), the dock's tiles (dock), the status menu (menu), the browser's new tab page (newtab), the idle screen (idle) and where verses come from (text). Every field has its default, range or choices, and its path.",
+            description: "Read this before surfaces_get or surfaces_set. Returns the JSON Schema (draft 2020-12) for surfaces.json, the one file that says what each Polycarp surface shows: the top bar (bar), the desktop scene and its verse (desktop), the status menu (menu), the browser's new tab page (newtab), the idle screen (idle) and where verses come from (text). Every field has its default, range or choices, and its path.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -391,7 +391,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_example",
-            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number, dock, .tile .label .badge .icon with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the dock on top of the theme with a strict subset of CSS.",
+            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar on top of the theme with a strict subset of CSS.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -420,7 +420,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "Set one property for one selector in style.css, editing the file in place and keeping its comments: the declaration changes if the rule has it, else it is added, else the rule is added. Refused, with nothing written, when the change would add an error; error.data.errors gives each with its line and column. A running Polycarp shows the change within 200 ms.",
             schema: obj(
                 json!({
-                    "selector": {"type":"string","description":"One selector from style_example, as bar, bar .clock, dock .tile.current or :root."},
+                    "selector": {"type":"string","description":"One selector from style_example, as bar, bar .clock, bar .workspace.current or :root."},
                     "property": {"type":"string","description":"A property from style_example, as color or border-radius, or a --custom-property on :root."},
                     "value": {"type":"string","description":"A CSS value, as #d4af37, var(--accent), 1px solid var(--border) or glass."},
                     "media": {"type":"string","enum":["dark","light"],"description":"Set it for that mode only, inside @media (prefers-color-scheme: ...)."}
@@ -1000,7 +1000,11 @@ fn spaces_run(argv: Vec<String>, probe: &str) -> theme::Envelope {
 }
 
 /// `spaces_run` with its own time limit.
-fn spaces_run_within(mut argv: Vec<String>, probe: &str, limit: Duration) -> theme::Envelope {
+pub(crate) fn spaces_run_within(
+    mut argv: Vec<String>,
+    probe: &str,
+    limit: Duration,
+) -> theme::Envelope {
     let what = argv[0].clone();
     match argv.iter().position(|a| a == "--") {
         Some(at) => argv.insert(at, "--json".into()),

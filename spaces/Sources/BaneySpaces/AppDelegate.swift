@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
     private lazy var topBar = TopBar(spaces: spaces)
     private lazy var switcher = WorkspaceSwitcher(spaces: spaces)
+    /// Windows side by side (`tiling.*` in surfaces.json); reads and moves nothing until a workspace tiles.
+    private lazy var tiling = Tiling(spaces: spaces)
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
@@ -199,6 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             look(40)
         }
         a.sessionItems = { [weak self] q in self?.session.launcherItems(q) ?? [] }
+        a.browserHits = { BrowserHub.shared.book.search($0) }
+        a.openBrowser = { [weak self] in self?.openBrowser($0) }
         a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in
             guard let self else { return }
@@ -480,6 +484,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar draws from `Styles.shared`, which
         // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.
         StyleSheetStore.shared.start(log: { Trace.log($0) })
+        // [defaults] in config.toml: which app does each job (docs/default-apps.md).
+        DefaultAppsStore.shared.start(log: { Trace.log($0) })
         Styles.shared.sync()
         // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
         ThemeWallpaperApplier.shared.start()
@@ -496,7 +502,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateIcon()
             self.topBar.workspacesChanged()
             self.switcher.titlesChanged()
+            self.tiling.lookSoon(0.02)
         }
+        spaces.onSettled = { [weak self] in self?.tiling.look() }
+        spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
+        NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.tiling.settingsChanged()
+        }
+        tiling.settingsChanged()
         // It reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
         // A new theme redraws the menu bar indicator as well as the panels.
@@ -551,6 +564,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
+        BrowserHub.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
         // People for the launcher: read now only when Contacts access is already on. Nothing asks for it here.
         ContactsLibrary.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
@@ -630,6 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if started { spaces.restoreAll() }
         // ⌘Space goes back to Spotlight while BaneySpaces isn't running; the next launch takes it again.
         SystemShortcuts.spotlightQueue.sync { SystemShortcuts.restoreSpotlight() }
+        tiling.save()
         spaces.flushWrites()
         // A clean quit, not a crash, for the next launch's crash-loop check.
         CrashLoop.launchEnded()
@@ -739,6 +754,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SystemMissionControl.restore()
         viewer.close()
         session.stop()
+        BrowserHub.shared.stop()
         spaces.suspend()
         started = false
         registerShortcuts()
@@ -846,6 +862,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.imagePosition = .imageLeading
     }
 
+    /// Goes to what a browser's row names: the exact tab, the download in Finder, or the page in that browser.
+    private func openBrowser(_ hit: BrowserHit) {
+        let app = hit.peer.bundleID
+        switch hit.row.source {
+        case .bookmarks, .history:
+            guard let url = URL(string: hit.row.url), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  let at = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) else { return NSSound.beep() }
+            NSWorkspace.shared.open([url], withApplicationAt: at, configuration: NSWorkspace.OpenConfiguration())
+        case .downloads:
+            if !BrowserHub.shared.ask(hit) { NSSound.beep() }
+        case .tabs:
+            // The session engine knows the tab's window too, so the switch is Polycarp's own.
+            if let item = session.engine.item(hit.id) { return session.focus(item) }
+            guard BrowserHub.shared.ask(hit), let pid = NSRunningApplication.runningApplications(withBundleIdentifier: app).first?.processIdentifier
+            else { return NSSound.beep() }
+            // The browser has put the tab in front by now: go to the workspace its window is on.
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                let front: AXUIElement? = AX.app(pid, timeout: 0.3).value(kAXFocusedWindowAttribute)
+                guard let id = front?.windowNumber, id != 0 else { return }
+                DispatchQueue.main.async { self?.run { $0.focusWindow(id, pid: pid) } }
+            }
+        }
+    }
+
     private func startSession() {
         session.onUnseenChange = { [weak self] _ in self?.updateIcon() }
         var h = AgentHost()
@@ -867,6 +907,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.spaces.focus(id, on: n)
                 return true
             }
+            BrowserHub.shared.start()
             self.session.start(workspaceOf: { [weak self] in self?.spaces.model.workspace(of: $0) },
                             currentWorkspace: { [weak self] in self?.spaces.model.current ?? 1 })
         }

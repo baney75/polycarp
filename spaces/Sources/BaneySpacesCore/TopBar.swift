@@ -40,14 +40,20 @@ public enum BarText {
     /// "3:05" or "15:05": no AM or PM, since the hour module says what part of the day it is. With the day, as Omarchy's
     /// bar has it: "Saturday 10:04 PM" or "Saturday 22:04", the 12 hour form with AM or PM since it stands alone.
     public static func clock(_ date: Date, calendar: Calendar = .current, format: Surfaces.ClockFormat) -> String {
+        let p = clockParts(date, calendar: calendar, format: format)
+        return [p.day, p.time, p.half].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// The clock's parts, drawn in two tones: the day, the time and the half of the day.
+    public static func clockParts(_ date: Date, calendar: Calendar = .current,
+                                  format: Surfaces.ClockFormat) -> (day: String?, time: String, half: String?) {
         let c = calendar.dateComponents([.hour, .minute, .weekday], from: date)
         let h = c.hour ?? 0, m = c.minute ?? 0
         let shown = format.twentyFour ? h : (h % 12 == 0 ? 12 : h % 12)
         let time = String(format: "%d:%02d", shown, m)
-        guard format.withDay else { return time }
+        guard format.withDay else { return (nil, time, nil) }
         let day = calendar.weekdaySymbols[(c.weekday ?? 1) - 1]
-        if format.twentyFour { return "\(day) \(time)" }
-        return "\(day) \(time) \(h < 12 ? calendar.amSymbol : calendar.pmSymbol)"
+        return (day, time, format.twentyFour ? nil : h < 12 ? calendar.amSymbol : calendar.pmSymbol)
     }
 
     /// "November 21".
@@ -70,15 +76,9 @@ public enum BarText {
     }
 }
 
-/// Where the top bar puts its modules.
+/// Where the top bar puts its modules. A screen with a notch has no middle: the middle's modules sit beside the camera
+/// housing, on its right, where the left's menus can't run into them (`BarSides`).
 public enum BarLayout {
-    /// The three places on a screen. A screen with a notch has no middle: the middle's modules follow the left's,
-    /// before the camera housing.
-    public static func places(_ bar: Surfaces.Bar, notch: Bool) -> (left: [Surfaces.BarModule], center: [Surfaces.BarModule], right: [Surfaces.BarModule]) {
-        // The middle's modules keep their own island after the left's.
-        notch ? (bar.left + (bar.center.isEmpty ? [] : [.split] + bar.center), [], bar.right) : (bar.left, bar.center, bar.right)
-    }
-
     /// The modules the bar draws today. Custom modules are kept in the file but not drawn; the island split is a place,
     /// not a module.
     public static func drawn(_ m: Surfaces.BarModule) -> Bool {
@@ -125,6 +125,8 @@ public enum BarLayout {
 public enum BarWorkspaces {
     /// How the workspace you're on stands out from the others, which are drawn muted.
     public enum Marker: Equatable, Sendable {
+        /// Full foreground on a soft accent pill.
+        case pill
         /// Full foreground over a short accent line.
         case underline
         /// The number on an accent block.
@@ -136,10 +138,27 @@ public enum BarWorkspaces {
         Array(occupied.union([current])).filter { Workspaces.range.contains($0) }.sorted()
     }
 
-    /// The marker for a theme's indicator: the block for a theme that draws its numbers in blocks (`number-block`,
-    /// Omarchy's), the underline for every other, so the built-in look is the underline.
+    /// The marker for a theme's indicator: the pill for a `dot`, the line for a `bar` and the block for a
+    /// `number-block` (Omarchy's).
     public static func marker(_ indicator: ThemeIndicator) -> Marker {
-        indicator == .numberBlock ? .block : .underline
+        switch indicator {
+        case .dot: .pill
+        case .bar: .underline
+        case .numberBlock: .block
+        }
+    }
+
+    /// The marker under a sheet's `.workspace.current` (`current`) and `.workspace` (`other`): none where the current
+    /// number has a face of its own, and the line where the sheet gives every number the same face, which would cover
+    /// a marker behind it, or inks the current one for itself, which the accent block might hide.
+    public static func marker(_ indicator: ThemeIndicator, current: ComputedStyle, other: ComputedStyle) -> Marker? {
+        if current.isHidden || current.background != other.background || current.border != other.border
+            || current.borderBottom != other.borderBottom || current.boxShadow != other.boxShadow { return nil }
+        if current.background != nil || current.border != nil || current.borderBottom != nil || current.boxShadow != nil {
+            return .underline
+        }
+        let kind = marker(indicator)
+        return kind == .block && current.color != nil ? .underline : kind
     }
 }
 

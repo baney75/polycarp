@@ -1,0 +1,56 @@
+#!/bin/bash
+# The default apps, through Omarchy's own commands.
+#   apps list               one line each: kind, the one in use, then every installed choice, tab separated
+#   apps set <kind> <id>    sets it
+set -u
+kinds=(browser terminal editor agent)
+
+choices() { sed -n 's/^# omarchy:args=\[\([a-z0-9_|-]*\)\]$/\1/p' "$(command -v "omarchy-default-$1")" 2>/dev/null | head -n 1 | tr '|' ' '; }
+
+desktop() {
+  local dir IFS=:
+  for dir in ${XDG_DATA_HOME:-$HOME/.local/share} ${XDG_DATA_DIRS:-/usr/local/share:/usr/share}; do [[ -f $dir/applications/$1.desktop ]] && return 0; done
+  return 1
+}
+
+# Omarchy's mise wrapper for an app stays in place after the app is installed, so the app is there only when mise has
+# the package the wrapper names: `mise use -g --quiet "npm:@openai/codex" || exit 1`.
+command_here() {
+  local path package
+  path=$(command -v "$1") || return 1
+  [[ -f $path && ! -L $path ]] || return 0
+  package=$(head -c 2048 "$path" | tr -d '\0' | sed -n 's/^mise use -g \(--quiet \)\{0,1\}"\{0,1\}\([^" ]*\)"\{0,1\}.*/\2/p' | head -n 1)
+  [[ -z $package ]] || mise where "$package" >/dev/null 2>&1
+}
+
+installed() {
+  case $1:$2 in
+  browser:chrome) desktop google-chrome ;;
+  browser:brave) desktop brave-browser ;;
+  browser:edge) desktop microsoft-edge ;;
+  browser:*) desktop "$2" ;;
+  editor:zed) command_here zeditor ;;
+  editor:sublime_text) command_here subl || command_here sublime_text ;;
+  *) command_here "$2" ;;
+  esac
+}
+
+case ${1:-} in
+list)
+  for kind in "${kinds[@]}"; do
+    line="$kind"$'\t'"$("omarchy-default-$kind" 2>/dev/null | head -n 1 | tr -d '\t')"
+    for id in $(choices "$kind"); do
+      if installed "$kind" "$id"; then line+=$'\t'"$id"; fi
+    done
+    printf '%s\n' "$line"
+  done
+  ;;
+set)
+  kind=${2:-} id=${3:-}
+  [[ " ${kinds[*]} " == *" $kind "* && " $(choices "$kind") " == *" $id "* ]] && installed "$kind" "$id" || exit 1
+  # A newer Omarchy can choose an agent without opening it.
+  if [[ $kind == agent ]] && grep -q -- '"--select"' "$(command -v omarchy-default-agent)"; then exec omarchy default agent --select "$id"; fi
+  exec omarchy default "$kind" "$id"
+  ;;
+*) exit 1 ;;
+esac

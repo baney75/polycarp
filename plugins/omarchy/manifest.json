@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "baney75.polycarp",
+  "name": "Polycarp",
+  "version": "0.1.0",
+  "author": "Polycarp",
+  "license": "MIT",
+  "description": "Workspaces with their apps, the coding agents that want you, and Polycarp's looks, in Omarchy's bar",
+  "kinds": ["bar-widget", "service"],
+  "entryPoints": {
+    "barWidget": "Widget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Polycarp",
+    "description": "Workspaces with their apps, the coding agents that want you, and Polycarp's looks",
+    "category": "Compositor",
+    "allowMultiple": true,
+    "defaultSection": "left",
+    "defaults": {
+      "show": "all",
+      "icons": true,
+      "maxIcons": 3,
+      "empty": 0,
+      "labels": "numbers",
+      "layout": true,
+      "clock": "auto",
+      "day": true
+    },
+    "schema": [
+      { "key": "show", "type": "enum", "label": "Show", "options": ["all", "mark", "workspaces", "agents", "clock", "tray"], "defaultValue": "all", "description": "All is the mark, the workspaces and the agents together. Place Polycarp more than once to put its parts in different sections." },
+      { "key": "icons", "type": "bool", "label": "App icons on workspaces", "defaultValue": true },
+      { "key": "maxIcons", "type": "integer", "label": "Icons on one workspace", "min": 1, "max": 8, "step": 1, "defaultValue": 3 },
+      { "key": "empty", "type": "integer", "label": "Empty workspaces shown", "min": 0, "max": 10, "step": 1, "defaultValue": 0 },
+      { "key": "labels", "type": "enum", "label": "Workspace labels", "options": ["numbers", "names"], "defaultValue": "numbers" },
+      { "key": "layout", "type": "bool", "label": "The workspace's layout", "defaultValue": true },
+      { "key": "clock", "type": "enum", "label": "Clock", "options": ["auto", "12", "24"], "defaultValue": "auto", "description": "Auto follows the region." },
+      { "key": "day", "type": "bool", "label": "Day before the time", "defaultValue": true }
+    ]
+  }
+}

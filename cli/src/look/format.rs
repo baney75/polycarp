@@ -1,25 +1,35 @@
 //! The look file, schema 1: what it may hold, reading one, and writing one (docs/looks.md).
 //!
 //! A look comes from anyone, so reading it is the safety check: it may change only how things look. Every key is
-//! known or refused with its path.
+//! known or refused with its path, settings come from `FIELDS` alone, and a picture is checked by its own bytes.
 
+use super::fields;
+use super::paper::{self, Paper, Picture, Wall};
 use crate::theme::{self, ThemeDoc, ThemeLook};
 use serde_json::{json, Map, Value as Json};
+use std::collections::BTreeMap;
 
 pub const EXT: &str = "polycarp-look";
 pub const SCHEMA: i64 = 1;
-/// The largest look file.
+/// The largest look file, and the largest style sheet Polycarp reads.
 pub const MAX_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_STYLE: usize = 64 * 1024;
 /// The shipped look: everything as Polycarp comes.
 pub const SHIPPED: &str = "polycarp";
 
-/// One look.
+/// One look. A part that is None is not in the look, so applying it leaves that part alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Look {
     pub name: String,
     pub title: String,
     pub description: Option<String>,
     pub theme: ThemeLook,
+    /// `Some(None)` is no style sheet.
+    pub style: Option<Option<String>>,
+    /// By path; a path in `FIELDS` that isn't here is at its default.
+    pub surfaces: Option<BTreeMap<String, Json>>,
+    pub paper: Option<Paper>,
+    pub pictures: BTreeMap<String, Picture>,
 }
 
 impl Look {
@@ -34,6 +44,10 @@ impl Look {
                 accent_light: None,
                 accent_dark: None,
             },
+            style: Some(None),
+            surfaces: Some(BTreeMap::new()),
+            paper: Some(Paper::new()),
+            pictures: BTreeMap::new(),
         }
     }
 
@@ -46,6 +60,18 @@ impl Look {
             o.insert("description".into(), json!(d));
         }
         self.theme.put(&mut o);
+        if let Some(s) = &self.style {
+            o.insert("style".into(), json!(s));
+        }
+        if let Some(s) = &self.surfaces {
+            o.insert("surfaces".into(), fields::tree(s));
+        }
+        if let Some(p) = &self.paper {
+            o.insert("paper".into(), paper::to_json(p));
+        }
+        if !self.pictures.is_empty() {
+            o.insert("pictures".into(), paper::pictures_json(&self.pictures));
+        }
         Json::Object(o)
     }
 
@@ -56,8 +82,8 @@ impl Look {
         )
     }
 
-    /// Reads a look file. Problems are `path: why`, and any of them refuses the file.
-    pub fn parse(bytes: &[u8]) -> Result<Look, Vec<String>> {
+    /// Reads a look file. Notes are what was left out; problems are `path: why`, and any of them refuses the file.
+    pub fn parse(bytes: &[u8]) -> Result<(Look, Vec<String>), Vec<String>> {
         if bytes.len() > MAX_BYTES {
             return Err(vec!["a look file is at most 32 MB".into()]);
         }
@@ -66,7 +92,7 @@ impl Look {
         let Some(o) = v.as_object() else {
             return Err(vec!["a look must be a JSON object".into()]);
         };
-        let mut bad = Vec::new();
+        let (mut bad, mut notes) = (Vec::new(), Vec::new());
         for k in o.keys() {
             if ![
                 "schema",
@@ -76,6 +102,10 @@ impl Look {
                 "theme",
                 "mode",
                 "accent",
+                "style",
+                "surfaces",
+                "paper",
+                "pictures",
             ]
             .contains(&k.as_str())
             {
@@ -97,13 +127,49 @@ impl Look {
         let title = text(o, "title", 80, &mut bad).unwrap_or_else(|| theme::title_case(&name));
         let description = text(o, "description", 400, &mut bad);
         let theme = ThemeLook::parse(o, &mut bad);
+        let style = match o.get("style") {
+            None => None,
+            Some(Json::Null) => Some(None),
+            Some(Json::String(s)) if s.len() <= MAX_STYLE => Some(Some(s.clone())),
+            Some(Json::String(_)) => {
+                bad.push("style: a style sheet is at most 64 KB".into());
+                None
+            }
+            Some(_) => {
+                bad.push("style: must be the style sheet's text, or null for none".into());
+                None
+            }
+        };
+        let surfaces = o.get("surfaces").map(|v| {
+            let mut out = BTreeMap::new();
+            fields::read(v, "", &mut out, &mut notes, &mut bad);
+            out
+        });
+        let pictures = paper::pictures(o.get("pictures"), &mut bad);
+        let paper = o.get("paper").map(|v| paper::read(v, &pictures, &mut bad));
+        for h in pictures.keys() {
+            let used = paper
+                .iter()
+                .flat_map(Paper::values)
+                .any(|w| *w == Wall::Picture(h.clone()));
+            if !used {
+                bad.push(format!("pictures.{h}: no paper uses it"));
+            }
+        }
         match theme {
-            Some(theme) if bad.is_empty() => Ok(Look {
-                name,
-                title,
-                description,
-                theme,
-            }),
+            Some(theme) if bad.is_empty() => Ok((
+                Look {
+                    name,
+                    title,
+                    description,
+                    theme,
+                    style,
+                    surfaces,
+                    paper,
+                    pictures,
+                },
+                notes,
+            )),
             _ => Err(bad),
         }
     }

@@ -32,6 +32,11 @@ enum Render {
         if let p = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_PALETTE"], PaletteCatalog.shared.named(p) != nil {
             Appearance.shared.settings.colorPalette = p
         }
+        // BANEYSPACES_RENDER_STYLE=<style.css> draws the same shots with that sheet in force. Without it no sheet is read.
+        if let path = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_STYLE"] {
+            StyleSheetStore.shared.start(path: path, firstLookWithin: 2, log: { print($0) })
+        }
+        Styles.shared.sync()
         let model = ViewerModel()
         model.current = 1
         var id: WindowID = 100
@@ -45,7 +50,10 @@ enum Render {
         let size = CGSize(width: 1512, height: 945)
         // Tile frames as the live layout places them, so the drag image can light its target.
         // Drawn by AppKit in an offscreen window (never shown), so colors match the live app.
+        // BANEYSPACES_RENDER_ONLY=<prefix> draws only the images whose names start with it.
+        let only = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_ONLY"] ?? ""
         func save(_ view: some View, _ name: String, _ size: CGSize) -> Bool {
+            guard name.hasPrefix(only) else { return true }
             let height: CGFloat? = size.height == 0 ? nil : size.height
             let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, Chrome.scheme).environment(\.controlActiveState, .key)
             let host = NSHostingView(rootView: framed)
@@ -74,6 +82,14 @@ enum Render {
         }
         if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_LAUNCHER_TIMING"].flatMap(Int.init) {
             return LauncherTiming.run(rounds: r)
+        }
+        // BANEYSPACES_RENDER_OPEN_TIMING=<rounds> times opening the launcher and the switcher instead.
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_OPEN_TIMING"].flatMap(Int.init) {
+            return OpenTiming.run(rounds: max(r, 1))
+        }
+        // BANEYSPACES_RENDER_TILE_TIMING=<rounds> times tiling a workspace of helper windows instead.
+        if let r = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_TILE_TIMING"].flatMap(Int.init) {
+            return TilingTiming.run(rounds: r)
         }
         // BANEYSPACES_RENDER_SWATCHES=1 checks only what the workspace colors sit on in dark mode (scripts/swatch-check.sh).
         if ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_SWATCHES"] == "1" { return SwatchCheck.run(into: folder) }
@@ -154,7 +170,7 @@ enum Render {
             guard save(SwitcherView(model: appSwitcher).padding(30), frame.name, CGSize(width: 820, height: 0)) else { return 1 }
         }
 
-        // The Ledger top bar, on a screen without a notch and on one with it (the middle folds left).
+        // The Ledger top bar, on a screen without a notch and on one with it (the middle sits on the camera's right).
         let topBar = TopBarModel()
         topBar.occupied = [1, 2, 4]
         topBar.now = Calendar.current.date(from: DateComponents(year: 2026, month: 11, day: 21, hour: 9, minute: 12)) ?? Date()
@@ -164,6 +180,29 @@ enum Render {
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
             topBar.notices = "3"
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-notices.png", CGSize(width: 1512, height: 26)) else { return 1 }
+            // The bar as a working Mac has it: the front app's menus, its status items, the battery and a strip of workspaces.
+            topBar.bar.left = [.mark, .workspaces, .split, .appMenus]
+            topBar.bar.center = [.clock]
+            topBar.bar.right = [.status, .split, .notifications]
+            topBar.occupied = [1, 2, 3, 5, 7]
+            topBar.notices = ""
+            topBar.charge = .init(percent: 82, charging: false, onPower: false, lowPower: false)
+            topBar.menus = BarMenus.items(["", "Ghostty", "File", "Edit", "View", "Window", "Help"])
+            let apps = ["/System/Applications/Music.app", "/System/Applications/Messages.app", "/System/Applications/Notes.app",
+                        "/System/Applications/Maps.app", "/System/Applications/Podcasts.app"]
+            for (i, path) in apps.enumerated() { topBar.icons["sample.\(i)"] = icon(path) }
+            topBar.status = apps.indices.map { BarStatus.Item(owner: "sample.\($0)", label: "App \($0)") }
+                + [("wifi", "Wi-Fi"), ("sound", "Sound"), ("battery", "Battery"), ("controlcenter", "Control Center")]
+                .map { BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra." + $0.0, label: $0.1) }
+            for (name, sides, height) in [("topbar-full.png", nil, 26.0), ("topbar-full-notch.png", (left: 656.0, right: 656.0), 37.0),
+                                          ("topbar-drawer.png", nil, 26.0), ("topbar-drawer-notch.png", (left: 656.0, right: 656.0), 37.0)]
+                as [(String, (left: CGFloat, right: CGFloat)?, CGFloat)] {
+                topBar.trayHeld = name.contains("drawer")
+                topBar.bar.style = .islands
+                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name.replacingOccurrences(of: "topbar-", with: "topbar-islands-"), CGSize(width: 1512, height: height)) else { return 1 }
+                topBar.bar.style = .solid
+                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
+            }
         }
 
         // The bell's list: two apps with one quiet, then nothing new.
@@ -189,6 +228,11 @@ enum Render {
         hud.occupied = [1, 2, 3, 4, 5, 7]
         hud.icons = [icon("/System/Applications/Mail.app"), icon("/System/Applications/Utilities/Terminal.app"), icon("/System/Applications/Messages.app")]
         guard save(HUDView(model: hud).background(Color(white: 0.35)), "hud.png", CGSize(width: 260, height: 0)) else { return 1 }
+        // The two toasts: work that finished after the launcher closed, and an agent that finished or needs you.
+        guard save(Toast.Message(text: "Tea is installed", symbol: "checkmark.circle.fill").background(Color(white: 0.35)),
+                   "toast.png", CGSize(width: 260, height: 0)) else { return 1 }
+        guard save(ToastView(title: "Claude: finished", detail: "polycarp", bundleID: "com.apple.Terminal").background(Color(white: 0.2)),
+                   "agent-notice.png", CGSize(width: 320, height: 64)) else { return 1 }
 
         // The ⌘Tab window bar: Tab held on Helium.
         let bar = SwitcherModel()
@@ -218,6 +262,13 @@ enum Render {
         guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher.png", CGSize(width: 760, height: 0)) else { return 1 }
         launcher.query = "ma"
         guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-search.png", CGSize(width: 760, height: 0)) else { return 1 }
+        // What the browsers running the Polycarp extension have open, beside the apps: a better match goes above them.
+        let pages = LauncherModel(actions: BrowserRender.actions())
+        pages.prepare(scope: .root)
+        for (typed, name) in [("orchard", "launcher-browser.png"), ("map", "launcher-browser-below.png")] {
+            pages.query = typed
+            guard save(LauncherView(model: pages).frame(height: 512).padding(30).background(Color(white: 0.3)), name, CGSize(width: 760, height: 0)) else { return 1 }
+        }
         // A coding agent by name, offered in your terminal.
         launcher.agents = ["claude": "/usr/local/bin/claude", "codex": "/usr/local/bin/codex"]
         launcher.query = "claude"

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polycarp Mail</title>
+<link rel="icon" href="../../icons/icon32.png">
+<link rel="stylesheet" href="../shared/theme.css">
+<script src="../shared/theme-live.js"></script>
+<link rel="stylesheet" href="../shared/ui.css">
+<link rel="stylesheet" href="hub.css">
+</head>
+<body>
+<header class="cmd">
+  <a class="wordmark" href="hub.html" data-wordmark title="Polycarp Mail"></a>
+  <button class="box" id="openCmd" type="button" aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K /"><span id="boxIcon"></span><span>Search, or a command</span><kbd>⌘K</kbd></button>
+  <button class="btn quiet write" id="write" type="button" aria-keyshortcuts="C" title="Write a message (C)"></button>
+  <div class="acc" id="accounts" role="group" aria-label="Accounts" hidden></div>
+</header>
+<div class="panes" id="panes">
+  <section class="list" aria-labelledby="where">
+    <div class="where"><button class="back" id="up" type="button" hidden aria-label="Back to the inbox"></button><h1 id="where">Inbox</h1></div>
+    <div id="rows" role="listbox" tabindex="0" aria-labelledby="where"></div>
+    <button class="btn quiet more" id="more" type="button" hidden>Show older mail</button>
+    <div class="empty" id="empty" hidden>
+      <h2>No mail here yet</h2>
+      <p id="emptyText">Accounts you add show their mail here, in one inbox, with people first.</p>
+      <button class="btn" id="tryFake" type="button" hidden>Try it with made-up mail</button>
+    </div>
+  </section>
+  <main id="pane" aria-label="Conversation" tabindex="-1"><p class="hint" id="hint">Pick a conversation, or press J and K to move and Return to open.</p></main>
+</div>
+<dialog class="cmdbar" id="cmd" aria-label="Search and commands">
+  <form method="dialog" role="search"><label class="sr" for="cmdIn">Search mail or type a command</label><input id="cmdIn" type="text" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="cmdList" aria-autocomplete="list" placeholder="Search mail or type a command"></form>
+  <ul id="cmdList" role="listbox" aria-label="Results"></ul>
+</dialog>
+<div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button class="btn quiet" id="toastUndo" type="button">Undo <kbd>Z</kbd></button></div>
+<script src="../shared/core.js"></script>
+<script src="../shared/icons.js"></script>
+<script src="../hub/model.js"></script>
+<script src="../hub/store.js"></script>
+<script src="../hub/adapter.js"></script>
+<script src="../hub/fake.js"></script>
+<script src="../hub/organize.js"></script>
+<script src="../hub/outbox.js"></script>
+<script src="hub-compose.js"></script>
+<script src="hub.js"></script>
+</body>
+</html>

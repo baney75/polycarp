@@ -33,8 +33,11 @@ let package = Package(
         // The launcher's people matcher (docs/contacts.md): no Foundation, optimized in debug builds too, so
         // `swift test` times it as it ships (ContactsSpeedTests).
         .target(name: "ContactsMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
+        // The launcher's matcher for the browser's tabs, bookmarks, history and downloads: no Foundation, optimized in
+        // debug builds too, so `swift test` times it as it ships (BrowserTableTests).
+        .target(name: "BrowserMatch", swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
         // Which window lives where, and where hidden windows go: no AppKit, fully unit-tested.
-        .target(name: "BaneySpacesCore", dependencies: ["ContactsMatch"]),
+        .target(name: "BaneySpacesCore", dependencies: ["BrowserMatch", "ContactsMatch"]),
         // libghostty's C header, as upstream ships it at the pin (build-ghostty.sh checks it is the same).
         .systemLibrary(name: "CGhostty", path: "Sources/CGhostty"),
         // The menu bar app: hotkeys, Accessibility and moving real windows.
@@ -48,7 +51,7 @@ let package = Package(
                 : []),
         // `baneyspaces`, the command for hooks, agents and you. Foundation only, so it starts in milliseconds.
         .executableTarget(name: "baneyspaces-cli", dependencies: ["BaneySpacesCore"]),
-        .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore"]),
+        .testTarget(name: "BaneySpacesCoreTests", dependencies: ["BaneySpacesCore", "BrowserMatch"]),
         // The ranking table and the 2,000-entry latency check for the launcher's matcher.
         .testTarget(name: "LauncherMatchTests", dependencies: ["LauncherMatch"]),
     ]

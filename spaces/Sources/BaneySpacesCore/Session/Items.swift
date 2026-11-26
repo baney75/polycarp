@@ -64,6 +64,7 @@ public enum Catalog {
         AppSpec(bundleID: "com.todesktop.230313mzl4w4u92", name: "Cursor", role: .agent, adapter: .windows),
         AppSpec(bundleID: "com.microsoft.VSCode", name: "VS Code", role: .agent, adapter: .windows),
         AppSpec(bundleID: "dev.zed.Zed", name: "Zed", role: .agent, adapter: .windows),
+        AppSpec(bundleID: "com.baney.polycarp.browser", name: "Polycarp Browser", role: .browser, adapter: .chromium),
         AppSpec(bundleID: "net.imput.helium", name: "Helium", role: .browser, adapter: .chromium),
         AppSpec(bundleID: "com.google.Chrome", name: "Chrome", role: .browser, adapter: .chromium),
         AppSpec(bundleID: "com.brave.Browser", name: "Brave", role: .browser, adapter: .chromium),
@@ -93,7 +94,7 @@ public enum Catalog {
 public struct Item: Identifiable, Equatable, Codable, Sendable {
     public enum Kind: String, Codable, Sendable { case terminal, tab, window, device }
 
-    /// Stable while the thing exists: `ghostty:<terminal>`, `tab:<bundle>:<tab id>`, `win:<CGWindowID>`.
+    /// Stable while the thing exists: `ghostty:<terminal>`, `tab:<bundle>:<window id>:<tab id>`, `win:<CGWindowID>`.
     public var id: String
     public var bundleID: String
     public var appName: String

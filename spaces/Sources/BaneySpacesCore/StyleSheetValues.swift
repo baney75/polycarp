@@ -555,8 +555,10 @@ enum StyleSheetBuilder {
                 let targets = selectors.compactMap(\.target)
                 let misses = selectors.filter { s in s.target.map { !property.applies(to: $0) } ?? true }
                 if !misses.isEmpty {
+                    // What on the same surface takes it, when anything does.
+                    let near = property.targets.filter { t in misses.contains { $0.surface == t.surface } }
                     add(d.line, d.column, "`\(name)` doesn't apply to \(misses.map { "`\($0)`" }.joined(separator: ", ")); it applies to "
-                        + StyleNumber.list(property.targets.map { "\($0.rawValue)" }, last: "and")
+                        + StyleNumber.list((near.isEmpty ? property.targets : near).map { "\($0.rawValue)" }, last: "and")
                         + (name == "display" && misses.contains { $0.part == nil && $0.surface == .bar } ? " (turn the bar off with surfaces.json bar.enabled)" : ""))
                     if !targets.contains(where: property.applies) { continue }
                 }
@@ -662,6 +664,8 @@ public final class StyleLookup {
     /// The typed value of each `var()` declaration that works in this mode, by where its value was written.
     private var resolved: [Place: StyleValue] = [:]
     private var memo: [Key: ComputedStyle] = [:]
+    /// The surfaces a rule names: nothing reaches any other.
+    let named: Set<StyleSurface>
 
     struct Place: Hashable { let line: Int, column: Int }
     private struct Key: Hashable {
@@ -673,6 +677,7 @@ public final class StyleLookup {
 
     public init(_ sheet: StyleSheet, dark: Bool, roles: [String: StyleColor]) {
         self.sheet = sheet; self.dark = dark; self.roles = roles
+        named = Set(sheet.rules.flatMap { rule in rule.selectors.compactMap(\.surface) })
         let expander = StyleVars.Expander(custom: dark ? sheet.customDark : sheet.customLight, roles: roles)
         // The same value written in many rules is worked out once.
         var byText: [String: StyleValue?] = [:]
@@ -694,7 +699,7 @@ public final class StyleLookup {
     public func computed(surface: StyleSurface, part: String? = nil, region: String? = nil, states: Set<StyleState> = []) -> ComputedStyle {
         let key = Key(surface: surface, part: part, region: region, states: states)
         if let known = memo[key] { return known }
-        let c = sheet.rules.isEmpty ? .empty : (cascade(surface: surface, part: part, region: region, states: states)?.last?.computed ?? .empty)
+        let c = !named.contains(surface) ? .empty : (cascade(surface: surface, part: part, region: region, states: states)?.last?.computed ?? .empty)
         memo[key] = c
         return c
     }
@@ -714,8 +719,6 @@ public final class StyleLookup {
         guard let target = StyleTarget.of(surface, part: part) else { return nil }
         var chain: [(StyleTarget, StyleSelector)] = []
         switch target {
-        case .bar: break
-        case .barRegion: chain.append((target.parent!, StyleSelector(surface: surface)))
         case .barModule, .barIsland:
             chain.append((.bar, StyleSelector(surface: .bar)))
             if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
@@ -723,6 +726,13 @@ public final class StyleLookup {
             chain.append((.bar, StyleSelector(surface: .bar)))
             if let region, StyleTarget.barRegion.parts.contains(region) { chain.append((.barRegion, StyleSelector(surface: .bar, part: region))) }
             chain.append((.barModule, StyleSelector(surface: .bar, part: "workspaces", states: states.intersection(StyleTarget.barModule.states))))
+        default:
+            // A part, what it sits in and the surface, each in as many of the states as it takes.
+            var above = target.parent
+            while let t = above {
+                chain.insert((t, StyleSelector(surface: surface, part: t.parts.first, states: states.intersection(t.states))), at: 0)
+                above = t.parent
+            }
         }
         chain.append((target, StyleSelector(surface: surface, part: part, states: states.intersection(target.states))))
         var levels: [Level] = []
@@ -751,7 +761,8 @@ public final class StyleLookup {
             let parent = levels.last
             // The text color first: `currentColor` in `color` is the parent's color.
             let parentColor: StyleColor? = { if case .color(.rgba(let c))? = parent?.values["color"] { c } else { nil } }()
-            for property in StyleProperty.all where property.applies(to: t) {
+            let properties = StyleProperty.of[t]!
+            for property in properties.taken {
                 if let (v, line, column) = specified[property.name] {
                     level.values[property.name] = v
                     level.own[property.name] = (line, column)
@@ -764,7 +775,7 @@ public final class StyleLookup {
             }
             // Inherited values pass through a level that can't use them, so a part further down still gets them.
             if let parent {
-                for property in StyleProperty.all where property.inherited && !property.applies(to: t) {
+                for property in properties.passed {
                     if let v = parent.values[property.name] { level.values[property.name] = v }
                 }
             }
@@ -813,6 +824,7 @@ extension StyleSheet {
         if applies("text-transform") { s.textTransform = keyword("text-transform").flatMap(StyleTextTransform.init(rawValue:)) }
         if applies("font-variant-numeric") { s.fontVariantNumeric = keyword("font-variant-numeric").flatMap(StyleNumerals.init(rawValue:)) }
         s.height = number("height")
+        s.width = number("width")
         if case .insets(let p)? = v["padding"] { s.padding = p }
         s.gap = number("gap")
         s.borderRadius = number("border-radius")
@@ -830,28 +842,32 @@ extension StyleSheet {
 
     // MARK: Contrast
 
+    /// Everything that draws text, in every region and state it can be in.
+    static let textNodes: [(StyleSurface, String?, String?, Set<StyleState>)] = {
+        let color = StyleProperty.byName["color"]!
+        var nodes: [(StyleSurface, String?, String?, Set<StyleState>)] = []
+        for t in StyleTarget.allCases where color.applies(to: t) {
+            let regions = [nil] + ([.barModule, .barWorkspace].contains(t) ? StyleTarget.barRegion.parts.map(Optional.some) : [])
+            // Every set of its states, the fewest first.
+            let sets = StyleState.allCases.filter(t.reach.contains)
+                .reduce([Set<StyleState>()]) { sets, st in sets + sets.map { $0.union([st]) } }
+            for part in t.parts.isEmpty ? [nil] : t.parts.map(Optional.some) {
+                for region in regions { for st in sets { nodes.append((t.surface, part, region, st)) } }
+            }
+        }
+        return nodes
+    }()
+
     /// Text the sheet colors (or puts on a background it sets) that reads below 3:1 on what is behind it, in either mode.
     /// `roles(dark)` stands for the theme in force; `background` is the base under every surface.
     func contrastWarnings(roles: (Bool) -> [String: StyleColor]) -> [StyleProblem] {
         var out: [StyleProblem] = []
         var seen = Set<String>()
-        var nodes: [(StyleSurface, String?, String?, Set<StyleState>)] = [(.bar, nil, nil, [])]
-        for r in StyleTarget.barRegion.parts { nodes.append((.bar, r, nil, [])) }
-        for m in StyleTarget.barModule.parts {
-            for region in [nil] + StyleTarget.barRegion.parts.map(Optional.some) {
-                nodes.append((.bar, m, region, []))
-                nodes.append((.bar, m, region, [.hover]))
-            }
-        }
-        let stateSets: [Set<StyleState>] = [[], [.current], [.hover], [.current, .hover]]
-        for region in [nil] + StyleTarget.barRegion.parts.map(Optional.some) {
-            for st in stateSets { nodes.append((.bar, "workspace", region, st)) }
-        }
         for dark in [false, true] {
             let r = roles(dark)
             guard let base = r["background"] else { continue }
             let lookup = StyleLookup(self, dark: dark, roles: r)
-            for (surface, part, region, states) in nodes {
+            for (surface, part, region, states) in Self.textNodes where lookup.named.contains(surface) {
                 guard let levels = lookup.cascade(surface: surface, part: part, region: region, states: states),
                       let last = levels.last,
                       levels.contains(where: { $0.own["color"] != nil || $0.own["background"] != nil }) else { continue }

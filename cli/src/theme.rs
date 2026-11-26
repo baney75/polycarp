@@ -22,7 +22,9 @@ mod png;
 mod preview;
 mod schema;
 
-pub(crate) use part::{hold, ThemeDoc, ThemeLook};
+pub(crate) use part::{
+    apply, before, capture, hold, restore, rollback, Before, Did, ThemeDoc, ThemeLook,
+};
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.
@@ -1873,6 +1875,10 @@ impl Out {
         self.warnings.push(w);
         self
     }
+    pub(crate) fn noting(mut self, notes: Vec<String>) -> Out {
+        self.notes.extend(notes);
+        self
+    }
     fn with(mut self, extra: Json) -> Out {
         if let (Some(d), Some(e)) = (self.data.as_object_mut(), extra.as_object()) {
             for (k, v) in e {
@@ -2023,6 +2029,9 @@ impl ApiErr {
             lines: problems.to_vec(),
             usage: false,
         }
+    }
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
     }
     pub(crate) fn message(&self) -> &str {
         &self.message
@@ -3952,6 +3961,10 @@ pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
 
 fn undo_inner(c: &Ctx, force: bool) -> Res {
     let _lock = Lock::acquire(&c.cfg)?;
+    undo_locked(c, force)
+}
+
+fn undo_locked(c: &Ctx, force: bool) -> Res {
     let hist = read_history(&c.cfg);
     let Some(last) = hist.first() else {
         return Err(ApiErr::new("nothing_to_undo", "nothing to undo"));

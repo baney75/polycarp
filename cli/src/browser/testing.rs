@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
+use super::pak;
+use super::spot::{Built, Spot};
 use super::tools::{Call, Ran, System, Tools};
 use super::Place;
 
@@ -64,11 +66,47 @@ impl Fake {
         change(&mut self.scene.borrow_mut());
     }
 
+    pub fn spot(&self) -> Spot {
+        Spot {
+            folder: self.root.join("Applications"),
+        }
+    }
+
     pub fn place(&self) -> Place {
         Place {
             cache: self.root.join("cache"),
             parts: self.parts(),
         }
+    }
+
+    /// A folder that says it is a build, and no more.
+    pub fn built_app(&self, at: &Path, version: &str, built: u64) {
+        fs::create_dir_all(at.join("Contents/Resources/polycarp")).unwrap();
+        fs::create_dir_all(at.join("Contents/MacOS")).unwrap();
+        let built = Built {
+            helium: version.into(),
+            published: Some(20_000),
+            built,
+            parts: String::new(),
+            certificate: false,
+        };
+        built.write(at).unwrap();
+    }
+
+    /// A program that stays running from inside `app`.
+    pub fn start_inside(&self, app: &Path) -> std::process::Child {
+        // This test program itself, plain arm64: a copy of a system tool is arm64e, which macOS 15 stops soon after
+        // it starts when someone other than Apple signed it.
+        let copy = app.join("Contents/MacOS/sleeper");
+        fs::copy(std::env::current_exe().unwrap(), &copy).unwrap();
+        let mut sleeper = std::process::Command::new(&copy);
+        sleeper.args([
+            "--exact",
+            "browser::testing::sleeps_when_asked",
+            "--test-threads=1",
+        ]);
+        sleeper.env(SLEEP, "60").stdout(std::process::Stdio::null());
+        sleeper.spawn().unwrap()
     }
 
     /// Every call so far, as `program arguments`.
@@ -90,6 +128,12 @@ impl Fake {
             fs::write(parts.join(icon), icon).unwrap();
         }
         parts
+    }
+
+    pub fn work(&self) -> PathBuf {
+        let work = self.root.join("work");
+        fs::create_dir_all(&work).unwrap();
+        work
     }
 
     /// A small real app bundle, signed by nobody.
@@ -162,6 +206,21 @@ fn make_app(app: &Path) {
         "Contents/Resources/en.lproj/InfoPlist.strings",
         strings.as_bytes(),
     );
+    let strings = "CFBundleGetInfoString = \"Helium 158, Copyright Die Helium-Autoren.\";\n\
+         NSHumanReadableCopyright = \"Copyright Die Helium-Autoren.\";\n\
+         NSCameraUsageDescription = \"Wenn Helium Zugriff hat\";\n";
+    put(
+        "Contents/Resources/de.lproj/InfoPlist.strings",
+        strings.as_bytes(),
+    );
+    let strings = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<plist version=\"1.0\">\n<dict>\n\
+         \t<key>CFBundleGetInfoString</key>\n\t<string>Helium 158, Copyright Les auteurs de Helium.</string>\n\
+         \t<key>NSHumanReadableCopyright</key>\n\t<string>Copyright Les auteurs de Helium.</string>\n\
+         \t<key>NSCameraUsageDescription</key>\n\t<string>Si Helium a acc\u{e8}s</string>\n</dict>\n</plist>\n";
+    put(
+        "Contents/Resources/fr.lproj/InfoPlist.strings",
+        strings.as_bytes(),
+    );
 
     for name in ["Helium Helper (Alerts)", "Helium Helper (Aperitif Alerts)"] {
         let at = format!("{FRAMEWORK}/Helpers/{name}.app/Contents");
@@ -190,6 +249,17 @@ fn make_app(app: &Path) {
         &format!("{FRAMEWORK}/Resources/product_logo_32.png"),
         b"an icon",
     );
+    for (lang, about, services) in [
+        ("en", "About Helium", "Allow Helium services"),
+        ("de", "Info zu Helium", "Dienste von Helium erlauben"),
+    ] {
+        let pak = pak::made_up(&[(1, about), (2, services)]);
+        put(
+            &format!("{FRAMEWORK}/Resources/{lang}.lproj/locale.pak"),
+            &pak,
+        );
+    }
+
     let sparkle = format!("{FRAMEWORK}/Frameworks/Sparkle.framework");
     let info = plist("org.sparkle-project.Sparkle", "Sparkle", "FMWK", "");
     put(
@@ -278,5 +348,15 @@ impl Tools for Fake {
             other => panic!("no fake for {other}"),
         }
         said("")
+    }
+}
+
+const SLEEP: &str = "POLYCARP_TEST_SLEEP_SECONDS";
+
+/// The program `Fake::start_inside` runs: it waits when asked to and does nothing otherwise.
+#[test]
+fn sleeps_when_asked() {
+    if let Some(seconds) = std::env::var(SLEEP).ok().and_then(|s| s.parse().ok()) {
+        std::thread::sleep(std::time::Duration::from_secs(seconds));
     }
 }

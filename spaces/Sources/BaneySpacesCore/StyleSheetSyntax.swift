@@ -464,8 +464,8 @@ struct StyleSyntax {
         }
         guard case .ident(let name) = first.kind else {
             if first.kind == .delim("."), t.count > 1, case .ident(let p) = t[1].kind {
-                let owner = StyleTarget.allCases.first { $0.parts.contains(p) }?.surface.rawValue ?? "bar"
-                return fail("`.\(p)` needs its surface first: write `\(owner) .\(p)`")
+                let owners = StyleSurface.allCases.filter { StyleTarget.of($0, part: p) != nil }.map { "`\($0.rawValue) .\(p)`" }
+                return fail("`.\(p)` needs its surface first: write \(owners.isEmpty ? "`bar .\(p)`" : StyleNumber.list(owners, last: "or"))")
             }
             return fail("`\(written)` isn't a selector; start with a surface: \(Self.surfacesText)")
         }
@@ -479,7 +479,8 @@ struct StyleSyntax {
         if rest.isEmpty { return .success(StyleSelector(surface: surface)) }
         guard rest.first?.isSpace == true else {
             if rest.first?.kind == .colon, rest.count > 1, case .ident(let p) = rest[1].kind {
-                return fail("`\(name)` takes no states (`:\(p)`); states go on a part, like `bar .workspace:hover`")
+                let part = StyleTarget.allCases.last { $0.surface == surface && $0.states.contains(.hover) }?.selectors[0] ?? "bar .workspace"
+                return fail("`\(name)` takes no states (`:\(p)`); states go on a part, like `\(part):hover`")
             }
             return fail("write `\(written.replacingOccurrences(of: name + ".", with: name + " ."))` with a space: a part is inside its surface")
         }
@@ -514,7 +515,7 @@ struct StyleSyntax {
         let allowed = target.states.map(\.selector)
         let takes = allowed.isEmpty ? "takes no states" : "takes \(StyleNumber.list(allowed.map { "`\($0)`" }, last: "and"))"
         for c in classes.dropFirst() {
-            guard let st = StyleState(rawValue: c), st == .current, target.states.contains(st) else {
+            guard let st = StyleState(rawValue: c), st != .hover, target.states.contains(st) else {
                 return fail("`.\(c)` isn't a state of `\(name) .\(partName)`, which \(takes)")
             }
             states.insert(st)

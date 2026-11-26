@@ -122,6 +122,8 @@ final class StyleSheetTests: XCTestCase {
         ("bar", "text-transform", ["none", "uppercase", "lowercase", "capitalize"], ["small-caps", "upper"]),
         ("bar", "font-variant-numeric", ["normal", "tabular-nums"], ["oldstyle-nums", "slashed-zero"]),
         ("bar", "height", ["18px", "64px", "28pt"], ["17px", "65px", "28", "0"]),
+        ("launcher .row", "height", ["18px", "64px"], ["17px", "65px", "auto"]),
+        ("launcher", "width", ["480px", "1200px", "700pt"], ["479px", "1201px", "700", "50%", "auto"]),
         ("bar .clock", "padding", ["0", "4px", "0 8px", "1px 2px 3px", "1px 2px 3px 4px", "40px"], ["1px 2px 3px 4px 5px", "41px", "-1px", "8", "auto"]),
         ("bar", "gap", ["0", "40px", "8pt"], ["41px", "-1px", "8"]),
         ("bar .workspace", "border-radius", ["0", "40px", "6pt"], ["-1px", "41px", "50%"]),
@@ -227,6 +229,8 @@ final class StyleSheetTests: XCTestCase {
             ("bar .clok { color: red }", "`.clock`"),
             ("bar .clok { color: red }", "`.hour`"),
             ("bar .workspace.active { color: red }", "takes `.current` and `:hover`"),
+            ("bar .workspace.selected { color: red }", "takes `.current` and `:hover`"),
+            ("bar .workspace.hover { color: red }", "takes `.current` and `:hover`"),
             ("bar .left:hover { color: red }", "takes no states"),
             ("bar:hover { color: red }", "takes no states"),
             ("* { color: red }", "`*` isn't supported"),
@@ -457,6 +461,20 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertFalse(d.object?["warnings"]?.array?.isEmpty ?? true)
     }
 
+    /// The bar's text in every region and state, each once: what the warnings look at.
+    func testContrastLooksAtEveryTextPartInEveryState() {
+        let bar = StyleSheet.textNodes.filter { $0.0 == .bar }
+        // The bar, 3 regions, 11 modules in no region or one of 3, hovered or not, and a number in 4 places and 4 states.
+        XCTAssertEqual(bar.count, 1 + 3 + 11 * 4 * 2 + 4 * 4)
+        XCTAssertEqual(Set(bar.map { "\($0.1 ?? "")|\($0.2 ?? "")|\($0.3.map(\.rawValue).sorted())" }).count, bar.count)
+        XCTAssertFalse(bar.contains { $0.1 == "island" }, "an island draws no text of its own")
+        for t in StyleTarget.allCases where StyleProperty.byName["color"]!.applies(to: t) {
+            for st in t.states {
+                XCTAssertTrue(StyleSheet.textNodes.contains { $0.0 == t.surface && $0.1 == t.parts.first && $0.3 == [st] }, "\(t.rawValue) \(st)")
+            }
+        }
+    }
+
     // MARK: What the bar reads
 
     /// A rule reaches the values the bar draws with (`StyleBook`), and a part the sheet leaves alone stays nil,
@@ -621,6 +639,44 @@ final class StyleSheetTests: XCTestCase {
     }
 
     /// The app starts the store and the bar redraws on its notification (review of #604).
+    /// A panel reads its parts from the book, so what it can need is worked out once: every state, inheritance included.
+    func testTheLauncherBookHoldsEveryPartInEveryState() {
+        let book = StyleBook(sheet("""
+        launcher { color: #010101; width: 900px; }
+        launcher .row { height: 40px; }
+        launcher .row.selected { color: #020202; }
+        launcher .row:hover { color: #030303; background: #040404; }
+        launcher .subtitle { color: #050505; }
+        launcher .subtitle.selected { color: #060606; }
+        launcher .icon { display: none; }
+        launcher .field { letter-spacing: 2px; border-bottom: none; }
+        """), dark: true, roles: [:])
+        func hex(_ c: ComputedStyle) -> String? { c.color?.hex }
+        let l = book.launcher
+        XCTAssertEqual(l.panel.width, 900)
+        XCTAssertEqual(hex(l.field), "#010101")
+        XCTAssertNil(l.field.letterSpacing, "the system's text field spaces its own letters")
+        XCTAssertEqual(l.field.borderBottom, StyleLine.none)
+        XCTAssertEqual(hex(l.section), "#010101")
+        XCTAssertEqual(hex(l.footer), "#010101")
+        XCTAssertEqual(l.row(selected: false).box.height, 40)
+        XCTAssertEqual(hex(l.row(selected: false).title), "#010101")
+        XCTAssertEqual(hex(l.row(selected: true).title), "#020202", "a title takes its row's color, in its row's state")
+        XCTAssertEqual(hex(l.row(selected: true).badge), "#020202")
+        XCTAssertEqual(hex(l.row(selected: true).subtitle), "#060606")
+        XCTAssertEqual(hex(l.row(selected: false).subtitle), "#050505")
+        XCTAssertEqual(hex(l.row(selected: false, hover: true).title), "#030303")
+        XCTAssertEqual(l.row(selected: false, hover: true).box.background, .color(StyleColor(rgb: 0x040404)))
+        XCTAssertNil(l.row(selected: true).box.background)
+        XCTAssertTrue(l.row(selected: true).icon.isHidden)
+        XCTAssertTrue(l.hovers)
+        XCTAssertTrue(book.launcher.row(selected: true) === l.row(selected: true), "worked out once")
+        XCTAssertFalse(StyleBook(sheet("launcher .row.selected { color: red; }"), dark: true, roles: [:]).launcher.hovers)
+        let lit = StyleBook(sheet("launcher .row.selected { color: #020202; }"), dark: true, roles: [:]).launcher.row(selected: true)
+        XCTAssertEqual([lit.box, lit.title, lit.subtitle, lit.badge, lit.icon].map(hex), Array(repeating: "#020202", count: 5), "all a row holds")
+        let none = StyleBook(sheet("bar { color: red; }"), dark: true, roles: [:]).launcher
+        XCTAssertTrue([none.panel, none.field, none.section, none.footer, none.row(selected: true, hover: true).title].allSatisfy(\.isEmpty))
+    }
     func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("StyleSheetStore.shared.start("), "AppDelegate starts the style sheet store")

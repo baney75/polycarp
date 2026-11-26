@@ -166,6 +166,8 @@ enum BarReader {
 struct FitRow: Layout {
     var spacing: CGFloat
     var fromEnd = false
+    /// The whole height it is offered, so its buttons reach the screen's edge.
+    var fills = true
 
     private func shown(_ subviews: Subviews, room: CGFloat?) -> (widths: [CGFloat], range: Range<Int>) {
         let widths = subviews.map { $0.sizeThatFits(.unspecified).width }
@@ -178,7 +180,7 @@ struct FitRow: Layout {
         let (widths, range) = shown(subviews, room: proposal.width)
         let width = range.reduce(0) { $0 + widths[$1] } + spacing * CGFloat(max(0, range.count - 1))
         let height = subviews.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
-        return CGSize(width: width, height: height)
+        return CGSize(width: width, height: fills ? proposal.height.flatMap { $0.isFinite ? max($0, height) : nil } ?? height : height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -189,7 +191,8 @@ struct FitRow: Layout {
                 subviews[i].place(at: CGPoint(x: -10_000, y: -10_000), proposal: .zero)
                 continue
             }
-            subviews[i].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading, proposal: .unspecified)
+            subviews[i].place(at: CGPoint(x: x, y: bounds.midY), anchor: .leading,
+                              proposal: ProposedViewSize(width: nil, height: bounds.height))
             x += widths[i] + spacing
         }
     }

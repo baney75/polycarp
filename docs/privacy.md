@@ -2,7 +2,7 @@
 title: Polycarp privacy policy
 seo_title: "Polycarp privacy policy: what it reads and where it goes"
 description: What the Polycarp Mac app and commands read, where that goes, what stays on your computer, and how to delete it. No accounts, no analytics.
-updated: November 24, 2026
+updated: November 25, 2026
 ---
 
 # Polycarp privacy policy
@@ -17,6 +17,7 @@ This policy covers the Polycarp app for Mac. Polycarp's browser extension, for r
 - **The launcher** sends what you type in its Install menu to Apple's App Store search, and it downloads Homebrew's public list of apps.
 - **Web search**, from the launcher, the new tab page, `polycarp-spaces search` or an agent. Your words are matched against your open tabs, windows and terminal splits on your Mac, and Polycarp sends nothing to look them up. Opening a web result opens it in your browser, so the words go to your search engine (Google unless you chose another), to the site or AI service a bang such as `!yt` or `!claude` names, or to DuckDuckGo for a bang Polycarp doesn't know.
 - **A wallpaper from a web address.** When you or an agent sets the wallpaper to an https URL, the app downloads that picture from its host and any host it redirects to. They see an ordinary request.
+- **A browser running the Polycarp extension** tells the launcher the titles and addresses of its open tabs, and its bookmarks, the last 90 days of its history and its downloads' names where you switched those on. They stay in memory on your Mac until the browser quits or you switch them off, none comes from a private window, and nothing is written down or sent anywhere.
 - **Files.** `polycarp files` keeps an index of file names and the text inside files on each of your devices. Searches, results and the files you copy go between them over your own Tailscale network only, unless an agent you connect asks for them (below) ([what it never reads](files.md#what-it-never-reads)).
 - **Agents you connect**, such as Claude Code or Codex, over `polycarp mcp`, `polycarp files mcp` or `polycarp agent`. What a tool returns goes to that agent and is then covered by its own terms. `search` returns the titles of open tabs, windows and terminal splits, with a folder or host for some. The file tools return file names and contents, from your other devices too. Web assistants reach your Mac only through a tunnel you set up, so traffic passes through that company and its terms apply too, and you approve each assistant on your Mac ([agents](agents.md)).
 - **Updates.** The app asks GitHub about new releases.

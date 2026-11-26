@@ -18,5 +18,7 @@ run() {
 
 run cli cli 'cargo test && cargo clippy --all-targets -- -D warnings && cargo fmt --check'
 run spaces spaces 'swift build && swift test'
+run omarchy plugins/omarchy 'node --test test/*.test.mjs'
+run omarchy-publish plugins 'bash publish-omarchy-test.sh'
 
 exit "$failed"

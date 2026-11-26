@@ -65,10 +65,16 @@ public enum NewTabHost {
         return out
     }
 
-    /// Reads one request from `input`, answers it on `output`, and says whether it did. Writes nothing else.
+    /// Reads one request from `input`, answers it on `output`, and says whether it did. Writes nothing else. `browser.join`
+    /// is no request: from then on the port belongs to `relay`, until the browser closes it.
     @discardableResult
-    public static func serve(input: Int32, output: Int32, source: Source) -> Bool {
+    public static func serve(input: Int32, output: Int32, source: Source,
+                             relay: (Int32, Int32) -> Void = { BrowserRelay.serve(input: $0, output: $1, path: BrowserRelay.path()) }) -> Bool {
         guard let request = readMessage(fd: input) else { return false }
+        if BrowserRelay.isJoin(request) {
+            relay(input, output)
+            return true
+        }
         return Wire.writeAll(output, encode(answer(request, source: source)))
     }
 

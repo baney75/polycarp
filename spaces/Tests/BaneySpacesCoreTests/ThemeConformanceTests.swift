@@ -144,7 +144,7 @@ final class ThemeConformanceTests: XCTestCase {
     /// The files that draw a surface. `Theming.swift` is the theme layer: the only place a shipped
     /// value of the BaneySpaces theme may be written down.
     private let surfaceFiles = ["WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD", "Setup", "Appearance",
-                                "Permissions/PermissionsPane", "Permissions/DragHelper", "Player", "TopBar", "KeysSheet"]
+                                "Permissions/PermissionsPane", "Permissions/DragHelper", "Player", "TopBar", "BarParts", "BarModules", "KeysSheet"]
 
     private let banned: [(String, String)] = [
         (#"cornerRadius:\s*[0-9]"#, "a corner radius"),

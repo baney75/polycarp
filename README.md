@@ -14,7 +14,8 @@ The Polycarp browser extension ([`spaces/extension`](spaces/extension)) is the r
 Phont. It works on its own in Helium, Chrome and other Chromium browsers. With Polycarp installed on the same computer it
 also gives the browser Polycarp's new tab and updates with the app. The browser-driving extension, its CLI helper, MCP
 server and computer-use tools were removed from Polycarp.
-The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
+The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. On Omarchy 4,
+Polycarp is [a plugin for Omarchy's own shell](plugins/omarchy).
 
 On a Mac it lives in `Polycarp.app`, with one Settings window, one set of permissions and one command. The Windows
 version is on the way; see [the plan](PLAN.md). It grew from [BaneySpaces](https://github.com/baney75/baneyspaces)
@@ -50,6 +51,8 @@ copied first.
 
 ## Linux
 
+On Omarchy 4, [the plugin](plugins/omarchy) adds Polycarp's workspaces, agents and looks to Omarchy's own shell.
+
 The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces. Run on Linux, the install
 line above says so and installs nothing, and so does
 `polycarp update`.
@@ -74,6 +77,7 @@ polycarp spaces ls          # runs baneyspaces ls
 polycarp doctor             # shows which tools it found, and whether their builds match
 polycarp version            # every part, the commit it was built from, and whether they all match
 polycarp update             # brings every part to the newest commit together
+polycarp look save mine     # keeps how everything looks under a name; apply, undo, export, import
 polycarp mcp                # serves the theme tools to an agent over MCP (stdio)
 ```
 

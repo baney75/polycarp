@@ -140,6 +140,19 @@ impl ThemeLook {
         )
     }
 
+    /// The same look, whatever its theme is called.
+    pub(crate) fn same_as(&self, other: &ThemeLook) -> bool {
+        (&self.mode, &self.accent_light, &self.accent_dark)
+            == (&other.mode, &other.accent_light, &other.accent_dark)
+            && same_doc(&self.theme, &other.theme)
+    }
+
+    /// The theme's own title, or its name.
+    pub(crate) fn theme_title(&self, c: &Ctx) -> String {
+        self.swatches(c)
+            .map_or_else(|| "a theme".into(), |(t, _)| t)
+    }
+
     pub(crate) fn check(&self, c: &Ctx) -> Result<(), ApiErr> {
         self.full(&c.cfg)
             .map(|_| ())
@@ -164,10 +177,28 @@ impl ThemeLook {
     }
 }
 
+fn same_doc(a: &ThemeDoc, b: &ThemeDoc) -> bool {
+    let plain = |t: &Table| {
+        let mut t = t.clone();
+        for k in ["name", "title", "description"] {
+            t.remove(k);
+        }
+        t
+    };
+    match (a, b) {
+        (ThemeDoc::Builtin(a), ThemeDoc::Builtin(b)) => a == b,
+        (ThemeDoc::Document(a), ThemeDoc::Document(b)) => plain(a) == plain(b),
+        _ => false,
+    }
+}
+
 /// Where the theme's files are; looks are kept beside them.
 impl Ctx {
     pub(crate) fn dir(&self) -> &Path {
         &self.cfg.dir
+    }
+    pub(crate) fn caller(&self) -> &str {
+        &self.caller
     }
 }
 
@@ -178,9 +209,343 @@ pub(crate) fn hold(c: &Ctx) -> Result<Held, ApiErr> {
     Lock::acquire(&c.cfg).map(Held)
 }
 
+/// A theme's file with everything it extends merged in, so it needs no other theme.
+fn flatten(cfg: &Cfg, name: &str) -> Result<Table, String> {
+    let mut chain = vec![load_raw(cfg, name)?];
+    while let Some(ext) = chain.last().and_then(ext_of) {
+        if chain.len() > MAX_DEPTH {
+            return Err(format!("extends: more than {MAX_DEPTH} themes deep"));
+        }
+        chain.push(load_raw(cfg, &ext)?);
+    }
+    let mut merged = Table::new();
+    for t in chain.iter().rev() {
+        merge(&mut merged, t);
+    }
+    merged.remove("extends");
+    Ok(merged)
+}
+
+fn doc_of(cfg: &Cfg, name: &str) -> Result<ThemeDoc, String> {
+    Ok(match is_builtin(name) {
+        true => ThemeDoc::Builtin(name.to_string()),
+        false => ThemeDoc::Document(flatten(cfg, name)?),
+    })
+}
+
+/// The theme in force as a look holds it. A theme that is off is still the one chosen.
+pub(crate) fn capture(c: &Ctx) -> Result<(ThemeLook, Vec<String>), ApiErr> {
+    let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
+    let st = eff.state;
+    let notes = match st.enabled {
+        true => Vec::new(),
+        false => vec![
+            "the theme is off; the look holds the one chosen, and applying it turns the theme on"
+                .into(),
+        ],
+    };
+    let look = ThemeLook {
+        theme: doc_of(&c.cfg, &st.theme).map_err(|e| bad_theme("the theme can't be read", &[e]))?,
+        mode: st.mode,
+        accent_light: st.accent_light,
+        accent_dark: st.accent_dark,
+    };
+    Ok((look, notes))
+}
+
 /// What `polycarp look` adds to a refusal.
 impl ApiErr {
     pub(crate) fn recode(&mut self, code: &'static str) {
         self.code = code;
     }
+
+    /// A refusal `polycarp-spaces` gave.
+    pub(crate) fn from_spaces(env: &Json) -> ApiErr {
+        let e = &env["error"];
+        let code = match e["code"].as_str() {
+            Some("spaces_not_found") => "spaces_not_found",
+            Some("spaces_too_old") => "spaces_too_old",
+            Some("spaces_failed") => "spaces_failed",
+            _ => "refused",
+        };
+        // It may quote the look it refuses.
+        let plain = |s: &str| crate::look::plain(&[s.to_string()]).concat();
+        let mut out = ApiErr::new(
+            code,
+            plain(e["message"].as_str().unwrap_or("polycarp-spaces refused")),
+        );
+        if let Some(s) = e["suggestion"].as_str().filter(|s| !s.is_empty()) {
+            out = out.suggest(s);
+        }
+        if let Some(a) = e["data"]["errors"].as_array().filter(|a| !a.is_empty()) {
+            out.items = a.clone();
+            for i in &mut out.items {
+                for k in ["path", "message"] {
+                    if let Some(s) = i[k].as_str().map(plain) {
+                        i[k] = json!(s);
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// The step of a look that failed, and whether what came before it was put back.
+    pub(crate) fn step(mut self, step: &str, back: Result<(), String>) -> ApiErr {
+        let why = std::mem::take(&mut self.message);
+        (self.code, self.message) = match back {
+            Ok(()) => (
+                "step_failed",
+                format!("the {step} step failed, so everything was put back: {why}"),
+            ),
+            Err(e) => (
+                "stuck",
+                format!("the {step} step failed ({why}), and putting things back failed too ({e})"),
+            ),
+        };
+        if self.code == "stuck" {
+            self.suggestion =
+                Some("Run `polycarp look undo` to try again: what was there is kept.".into());
+        }
+        for i in self
+            .items
+            .iter_mut()
+            .filter(|i| i["path"].is_null() || i["path"] == json!("$"))
+        {
+            i["path"] = json!(step);
+        }
+        self
+    }
+
+    pub(crate) fn stuck(&self) -> bool {
+        self.code == "stuck"
+    }
+
+    /// The refusal of one part of a look: its paths start with the part's name.
+    pub(crate) fn under(mut self, part: &str, what: &str) -> ApiErr {
+        if self.code != "refused" {
+            return self;
+        }
+        for i in &mut self.items {
+            let path = match i["path"].as_str() {
+                None | Some("$") => part.to_string(),
+                Some(p) => format!("{part}.{p}"),
+            };
+            i["path"] = json!(path);
+        }
+        self.lines = self
+            .items
+            .iter()
+            .map(|i| {
+                format!(
+                    "{}: {}",
+                    i["path"].as_str().unwrap_or(part),
+                    i["message"].as_str().unwrap_or("refused")
+                )
+            })
+            .collect();
+        self.code = "invalid_look";
+        self.message = what.to_string();
+        self
+    }
+}
+
+/// What the theme was before a look changed it, whole enough to put back.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Before {
+    theme: String,
+    mode: String,
+    accent_light: Option<String>,
+    accent_dark: Option<String>,
+    enabled: bool,
+    /// There was no config.toml.
+    absent: bool,
+    /// A user theme's own file.
+    text: Option<String>,
+    /// A theme file the change made, with a hash of it: undoing the change takes it away again.
+    made: Option<(String, String)>,
+}
+
+impl Before {
+    fn state(&self) -> State {
+        State {
+            theme: self.theme.clone(),
+            mode: self.mode.clone(),
+            accent_light: self.accent_light.clone(),
+            accent_dark: self.accent_dark.clone(),
+            enabled: self.enabled,
+        }
+    }
+    pub(crate) fn made(&mut self, made: Option<(String, String)>) {
+        self.made = made;
+    }
+}
+
+pub(crate) fn before(c: &Ctx) -> Result<Before, ApiErr> {
+    let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
+    let st = eff.state;
+    let text = match is_builtin(&st.theme) {
+        true => None,
+        false => read_or_absent(&c.cfg.theme_path(&st.theme))
+            .map_err(io_err)?
+            .map(|b| String::from_utf8_lossy(&b).into_owned()),
+    };
+    Ok(Before {
+        absent: !c.cfg.file().exists(),
+        theme: st.theme,
+        mode: st.mode,
+        accent_light: st.accent_light,
+        accent_dark: st.accent_dark,
+        enabled: st.enabled,
+        text,
+        made: None,
+    })
+}
+
+/// What a theme step did: whether it is in history, the theme file it made, and what to tell the person.
+pub(crate) struct Did {
+    pub(crate) changed: bool,
+    pub(crate) made: Option<(String, String)>,
+    pub(crate) notes: Vec<String>,
+}
+
+fn did(out: Out, made: Option<(String, &str)>, mut notes: Vec<String>) -> Did {
+    let changed = out.data["changed"] != json!(false);
+    notes.extend(out.warnings);
+    notes.extend(out.notes.into_iter().filter(|_| changed));
+    Did {
+        changed,
+        made: made
+            .filter(|_| changed)
+            .map(|(n, t)| (n, text_hash(t.as_bytes()))),
+        notes,
+    }
+}
+
+/// A user theme with the document's contents, or the name a new file for it takes.
+fn place_for(c: &Ctx, doc: &Table, notes: &mut Vec<String>) -> (String, bool) {
+    let name = doc
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("look")
+        .to_string();
+    let same = |n: &str| {
+        flatten(&c.cfg, n)
+            .is_ok_and(|t| same_doc(&ThemeDoc::Document(t), &ThemeDoc::Document(doc.clone())))
+    };
+    let free = |n: &str| !is_builtin(n) && c.cfg.theme_path(n).symlink_metadata().is_err();
+    if free(&name) {
+        return (name, true);
+    }
+    if same(&name) {
+        return (name, false);
+    }
+    // The person's theme of that name is not this one, so it stays and the look's goes beside it.
+    let stem: String = name.chars().take(40).collect();
+    let (to, new) = (1..)
+        .map(|i| {
+            if i == 1 {
+                format!("{stem}-look")
+            } else {
+                format!("{stem}-look-{i}")
+            }
+        })
+        .find_map(|n| match free(&n) {
+            true => Some((n, true)),
+            false => same(&n).then_some((n, false)),
+        })
+        .unwrap_or((format!("{stem}-look"), true));
+    notes.push(format!(
+        "you have another theme named {name:?}, so the look's is {to:?}"
+    ));
+    (to, new)
+}
+
+/// Puts a look's theme, mode and accents in force as one change in theme history. The caller holds the lock.
+pub(crate) fn apply(c: &Ctx, look: &ThemeLook, action: &str) -> Result<Did, ApiErr> {
+    look.check(c)?;
+    let mut notes = Vec::new();
+    let (mut st, _) = load_state(&c.cfg);
+    turn_on(&mut st, &mut notes);
+    let (name, text) = match &look.theme {
+        ThemeDoc::Builtin(n) => (n.clone(), None),
+        ThemeDoc::Document(t) => {
+            let (name, new) = place_for(c, t, &mut notes);
+            let mut t = t.clone();
+            t.insert("name".into(), Value::String(name.clone()));
+            let text = toml::to_string(&t)
+                .map_err(|e| io_err(format!("could not write the theme: {e}")))?;
+            (name, new.then_some(text))
+        }
+    };
+    st.theme = name.clone();
+    st.mode = look.mode.clone();
+    st.accent_light = look.accent_light.clone();
+    st.accent_dark = look.accent_dark.clone();
+    let file = text.as_deref().map(|t| (name.as_str(), Some(t)));
+    let out = commit(c, Some(&st), action, file)?;
+    Ok(did(out, text.as_deref().map(|t| (name.clone(), t)), notes))
+}
+
+/// Puts back what `before` kept. A theme file that was edited or is gone is left or made again, never written over.
+pub(crate) fn restore(c: &Ctx, was: &Before, action: &str) -> Result<Did, ApiErr> {
+    let mut notes = Vec::new();
+    let path = c.cfg.theme_path(&was.theme);
+    let now = read_or_absent(&path).map_err(io_err)?;
+    let again = match (&was.text, &now) {
+        (Some(t), None) if valid_name(&was.theme) && !is_builtin(&was.theme) => Some(t.as_str()),
+        (Some(t), Some(b)) if b != t.as_bytes() => {
+            notes.push(format!(
+                "the theme {:?} was edited since, and the edits are kept",
+                was.theme
+            ));
+            None
+        }
+        _ => None,
+    };
+    let cfg = match again {
+        Some(t) => c.cfg.with_overlay(&was.theme, t),
+        None => c.cfg.clone(),
+    };
+    let st = was.state();
+    build_full(&cfg, &st).map_err(|ps| {
+        bad_theme(
+            "the theme from before can't be used now, so nothing was undone",
+            &ps,
+        )
+    })?;
+    let gone = was.made.as_ref().filter(|(n, hash)| {
+        *n != was.theme
+            && valid_name(n)
+            && read_or_absent(&c.cfg.theme_path(n))
+                .is_ok_and(|b| b.is_some_and(|b| text_hash(&b) == *hash))
+            && dependents_of(&c.cfg, n).is_ok_and(|(on, _)| on.is_empty())
+    });
+    let file = match (again, gone) {
+        (Some(t), _) => Some((was.theme.as_str(), Some(t))),
+        (None, Some((n, _))) => Some((n.as_str(), None)),
+        _ => None,
+    };
+    let out = commit(c, Some(&st), action, file)?;
+    if was.absent && state_is_default(c) {
+        let _ = fs::remove_file(c.cfg.file());
+    }
+    Ok(did(out, again.map(|t| (was.theme.clone(), t)), notes))
+}
+
+/// The settings file says nothing but the defaults, as no file does.
+fn state_is_default(c: &Ctx) -> bool {
+    let text = fs::read_to_string(c.cfg.file()).unwrap_or_default();
+    let empty = Cfg {
+        dir: c.cfg.dir.join("none"),
+        ..c.cfg.clone()
+    };
+    text == state_table(&empty, &State::default_state())
+}
+
+/// Takes back the newest theme change, which the caller made under the lock it still holds.
+pub(crate) fn rollback(c: &Ctx) -> Result<(), ApiErr> {
+    undo_locked(c, true).map(|_| ())
 }

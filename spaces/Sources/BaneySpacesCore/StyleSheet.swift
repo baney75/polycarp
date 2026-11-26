@@ -106,6 +106,7 @@ public struct ComputedStyle: Equatable, Sendable {
     public var textTransform: StyleTextTransform?
     public var fontVariantNumeric: StyleNumerals?
     public var height: Double?
+    public var width: Double?
     public var padding: StyleInsets?
     public var gap: Double?
     public var borderRadius: Double?
@@ -144,55 +145,70 @@ public struct StyleProblem: Equatable, Hashable, Sendable, CustomStringConvertib
 // MARK: What a selector can name
 
 public enum StyleSurface: String, CaseIterable, Sendable {
-    case bar
+    case bar, launcher
     /// Surfaces an older build had. A rule that names one reads with a warning and is ignored.
     static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
 }
 
-/// A state a part can be in: the workspace you're on (`.current`) and the pointer over it (`:hover`).
+/// A state a part can be in: the workspace you're on (`.current`), the one the keyboard is on (`.selected`) and the
+/// pointer over it (`:hover`).
 public enum StyleState: String, CaseIterable, Sendable {
-    case current, hover
+    case current, selected, hover
     /// As written in a selector.
-    public var selector: String { self == .current ? ".current" : ":hover" }
+    public var selector: String { self == .hover ? ":hover" : ".\(rawValue)" }
 }
 
 /// One kind of thing a selector names. Properties say which of these they apply to.
 public enum StyleTarget: String, CaseIterable, Sendable {
     case bar, barRegion = "bar region", barIsland = "bar island", barModule = "bar module", barWorkspace = "bar workspace"
+    case launcher, launcherField = "launcher field", launcherSection = "launcher section", launcherRow = "launcher row",
+         launcherTitle = "launcher title", launcherSubtitle = "launcher subtitle", launcherBadge = "launcher badge",
+         launcherIcon = "launcher icon", launcherFooter = "launcher footer"
 
-    public var surface: StyleSurface {
-        switch self {
-        case .bar, .barRegion, .barIsland, .barModule, .barWorkspace: .bar
-        }
-    }
+    /// The first word of its name.
+    public var surface: StyleSurface { Self.names[self]!.surface }
 
     /// The class names it takes after its surface; empty for the surface itself.
-    public var parts: [String] {
+    public var parts: [String] { Self.names[self]!.parts }
+
+    /// Read off the raw values once: the cascade asks on every step.
+    private static let names: [StyleTarget: (surface: StyleSurface, parts: [String])] = {
+        Dictionary(uniqueKeysWithValues: allCases.map { t in (t, (StyleSurface(rawValue: String(t.rawValue.prefix { $0 != " " }))!, t.classes)) })
+    }()
+    private static let byName: [StyleSurface: [String: StyleTarget]] = {
+        var all: [StyleSurface: [String: StyleTarget]] = [:]
+        for t in allCases { for part in t.parts.isEmpty ? [""] : t.parts { all[t.surface, default: [:]][part] = t } }
+        return all
+    }()
+
+    private var classes: [String] {
         switch self {
-        case .bar: []
         case .barRegion: ["left", "center", "right"]
-        case .barIsland: ["island"]
         case .barModule: Surfaces.BarModule.builtIn.map(\.id)
-        case .barWorkspace: ["workspace"]
+        // The rest of its name: "launcher row" is `launcher .row`, and "launcher" the surface itself.
+        default: rawValue.split(separator: " ").dropFirst().map(String.init)
         }
     }
 
     public var states: [StyleState] {
         switch self {
-        case .bar, .barRegion, .barIsland: []
         case .barModule: [.hover]
         case .barWorkspace: [.current, .hover]
+        case .launcherRow: [.selected, .hover]
+        case .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherIcon: [.selected]
+        default: []
         }
     }
 
     /// The target it inherits from. A bar module inherits from its region when the caller names one, else from the bar; a
-    /// workspace number from the workspaces module.
+    /// workspace number from the workspaces module; what a launcher row holds, from the row in the same state.
     var parent: StyleTarget? {
         switch self {
-        case .bar: nil
-        case .barRegion, .barModule: .bar
         case .barIsland: .barRegion
         case .barWorkspace: .barModule
+        case .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherIcon: .launcherRow
+        // A surface inherits from nothing, its other parts from it.
+        default: parts.isEmpty ? nil : StyleTarget.of(surface, part: nil)
         }
     }
 
@@ -204,8 +220,20 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .barIsland: "One island of modules when bar.style is islands: its background, corners, line, shadow, padding and gap. Text inside takes its region's and module's styles."
         case .barModule: "One class for each bar module (surfaces.json bar.modules); :hover while the pointer is on it."
         case .barWorkspace: "One number in the workspaces module; .current is the workspace you're on, :hover the one under the pointer."
+        case .launcher: "The launcher's panel. gap is the space between rows."
+        case .launcherField: "The search field across the top, with the magnifying glass beside it. border-bottom takes the place of the line under it."
+        case .launcherSection: "A heading over a group of results."
+        case .launcherRow: "One result; .selected is the one Return opens, :hover the one under the pointer. A border on .row.selected takes the place of the accent mark beside it."
+        case .launcherTitle: "A result's name; .selected while its row is."
+        case .launcherSubtitle: "The line under a result's name; .selected while its row is."
+        case .launcherBadge: "A result's word at the right (Install, Installed); .selected while its row is."
+        case .launcherIcon: "A result's picture, and the color of a symbol; .selected while its row is."
+        case .launcherFooter: "The key hints along the bottom. border takes the place of the line over it."
         }
     }
+
+    /// Every state that can change what it looks like: its own and those of what it inherits from.
+    var reach: Set<StyleState> { Set(states).union(parent?.reach ?? []) }
 
     /// Every selector form, as the docs show it: `bar .left`, `bar .center`, `bar .right`.
     public var selectors: [String] {
@@ -214,7 +242,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
     }
 
     static func of(_ surface: StyleSurface, part: String?) -> StyleTarget? {
-        allCases.first { t in t.surface == surface && (part == nil ? t.parts.isEmpty : t.parts.contains(part!)) }
+        byName[surface]?[part ?? ""]
     }
 }
 
@@ -289,37 +317,52 @@ public struct StyleProperty: Sendable {
 
     public func applies(to target: StyleTarget) -> Bool { targets.contains(target) }
 
-    /// Everything that draws text or a fill.
-    static let boxes: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace]
+    /// What a part takes, and the inherited properties it only passes on, worked out once: the cascade asks on every step.
+    static let of: [StyleTarget: (taken: [StyleProperty], passed: [StyleProperty])] = Dictionary(uniqueKeysWithValues: StyleTarget.allCases.map { t in
+        (t, (all.filter { $0.applies(to: t) }, all.filter { $0.inherited && !$0.applies(to: t) }))
+    })
+
+    /// Everything that draws text, with letters the view spaces and cases itself.
+    static let texts: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace,
+                                       .launcher, .launcherSection, .launcherRow, .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherFooter]
+    /// A font too, but the system's text field draws it.
+    static let fonts = texts + [.launcherField]
+    /// Everything with a fill of its own.
+    static let boxes: [StyleTarget] = [.bar, .barRegion, .barIsland, .barModule, .barWorkspace,
+                                       .launcher, .launcherField, .launcherSection, .launcherRow, .launcherBadge, .launcherFooter]
 
     public static let all: [StyleProperty] = [
-        StyleProperty("color", .color, boxes, inherited: true, "Text and symbol color.", example: "var(--foreground)"),
-        StyleProperty("background", .background, boxes + [.barIsland], "What is drawn behind it.", example: "glass"),
+        StyleProperty("color", .color, fonts + [.launcherIcon], inherited: true, "Text and symbol color.", example: "var(--foreground)"),
+        StyleProperty("background", .background, boxes, "What is drawn behind it.", example: "glass"),
         StyleProperty("opacity", .opacity, StyleTarget.allCases, "How opaque the whole thing is.", example: "1"),
-        StyleProperty("font-family", .fontFamily, boxes, inherited: true, "The font, first installed name wins; `monospace` and `serif` are the system's.",
+        StyleProperty("font-family", .fontFamily, fonts, inherited: true, "The font, first installed name wins; `monospace` and `serif` are the system's.",
                       example: "system-ui, sans-serif"),
-        StyleProperty("font-size", .length(6...40), boxes, inherited: true, "Text size in points.", example: "12px"),
-        StyleProperty("font-weight", .fontWeight, boxes, inherited: true, "Text weight.", example: "500"),
-        StyleProperty("font-style", .keywords(StyleFontStyle.allCases.map(\.rawValue)), boxes, inherited: true, "Upright or italic text.", example: "normal"),
-        StyleProperty("letter-spacing", .spacing(-2...10), boxes, inherited: true, "Extra space between letters.", example: "normal"),
-        StyleProperty("text-transform", .keywords(StyleTextTransform.allCases.map(\.rawValue)), boxes, inherited: true,
+        StyleProperty("font-size", .length(6...40), fonts, inherited: true, "Text size in points.", example: "12px"),
+        StyleProperty("font-weight", .fontWeight, fonts, inherited: true, "Text weight.", example: "500"),
+        StyleProperty("font-style", .keywords(StyleFontStyle.allCases.map(\.rawValue)), fonts, inherited: true, "Upright or italic text.", example: "normal"),
+        StyleProperty("letter-spacing", .spacing(-2...10), texts, inherited: true, "Extra space between letters.", example: "normal"),
+        StyleProperty("text-transform", .keywords(StyleTextTransform.allCases.map(\.rawValue)), texts, inherited: true,
                       "Letter case, whatever the text says.", example: "none"),
-        StyleProperty("font-variant-numeric", .keywords(StyleNumerals.allCases.map(\.rawValue)), boxes, inherited: true,
+        StyleProperty("font-variant-numeric", .keywords(StyleNumerals.allCases.map(\.rawValue)), texts, inherited: true,
                       "`tabular-nums` gives every digit the same width, so a clock doesn't jiggle.", example: "tabular-nums"),
-        StyleProperty("height", .length(18...64), [.bar], "The bar's height (on a screen with a notch the bar fills the strip beside it).", example: "28px"),
-        StyleProperty("padding", .padding, [.bar, .barRegion, .barIsland, .barModule, .barWorkspace], "Space inside the edge.", example: "0 8px"),
-        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule],
-                      "Space between modules (bar, a region, an island) or between a module's items (workspace numbers, menus, status items).",
+        StyleProperty("width", .length(480...1200), [.launcher], "The panel's width (never wider than the screen).", example: "700px"),
+        StyleProperty("height", .length(18...64), [.bar, .launcherRow],
+                      "The bar's height (on a screen with a notch the bar fills the strip beside it), or a row's: its icon shrinks to fit, and a subtitle with no room goes.",
+                      example: "28px"),
+        StyleProperty("padding", .padding, boxes, "Space inside the edge.", example: "0 8px"),
+        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow],
+                      "Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows (launcher) or between an icon and its text (row).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), boxes + [.barIsland], "Corner radius.", example: "6px"),
-        StyleProperty("border", .line, boxes + [.barIsland], "A line all around.", example: "1px solid var(--border)"),
-        StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace], "A line along the bottom edge only.",
-                      example: "1px solid var(--border)"),
+        StyleProperty("border-radius", .length(0...40), boxes + [.launcherIcon], "Corner radius.", example: "6px"),
+        StyleProperty("border", .line, boxes, "A line all around.", example: "1px solid var(--border)"),
+        StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .launcher, .launcherField, .launcherSection, .launcherRow],
+                      "A line along the bottom edge only.", example: "1px solid var(--border)"),
         StyleProperty("box-shadow", .shadow, [.barIsland], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
-        StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)), [.barRegion, .barIsland, .barModule, .barWorkspace],
+        StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)),
+                      [.barRegion, .barIsland, .barModule, .barWorkspace, .launcherSection, .launcherSubtitle, .launcherBadge, .launcherIcon, .launcherFooter],
                       "`none` hides it; `flex` (the default) shows it.", example: "flex"),
-        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace],
-                      "How long a change of state (hover, current) fades its colors and lines.", example: "150ms"),
+        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow],
+                      "How long a change of state (hover, current, selected) fades its colors and lines.", example: "150ms"),
     ]
 
     public static let byName: [String: StyleProperty] = Dictionary(uniqueKeysWithValues: all.map { ($0.name, $0) })

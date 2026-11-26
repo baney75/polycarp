@@ -38,7 +38,7 @@ copy of a built-in (what `polycarp theme create <name> --extends <base>` does) a
 - The editor lists every field `polycarp theme schema` names, with a control for its type: a color
   well and hex field for colors, a slider for numbers, a menu for choices, a switch for on or off, and
   a text box for fonts and easing. A field the CLI adds later shows up with no app update.
-- The light and dark previews beside it redraw as you drag: the dock, a panel, buttons, a settings row,
+- The light and dark previews beside it redraw as you drag: the top bar, a panel, buttons, a settings row,
   status colors and the agent cursor (whose colors are its own, so you see how it reads on the theme).
 - Any pair below WCAG AA (4.5:1 for text, 3:1 for marks) is listed, and marked beside both colors.
 - Undo and Redo work inside the editor. Revert goes back to the last save. **Save** runs
@@ -288,7 +288,7 @@ polycarp theme set mine                                   # use it when you like
   and names every bad path.
 - `--theme mine` edits your theme while the current one stays in force, so you can try things without your
   desktop changing. Leave it out to edit the theme in force.
-- The PNGs are 720 by 420 and draw the dock and window bar, the dictation pill, the browser extension on a
+- The PNGs are 720 by 420 and draw the workspace tiles and window bar, the dictation pill, the browser extension on a
   page, and the site, in the theme's colors, corners, borders, shadow, density and indicator. A
   terminal that shows images can show them in place (in kitty or Ghostty, `kitty +kitten icat <file>`); any
   image viewer works. The text is a pixel font, so judge colors and contrast, not the typeface.
@@ -329,7 +329,8 @@ products and `polycarp theme current` use the default theme and say what was wro
 
 Following Omarchy's theme is retired with the Linux desktop. The Linux and Omarchy desktop is retired; its last snapshot is in the archived baney75/baneyspaces.
 `polycarp theme follow` prints that and exits 0. Themes an earlier follow wrote (`omarchy`, `omarchy-overrides`)
-stay as ordinary user themes.
+stay as ordinary user themes. [The Omarchy plugin](../plugins/omarchy) turns a theme of either kind into the other when
+someone asks for it, and follows nothing.
 
 ## For agents
 
@@ -356,7 +357,7 @@ same behavior: the `polycarp theme` command with `--json`, or the `polycarp mcp`
 4. **Preview.** `theme preview --format png` writes one image per product and mode and lists them in
    `data.images`; look at each one, change what is wrong (`theme change` takes several pairs at once), and
    preview again until it is right. `theme preview` with no format writes one self-contained HTML file with no external requests, and prints its
-   path. It shows the theme on product-shaped UI: the workspace dock (nine tiles, with the theme's indicator
+   path. It shows the theme on product-shaped UI: the workspaces (nine tiles, with the theme's indicator
    style), the dictation overlay, the browser extension with a page edit, a settings
    form, code, buttons, a delete confirmation and status text. Light and dark go side by side by default.
    Open it in a browser and take a screenshot to show the person.

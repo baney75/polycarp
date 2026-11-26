@@ -136,15 +136,15 @@ pub fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "app_settings",
-            description: "Read the app's settings (appearance.theme, appearance.palette, dock.enabled), or one of them.",
+            description: "Read the app's settings (appearance.theme, appearance.palette), or one of them.",
             schema: obj(json!({"name": {"type": "string", "description": "One setting; leave out for all."}}), &[]),
             scope: "read",
         },
         Tool {
             name: "app_setting_set",
-            description: "Change one app setting: appearance.theme, appearance.palette or dock.enabled. It applies at once and the app logs who changed it.",
+            description: "Change one app setting: appearance.theme or appearance.palette. It applies at once and the app logs who changed it.",
             schema: obj(json!({
-                "name": {"type": "string", "enum": ["appearance.theme", "appearance.palette", "dock.enabled"]},
+                "name": {"type": "string", "enum": ["appearance.theme", "appearance.palette"]},
                 "value": {"type": "string"},
             }), &["name", "value"]),
             scope: "act",
@@ -192,6 +192,21 @@ fn ok(data: Json) -> Json {
     crate::files::ok_json(data)
 }
 
+/// Settings an older Polycarp had, with where their features went. Setting one gets this answer, not the app's.
+const RETIRED_SETTINGS: &[(&str, &str, &str)] = &[(
+    "dock.enabled",
+    "dock.enabled is gone on the Mac: the Workspace Dock was removed on 2026-11-23",
+    "Workspaces are on your modifier with 1 to 9 (keys_list has it) and on the top bar when it is on (surfaces bar.enabled), the overview on the Mission Control key, and apps running with no window in the launcher.",
+)];
+
+fn retired_setting(name: &str) -> Option<Json> {
+    let key = name.trim().to_ascii_lowercase();
+    RETIRED_SETTINGS
+        .iter()
+        .find(|(n, _, _)| *n == key)
+        .map(|(_, message, suggestion)| fail("retired_setting", message, suggestion))
+}
+
 fn fail(code: &str, message: &str, suggestion: &str) -> Json {
     crate::files::fail_json(code, message, suggestion)
 }
@@ -231,8 +246,10 @@ pub fn call(link: &dyn AppLink, name: &str, args: &Json, caller: &str) -> Option
             envelope(wire("setting", extra), |r| r["info"].clone())
         }
         "app_setting_set" => match (text("name"), text("value")) {
-            (Some(n), Some(v)) => envelope(wire("setting", json!({"target": n, "text": v})), |r| {
-                r["info"].clone()
+            (Some(n), Some(v)) => retired_setting(n).unwrap_or_else(|| {
+                envelope(wire("setting", json!({"target": n, "text": v})), |r| {
+                    r["info"].clone()
+                })
             }),
             _ => fail("invalid_args", "name and value are required", ""),
         },
@@ -382,10 +399,32 @@ pub mod tests {
     }
 
     #[test]
+    fn the_retired_dock_switch_says_where_its_features_went_and_sends_nothing() {
+        let f = Fake::new(true);
+        let r = call(
+            &f,
+            "app_setting_set",
+            &json!({"name": " Dock.Enabled ", "value": "true"}),
+            "agent:grok",
+        )
+        .unwrap();
+        assert_eq!(r["error"]["code"], "retired_setting");
+        let text = r.to_string();
+        assert!(text.contains("removed on 2026-11-23"), "{text}");
+        assert!(text.contains("launcher"), "{text}");
+        assert!(f.sent.lock().unwrap().is_empty(), "nothing reaches the app");
+        let set = tools()
+            .into_iter()
+            .find(|t| t.name == "app_setting_set")
+            .unwrap();
+        assert!(!set.schema.to_string().contains("dock.enabled"));
+    }
+
+    #[test]
     fn no_tool_sends_an_op_that_opens_a_shell_types_or_updates() {
         let f = Fake::new(true);
         for t in tools() {
-            let args = json!({"name": "dock.enabled", "value": "true", "target": "x", "on": true, "workspace": 2, "window": 3});
+            let args = json!({"name": "appearance.palette", "value": "auto", "target": "x", "on": true, "workspace": 2, "window": 3});
             let mut a = args.as_object().unwrap().clone();
             a.retain(|k, _| t.schema["properties"].get(k).is_some());
             call(&f, t.name, &Json::Object(a), "x").unwrap();
