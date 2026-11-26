@@ -27,6 +27,12 @@ polycarp browser uninstall          # remove the app; your profile stays
 The app goes beside Polycarp.app when that folder can be written to, and otherwise in `~/Applications`. It stays where it
 is after that. Your profile is in `~/Library/Application Support/Polycarp/Browser`.
 
+## While it works
+
+`install` and `update` show each step as it runs: Download, Verify, Build, Sign, Check and Swap in, each as "step N of 6"
+with the time it took. In a terminal the download has a bar with the percent, bytes over the total and the speed. Piped
+or in a log, each step is a plain line.
+
 ## Updates
 
 Polycarp's own daily update check also runs `polycarp browser update --when-quit`, and turning that check off in

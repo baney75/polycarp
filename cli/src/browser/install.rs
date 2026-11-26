@@ -9,6 +9,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use super::change::files;
+use super::progress::{Progress, Step};
 use super::release::{self, Release};
 use super::spot::Spot;
 use super::tools::Tools;
@@ -122,7 +123,13 @@ pub fn fingerprint(place: &Place) -> Result<String, Refused> {
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-pub fn install(tools: &dyn Tools, place: &Place, arch: &str, ask: Ask) -> Result<Outcome, Refused> {
+pub fn install(
+    tools: &dyn Tools,
+    place: &Place,
+    arch: &str,
+    ask: Ask,
+    progress: &Progress,
+) -> Result<Outcome, Refused> {
     let spot = &place.spot;
     spot.ours()?;
     if ask.update && spot.installed().is_none() {
@@ -143,20 +150,28 @@ pub fn install(tools: &dyn Tools, place: &Place, arch: &str, ask: Ask) -> Result
     if !ask.when_quit {
         spot.not_running()?;
     }
-    let dmg = source::fetch(tools, &newest, &place.cache)?;
+    let dmg = source::fetch(tools, &newest, &place.cache, progress)?;
     let work = place.work(tools)?;
-    let built = build(tools, place, &dmg, &work, &newest)
-        .and_then(|(app, note)| spot.stage(tools, &app).map(|_| note));
+    let built = build(tools, place, &dmg, &work, &newest, progress).and_then(|(app, note)| {
+        progress.begin(Step::SwapIn);
+        spot.stage(tools, &app).map(|_| note)
+    });
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
     let note = built?;
     cleared?;
+    let later = "goes in when you quit the browser";
     if spot.running() && ask.when_quit {
+        progress.end(Some(later));
         return Ok(waits(&newest.version));
     }
     match spot.swap() {
-        Err(e) if e.check == "running" && ask.when_quit => return Ok(waits(&newest.version)),
+        Err(e) if e.check == "running" && ask.when_quit => {
+            progress.end(Some(later));
+            return Ok(waits(&newest.version));
+        }
         put_in => put_in?,
     }
+    progress.end(None);
     let app = spot.app();
     let mut lines = vec![format!(
         "Polycarp Browser on Helium {} is in {}.",
@@ -287,7 +302,7 @@ mod tests {
     };
 
     fn go(t: &Fake, ask: Ask) -> Result<Outcome, Refused> {
-        install(t, &t.place(), "arm64", ask)
+        install(t, &t.place(), "arm64", ask, &Progress::silent())
     }
 
     fn helium(t: &Fake) -> Option<String> {
@@ -338,6 +353,29 @@ mod tests {
                 assert!(!t.place().data.exists(), "{check}");
             }
         }
+    }
+
+    #[test]
+    fn every_step_is_shown_in_order_and_the_last_line_names_the_version() {
+        let t = Fake::new();
+        let (screen, progress) = super::super::progress::tests::screen(false);
+        let done = install(&t, &t.place(), "arm64", INSTALL, &progress).unwrap();
+        drop(progress);
+        let text = screen.text();
+        let begun: Vec<&str> = text.lines().filter(|l| !l.contains(" done in ")).collect();
+        let want = ["Download", "Verify", "Build", "Sign", "Check", "Swap in"];
+        let want: Vec<String> = (1..=6)
+            .zip(want)
+            .map(|(n, name)| format!("Step {n} of 6: {name}"))
+            .collect();
+        assert_eq!(begun, want, "{text}");
+        assert_eq!(text.lines().filter(|l| l.contains(" done in ")).count(), 6);
+        assert!(
+            done.line
+                .starts_with(&format!("Polycarp Browser on Helium {VERSION} is in ")),
+            "{}",
+            done.line
+        );
     }
 
     #[test]
