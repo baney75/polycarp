@@ -40,7 +40,8 @@ settings and the paper change, in that order. If one fails, what changed is put 
 tries again.
 
 Before each apply the present state is kept in `<config>/looks/.history/`, the newest 10. A look puts on the parts it
-has and leaves the others alone. A look that carries its own theme saves it among your themes under a free name, and
+has and leaves the others alone, and undo puts back only the theme and those parts, so a change made since to a part
+the look didn't hold stays. A look that carries its own theme saves it among your themes under a free name, and
 undo takes it away again unless you have edited it. Bar modules of your own (`custom:`) stay where they were, and a
 sheet you wrote by hand is also kept in `style.css.bak`.
 

@@ -1249,3 +1249,37 @@ fn delete_removes_a_saved_look_and_asks_for_the_one_in_force() {
     fs::write(sb.at("cfg/looks/bad.polycarp-look"), "{").unwrap();
     sb.ok(&["look", "delete", "bad"]);
 }
+
+#[cfg(unix)]
+#[test]
+fn undo_puts_back_only_the_parts_the_look_changed() {
+    let sb = with_spaces();
+    dress(&sb);
+    let l = json!({"schema": 1, "name": "plain", "theme": {"builtin": "evening"}});
+    let v = sb.json_in(&["look", "import", "-"], &l.to_string());
+    assert_eq!(v["ok"], true, "{v}");
+    sb.ok(&["look", "apply", "plain"]);
+    // A theme alone keeps no picture to put back.
+    let kept = fs::read_dir(sb.at("cfg/looks/.history"))
+        .unwrap()
+        .flatten()
+        .map(|e| fs::read_to_string(e.path()).unwrap())
+        .collect::<String>();
+    assert!(!kept.contains(&base64(PNG)), "{kept}");
+    fs::write(sb.at("live/bar.height"), "30").unwrap();
+    sb.ok(&["look", "undo"]);
+    assert_eq!(sb.text("live/bar.height").as_deref(), Some("30"));
+    assert_eq!(sb.ok(&["theme", "current"])["theme"], "mine");
+}
+
+#[cfg(unix)]
+#[test]
+fn delete_asks_when_what_is_in_force_cant_be_read() {
+    let sb = with_spaces();
+    sb.ok(&["look", "save", "one"]);
+    fs::write(sb.at("fail"), "style show").unwrap();
+    assert_eq!(sb.no(&["look", "delete", "one"]), "current_look");
+    assert!(sb.at("cfg/looks/one.polycarp-look").exists());
+    fs::write(sb.at("fail"), "style show").unwrap();
+    sb.ok(&["look", "delete", "one", "--force"]);
+}

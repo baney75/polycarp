@@ -426,10 +426,46 @@ struct Snap {
     by: String,
     theme: theme::Before,
     live: Option<Live>,
+    /// The parts the change was to, of style, surfaces and paper: undo puts back only these.
+    parts: Vec<String>,
+}
+
+const PARTS: [&str; 3] = ["style", "surfaces", "paper"];
+
+/// The parts a look has, which applying it changes.
+fn parts_of(look: &Look) -> Vec<String> {
+    let alone = leaves_alone(look);
+    PARTS
+        .iter()
+        .filter(|p| !alone.contains(p))
+        .map(|p| p.to_string())
+        .collect()
+}
+
+/// `now` with `back`'s values for `parts`, and the rest left as it is.
+fn only(now: &Live, back: &Live, parts: &[String]) -> Live {
+    let mut to = now.clone();
+    for p in parts {
+        match p.as_str() {
+            "style" => to.style = back.style.clone(),
+            "surfaces" => to.surfaces = back.surfaces.clone(),
+            "paper" => {
+                to.paper = back.paper.clone();
+                to.pictures = back.pictures.clone();
+            }
+            _ => {}
+        }
+    }
+    to
 }
 
 impl Snap {
-    fn take(c: &Ctx, action: String, live: Option<Live>) -> Result<Snap, ApiErr> {
+    fn take(
+        c: &Ctx,
+        action: String,
+        live: Option<Live>,
+        parts: Vec<String>,
+    ) -> Result<Snap, ApiErr> {
         let (_, time) = theme::stamps();
         Ok(Snap {
             action,
@@ -437,17 +473,33 @@ impl Snap {
             by: c.caller().into(),
             theme: theme::before(c)?,
             live,
+            parts,
         })
     }
+    /// Only the parts it puts back: a picture the change left alone isn't kept again.
     fn text(&self) -> String {
+        let live = self.live.as_ref().map(|l| {
+            let mut v = l.to_json();
+            let has = |p: &str| self.parts.iter().any(|q| q == p);
+            if !has("style") {
+                v["style"] = Json::Null;
+            }
+            if !has("surfaces") {
+                v["surfaces"] = json!({});
+            }
+            if !has("paper") {
+                (v["paper"], v["pictures"]) = (json!({}), json!({}));
+            }
+            v
+        });
         theme::pretty(&json!({
             "schema": format::SCHEMA, "action": self.action, "time": self.time, "by": self.by,
-            "theme": self.theme, "live": self.live.as_ref().map(Live::to_json),
+            "theme": self.theme, "parts": self.parts, "live": live,
         }))
     }
     fn read(p: &Path) -> Result<Snap, ApiErr> {
-        // Three pictures at most, and base64 is a third larger than they are.
-        let bytes = store::read_plain(p, 4 * format::MAX_BYTES)?;
+        // Four pictures at most (all, desktop, new tab, idle), each 25 MB, and base64 is a third larger than they are.
+        let bytes = store::read_plain(p, 5 * format::MAX_BYTES)?;
         let damaged = || {
             theme::io_err(format!(
                 "the newest kept state {} is damaged, so nothing was undone. Delete that file to go back further",
@@ -464,6 +516,13 @@ impl Snap {
             live: match &v["live"] {
                 Json::Null => None,
                 l => Some(Live::from_json(l).map_err(|_| damaged())?),
+            },
+            parts: match v["parts"].as_array() {
+                Some(a) => a
+                    .iter()
+                    .filter_map(|p| p.as_str().map(str::to_string))
+                    .collect(),
+                None => PARTS.map(String::from).to_vec(),
             },
         })
     }
@@ -527,7 +586,7 @@ pub(crate) fn op_apply(c: &Ctx, arg: &str, dry_run: bool) -> Res {
         return Ok(Out::new(data, format!("{lead}{list}")).noting(notes));
     }
     let to = now.live.as_ref().map(|l| l.with(&look));
-    let mut was = Snap::take(c, format!("apply {}", look.name), now.live)?;
+    let mut was = Snap::take(c, format!("apply {}", look.name), now.live, parts_of(&look))?;
     let kept = store::push(c, &was.text())?;
     let step = || theme::apply(c, &look.theme, &format!("look apply {}", look.name));
     let did = change(c, &was, step, to.as_ref()).inspect_err(|e| {
@@ -555,9 +614,14 @@ pub(crate) fn op_undo(c: &Ctx) -> Res {
         .suggest("`polycarp look apply polycarp` puts on the shipped look."));
     };
     let back = Snap::read(&kept)?;
-    let mut now = Snap::take(c, format!("undo {}", back.action), state::read()?)?;
+    let live = state::read()?;
+    let to = match (&live, &back.live) {
+        (Some(now), Some(back_live)) => Some(only(now, back_live, &back.parts)),
+        _ => None,
+    };
+    let mut now = Snap::take(c, format!("undo {}", back.action), live, back.parts.clone())?;
     let step = || theme::restore(c, &back.theme, &format!("look undo ({})", back.action));
-    let did = change(c, &now, step, back.live.as_ref())?;
+    let did = change(c, &now, step, to.as_ref())?;
     // What was undone takes its place as the newest, so undo again comes forward.
     now.action = match back.action.strip_prefix("undo ") {
         Some(a) => a.to_string(),
@@ -583,13 +647,27 @@ pub(crate) fn op_delete(c: &Ctx, name: &str, force: bool) -> Res {
     if !store::names(c).iter().any(|n| n == name) {
         store::load(c, name)?;
     }
-    let in_force = || {
+    // What can't be read may be the look in force.
+    let in_force = || -> Result<bool, ApiErr> {
         let Ok((look, _)) = store::load(c, name) else {
-            return false;
+            return Ok(false);
         };
-        state::now(c).is_ok_and(|n| n.same_as(&look))
+        let now = state::now(c).map_err(|e| {
+            ApiErr::at(
+                "current_look",
+                "name",
+                format!(
+                    "what is in force can't be read ({}), so {name:?} was not deleted",
+                    e.message()
+                ),
+            )
+            .suggest(
+                "Pass --force to delete it anyway. Deleting it doesn't change how things look.",
+            )
+        })?;
+        Ok(now.same_as(&look))
     };
-    if !force && in_force() {
+    if !force && in_force()? {
         return Err(ApiErr::at("current_look", "name", format!("{name:?} is the look in force, so it was not deleted"))
             .suggest("Apply another look first, or pass --force. Deleting it doesn't change how things look."));
     }
