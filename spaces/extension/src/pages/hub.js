@@ -233,6 +233,28 @@
     walk(doc.body);
     return out.replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   }
+  // HTML mail behind both walls of safe-html.js, with what was left out said plainly and a switch to its plain text.
+  function htmlBody(m) {
+    let shown;
+    try { shown = globalThis.PolycarpHubSafeHtml.frame(m.html, "Message from " + (m.from.name || m.from.addr)); }
+    catch (e) { return el("div", "body", bodyText(m)); }
+    const box = el("div", "html");
+    const bar = el("div", "hbar");
+    const n = shown.blocked;
+    bar.append(el("span", "", n ? (n === 1 ? "1 picture or style from the web was left out." : n + " pictures or styles from the web were left out.") : ""));
+    const flip = el("button", "btn quiet", "Show as plain text");
+    flip.type = "button";
+    flip.addEventListener("click", () => {
+      const plain = box.querySelector(".body");
+      if (plain) { plain.remove(); shown.frame.hidden = false; flip.textContent = "Show as plain text"; return; }
+      shown.frame.hidden = true;
+      box.append(el("div", "body", bodyText(m)));
+      flip.textContent = "Show it formatted";
+    });
+    bar.append(flip);
+    box.append(bar, shown.frame);
+    return box;
+  }
   const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " bytes");
 
   function paint(got) {
@@ -285,7 +307,7 @@
       sec.append(mh);
       const to = (m.to || []).map((x) => x.name || x.addr).join(", ");
       if (to) sec.append(el("p", "to", "To " + to));
-      sec.append(el("div", "body", bodyText(m)));
+      sec.append(m.html ? htmlBody(m) : el("div", "body", bodyText(m)));
       if (m.attachments && m.attachments.length) {
         const files = el("div", "files");
         for (const f of m.attachments) {

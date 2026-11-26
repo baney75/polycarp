@@ -176,9 +176,18 @@ try {
   await p.waitForSelector('#rows [aria-label*="HTML only"]');
   await p.click('#rows [aria-label*="HTML only"]');
   await p.waitForFunction(() => document.getElementById('subject')?.textContent === 'HTML only');
-  const body = await p.$eval('#pane .body', (b) => ({ text: b.textContent, kids: b.children.length }));
+  await p.waitForSelector('#pane .html iframe');
+  await new Promise((r) => setTimeout(r, 800));
+  const fr = p.frames().find((f) => f !== p.mainFrame());
+  const inFrame = fr ? await fr.evaluate(() => ({ text: document.body.textContent, imgs: Array.from(document.images).map((i) => i.getAttribute('src')), scripts: document.scripts.length })).catch((e) => String(e)) : null;
   const ran = await p.evaluate(() => window.__ran);
-  check(body.text.includes('Plain words') && !body.text.includes('__ran') && body.kids === 0 && ran === 0 && reqs.length === 0, 'HTML-only mail shows as text, with nothing run or loaded', { body, ran, reqs });
+  const sandbox = await p.getAttribute('#pane .html iframe', 'sandbox');
+  const note = await p.textContent('#pane .hbar span');
+  check(inFrame && inFrame.text.includes('Plain words') && inFrame.scripts === 0 && inFrame.imgs.every((s) => !s) && ran === 0 && reqs.length === 0 && sandbox === 'allow-popups allow-popups-to-escape-sandbox' && /1 picture/.test(note),
+    'HTML mail shows in the sandboxed frame, with nothing run or loaded and the left-out picture counted', { inFrame, ran, reqs, sandbox, note });
+  await p.click('#pane .hbar button');
+  const plain = await p.textContent('#pane .html .body');
+  check(plain.includes('Plain words') && !plain.includes('__ran') && await p.isHidden('#pane .html iframe'), 'it switches to plain text', null);
 
   // It all comes back after a reload.
   await p.reload();
