@@ -2526,6 +2526,20 @@ final class Spaces {
         }
         if moved { persist() }
     }
+
+    /// A window goes to the workspace display `d` shows. `placing` also moves it there, which a tiled workspace does itself.
+    func send(_ id: WindowID, to d: DisplayKey, placing: Bool) -> Bool {
+        guard active, !switching, let w = windows[id], let n = model.shown[d], model.moved(id, to: d) else { return false }
+        if placing, let f = WindowMoves.bounds(of: [id])[id] {
+            w.place(onDisplayOf(n, f), currentSize: f.size)
+            seenOn[id] = d
+        }
+        Trace.log("window \(id) of \(w.appName) sent to the display showing \(n)")
+        persist()
+        onChange?()
+        return true
+    }
+
     /// The display each window in sight was on at the last look.
     private var seenOn: [WindowID: DisplayKey] = [:]
 

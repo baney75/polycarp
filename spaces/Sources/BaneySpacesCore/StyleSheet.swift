@@ -145,7 +145,7 @@ public struct StyleProblem: Equatable, Hashable, Sendable, CustomStringConvertib
 // MARK: What a selector can name
 
 public enum StyleSurface: String, CaseIterable, Sendable {
-    case bar, launcher
+    case bar, launcher, tiling
     /// Surfaces an older build had. A rule that names one reads with a warning and is ignored.
     static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
 }
@@ -164,6 +164,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
     case launcher, launcherField = "launcher field", launcherSection = "launcher section", launcherRow = "launcher row",
          launcherTitle = "launcher title", launcherSubtitle = "launcher subtitle", launcherBadge = "launcher badge",
          launcherIcon = "launcher icon", launcherFooter = "launcher footer"
+    case tiling
 
     /// The first word of its name.
     public var surface: StyleSurface { Self.names[self]!.surface }
@@ -229,6 +230,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .launcherBadge: "A result's word at the right (Install, Installed); .selected while its row is."
         case .launcherIcon: "A result's picture, and the color of a symbol; .selected while its row is."
         case .launcherFooter: "The key hints along the bottom. border takes the place of the line over it."
+        case .tiling: "The outline of where a dragged tiled window would go."
         }
     }
 
@@ -333,7 +335,7 @@ public struct StyleProperty: Sendable {
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, fonts + [.launcherIcon], inherited: true, "Text and symbol color.", example: "var(--foreground)"),
-        StyleProperty("background", .background, boxes, "What is drawn behind it.", example: "glass"),
+        StyleProperty("background", .background, boxes + [.tiling], "What is drawn behind it.", example: "glass"),
         StyleProperty("opacity", .opacity, StyleTarget.allCases, "How opaque the whole thing is.", example: "1"),
         StyleProperty("font-family", .fontFamily, fonts, inherited: true, "The font, first installed name wins; `monospace` and `serif` are the system's.",
                       example: "system-ui, sans-serif"),
@@ -353,8 +355,8 @@ public struct StyleProperty: Sendable {
         StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow],
                       "Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows (launcher) or between an icon and its text (row).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), boxes + [.launcherIcon], "Corner radius.", example: "6px"),
-        StyleProperty("border", .line, boxes, "A line all around.", example: "1px solid var(--border)"),
+        StyleProperty("border-radius", .length(0...40), boxes + [.launcherIcon, .tiling], "Corner radius.", example: "6px"),
+        StyleProperty("border", .line, boxes + [.tiling], "A line all around.", example: "1px solid var(--border)"),
         StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .launcher, .launcherField, .launcherSection, .launcherRow],
                       "A line along the bottom edge only.", example: "1px solid var(--border)"),
         StyleProperty("box-shadow", .shadow, [.barIsland], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),

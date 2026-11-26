@@ -28,6 +28,12 @@ final class Tiling {
     var facts: [WindowID: TilingFacts] = [:]
     var saving: DispatchWorkItem?
     var savedLast: Data?
+    /// The press on a tiled window under way, or just let go (`TilingDrags.swift`).
+    var drag: TilingDrag?
+    var dragLetGo = false
+    var dragTimer: Timer?
+    var escape: Any?
+    lazy var outline = TilingOutline()
 
     init(spaces: Spaces) { self.spaces = spaces }
 
@@ -75,7 +81,7 @@ final class Tiling {
         guard engine.wanted(on: spaces.shownWorkspaces) else { return }
         guard !busy else { again = true; return }
         // Mid-drag the window is the person's; the release looks again, and this in case it doesn't.
-        guard NSEvent.pressedMouseButtons & 1 == 0 else { return lookSoon(0.1) }
+        guard NSEvent.pressedMouseButtons & 1 == 0, drag?.phase ?? .still == .still else { return lookSoon(0.1) }
         if engine.options.agentWorkspace != Spaces.agentWorkspace { readSettings() }
         watch()
         load()
