@@ -283,9 +283,10 @@ pub fn now(c: &Ctx) -> Result<Now, ApiErr> {
     }
     if let Some(l) = live.as_ref().filter(|l| !l.unknown.is_empty()) {
         notes.push(format!(
-            "this Polycarp Spaces is older than this polycarp and doesn't know {}, so the look leaves {} out",
+            "this Polycarp Spaces is older than this polycarp and doesn't know {}, so the look doesn't hold {}, and applying it on a newer Polycarp Spaces sets {}",
             l.unknown.join(", "),
-            if l.unknown.len() == 1 { "it" } else { "them" }
+            if l.unknown.len() == 1 { "it" } else { "them" },
+            if l.unknown.len() == 1 { "it to its default" } else { "them to their defaults" }
         ));
     }
     Ok(Now {
@@ -316,7 +317,7 @@ impl Now {
             ..t.clone()
         };
         if !self.on {
-            line("theme", "on".into(), "off".into());
+            line("theme switch", "on".into(), "off".into());
         }
         if !bare(t).same_as(&bare(n)) {
             line("theme", t.theme_title(c), n.theme_title(c));
@@ -356,7 +357,11 @@ impl Now {
         }
         if let Some(s) = &look.surfaces {
             let have = live.look_surfaces(&mut Vec::new()).unwrap_or_default();
-            for (path, ..) in FIELDS {
+            // What this Polycarp Spaces doesn't know it can't set; `show` says so in a note.
+            let known = FIELDS
+                .iter()
+                .filter(|(p, ..)| !live.unknown.iter().any(|u| u == p));
+            for (path, ..) in known {
                 if s.get(*path) != have.get(*path) {
                     line(path, value(s.get(*path)), is(value(have.get(*path))));
                 }

@@ -94,6 +94,7 @@ A look from a stranger may change only how things look. The list of settings it 
 | `idle.style`, `idle.effects`, `idle.showVerse`, `idle.showKierkegaard` | `idle.enabled`, `idle.showMachineName`, `idle.startAfterMinutes` |
 | | `text.*`, `rooms.*`, `tiling.*` |
 
-A setting the installed Polycarp Spaces is too old to know is left out of `save` with a note naming it. Any key
-Polycarp doesn't know is refused with its path, as is a value that names a URL, a path or a command. Names are
-lowercase letters, digits and hyphens, so none leaves the folder, and nothing is read or written through a symbolic link.
+A setting the installed Polycarp Spaces is too old to know is left out of `save` with a note naming it; `show` names
+one that a look holds, and `apply` refuses that look. Any key Polycarp doesn't know is refused with its path, as is a
+value that names a URL, a path or a command. Names are lowercase letters, digits and hyphens, so none leaves the
+folder, and nothing is read or written through a symbolic link.

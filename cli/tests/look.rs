@@ -1284,7 +1284,9 @@ fn no_look_is_in_force_while_the_theme_is_off() {
     assert!(sb.current().is_empty());
     let d = sb.ok(&["look", "show", "mine"]);
     assert!(
-        d["changes"].to_string().contains("theme: on (now off)"),
+        d["changes"]
+            .to_string()
+            .contains("theme switch: on (now off)"),
         "{d}"
     );
     // So applying it turns the theme on, where it found nothing to change before.
@@ -1321,6 +1323,19 @@ fn a_setting_an_older_spaces_does_not_know_is_left_out() {
         json!({"bar": {"style": "solid", "modules": {"left": ["mark"]}}})
     );
     assert_eq!(sb.current(), ["mine"]);
+    // A look that holds the setting says this Spaces can't set it, and shows no change to it.
+    fs::remove_file(sb.at("unknown")).unwrap();
+    fs::write(sb.at("live/bar.height"), "32").unwrap();
+    sb.ok(&["look", "save", "tall"]);
+    fs::write(sb.at("unknown"), "bar.height\n").unwrap();
+    let d = sb.ok(&["look", "show", "tall"]);
+    assert!(!d["changes"].to_string().contains("bar.height"), "{d}");
+    assert!(
+        d["notes"]
+            .to_string()
+            .contains("doesn't know bar.height, so applying this look needs a newer one"),
+        "{d}"
+    );
     // Any other refusal still stops it.
     fs::write(sb.at("fail"), "surfaces get").unwrap();
     assert_eq!(sb.no(&["look", "save", "other"]), "refused");
@@ -1342,7 +1357,19 @@ fn pictures_too_big_for_a_look_are_named_with_the_limit() {
     let v = sb.json(&["look", "save", "mine"]);
     let e = v["error"].to_string();
     assert_eq!(v["error"]["code"], "invalid_look", "{e}");
-    for part in ["over the 32 MB", "a.png is 13.0 MB", "b.png is 13.0 MB"] {
+    // One picture on two places is named once, since the file holds it once.
+    fs::write(
+        sb.at("live/paper.desktop"),
+        sb.at("a.png").display().to_string(),
+    )
+    .unwrap();
+    let v = sb.json(&["look", "save", "mine"]);
+    let e = v["error"].to_string();
+    for part in [
+        "over the 32 MB",
+        "a.png is 13.0 MB (paper.all, paper.desktop)",
+        "b.png is 13.0 MB (paper.idle)",
+    ] {
         assert!(e.contains(part), "{part} in {e}");
     }
     assert!(!sb.at("cfg/looks/mine.polycarp-look").exists());
@@ -1351,7 +1378,7 @@ fn pictures_too_big_for_a_look_are_named_with_the_limit() {
 }
 
 #[test]
-fn save_refuses_a_theme_that_breaks_the_theme_rules() {
+fn save_refuses_a_theme_that_fails_the_health_check() {
     let sb = Sandbox::new();
     sb.ok(&["theme", "create", "mine", "--extends", "evening"]);
     sb.ok(&["theme", "set", "mine"]);
