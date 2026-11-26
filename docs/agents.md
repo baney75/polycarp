@@ -13,7 +13,8 @@ Behind it are the same tools Polycarp already has:
 | `tiling_status`, `tiling_run` | read to look, act to change | [Window tiling](tiling.md): how it stands, and one command at a time |
 | `files_*` | files | Everything `polycarp files mcp` does |
 | `edits_page` | files | Read the page you shared from the browser's Page edits |
-| `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set |
+| `browser_tabs` | browser:read | Your open tabs' titles and addresses, without the query or fragment, while "Let agents see my tabs" is on in Settings |
+| `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set. `app_items` never lists a browser tab: tabs are `browser_tabs`'s |
 | `app_setting_set`, `app_focus`, `workspace_agent_set`, `workspace_agent_move`, `workspace_switch`, `launcher_open` | act | Change a setting, bring a window forward, run the agent workspace, switch workspaces, open the launcher |
 
 An assistant sees only the tools its scopes allow. App tools talk to the running app over the same socket `polycarp-spaces` uses, and every change they make is logged in the app with the client's name and id. No tool opens a terminal, types into one, or changes how the app updates.
@@ -67,14 +68,15 @@ To make a local model the default, set Eukhe's `defaultProvider` and `defaultMod
 | files | Search, fetch and send your files across your devices, and read a page you share from the browser |
 | act | Change themes and settings, move windows to the agent workspace, switch workspaces, open the launcher |
 | contacts | Reserved for the contacts feature; no tool uses it yet |
+| browser:read | List your open browser tabs' titles and addresses without their query or fragment (`browser_tabs`), only while "Let agents see my tabs" is on in Polycarp's Settings, which is off until you turn it on. Never a page's text, a private window or a click |
 
-There is no wildcard. stdio has every scope, because it is your own process.
+There is no wildcard, and no scope implies another. stdio has every scope, because it is your own process; `browser_tabs` still answers it only while the Settings switch is on.
 
 ## Approving a web assistant
 
 1. The assistant registers itself (dynamic client registration) and opens Polycarp's sign-in page in your browser.
 2. The page shows a code like `ABCD-EFGH`, the assistant's name and the scopes it asks for (read when it asks for none). It never asks you to click Allow: a web page can't approve anything.
-3. On this Mac, run `polycarp agent approve ABCD-EFGH` with the code from that page. Add `--scopes read,files,act` to grant more or less than it asked for. `polycarp agent deny ABCD-EFGH` says no. `approve` prints the client id, how the request came (this machine or the public tunnel) and the host its code goes to; check them.
+3. On this Mac, run `polycarp agent approve ABCD-EFGH` with the code from that page. Add `--scopes read,files,act` to grant more or less than it asked for. A plain `approve` never grants `browser:read`: name it in `--scopes` to give it. `polycarp agent deny ABCD-EFGH` says no. `approve` prints the client id, how the request came (this machine or the public tunnel) and the host its code goes to; check them.
 4. The page goes on by itself and returns the assistant to its own site with a one-time code.
 
 Approve only a code you read on a page in your own browser, for a connection you started. The code is shown nowhere else: `polycarp agent approve` with no code, `polycarp agent doctor`, the `serve` log and `agent/approvals.json` (for the app to show) list each waiting connection by client id, registration time, the host its code goes to and how it came, never by code. A connection that came through the public tunnel and sends its code anywhere but https on claude.ai, claude.com, chatgpt.com, grok.com or x.ai is marked unverified (a loopback address counts only for a connection from this machine: through the tunnel it is the visitor's own machine), and approving it takes `polycarp agent approve <code> --unverified`. The name a connector registers is whatever it typed, so it proves nothing. The request expires in ten minutes. Every authorization needs your approval, including a returning assistant whose refresh token ran out. Each approval is your current word on that connector: approving it again with fewer scopes ends every grant and unused code it holds with more, and an earlier yes still waiting on its page gets no more than the latest one allows.
@@ -135,7 +137,7 @@ Surfaces and contacts add their tools by implementing `Provider` in `cli/src/age
 
 ### What a stolen token can do
 
-- **An access token** (from a web connector) can call the tools its scopes allow, through any route, for at most an hour. It can't mint new tokens. With read only, it can read themes, app settings, and the titles of your windows and terminals. With files, it can search your files on every device, fetch or send one, and read a page you share from the browser. With act, it can change settings and themes and move windows to the agent workspace.
+- **An access token** (from a web connector) can call the tools its scopes allow, through any route, for at most an hour. It can't mint new tokens. With read only, it can read themes, app settings, and the titles of your windows and terminals. With files, it can search your files on every device, fetch or send one, and read a page you share from the browser. With act, it can change settings and themes and move windows to the agent workspace. With browser:read, while "Let agents see my tabs" is on, it can list your open tabs' titles and addresses (never the query, a page's text or a private window).
 - **A refresh token** can get new access tokens with the same or fewer scopes for up to 30 days. The first time it is used, the old one is spent. If the thief and the real client both use it, the second use ends the whole grant for both, and the client must be approved again.
 - **A local token** can do what its scopes allow, until you revoke it. Unless it was made with `--remote`, it works only on loopback and the tailnet, so a copy that leaks off your devices is useless through a tunnel.
 - **An authorization code** is useless without the PKCE verifier, which never leaves the client. One wrong verifier burns the code, and a code used twice ends the grant it made.

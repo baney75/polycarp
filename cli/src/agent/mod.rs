@@ -378,6 +378,15 @@ by itself. `polycarp agent clients` lists it; `polycarp agent revoke {}` ends it
         auth::redirect_host(&p.redirect_uri),
         p.client
     );
+    if p.scopes.iter().any(|s| s == auth::BY_NAME)
+        && !granted.split(',').any(|s| s == auth::BY_NAME)
+    {
+        println!(
+            "It also asked for {0}, which is granted only by name, so it was left out. To add it, approve its next \
+request with `--scopes {granted},{0}`.",
+            auth::BY_NAME
+        );
+    }
     Ok(())
 }
 

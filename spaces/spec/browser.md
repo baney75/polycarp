@@ -75,5 +75,13 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   window; it is the launcher's query and nothing keeps it. "Quick Look at Page" asks the extension for the page's readable
   text, at most 100,000 letters, and shows it until Esc or a click elsewhere; the app takes only the answer for the tab it
   asked about, from that browser, within 10 seconds, keeps it nowhere else, and a text prints as its size only.
+- **R-B18 Agents see tab titles and addresses, when allowed.** Through Polycarp's MCP gateway, the `browser_tabs` tool
+  lists open tabs: title, address without its query, fragment, name or password, browser and whether it is its window's
+  front tab, at most 200, filtered by words. It needs the `browser:read` scope, which no other scope implies and a
+  connector gets only when the person names it in `polycarp agent approve --scopes` (a plain approve leaves it out), and
+  the app answers only while "Let agents see my tabs" is on in Settings, Agents; it is off until the person turns it on, and
+  only that switch changes it. It never gives a page's text, history, bookmarks, downloads, groups or a private window,
+  never clicks, opens or closes, and another machine never gets it (`Remote.allows`). The gateway passes on those four
+  fields only, whatever the app sends, and leaves tabs out of `app_items` and a tab's title out of `app_focus`.
 - **R-B19 A list in pieces.** A change that comes while a list comes in pieces holds: a row it closed or changed stays so
   when a later piece, read before it, still has the old one.

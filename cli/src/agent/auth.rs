@@ -21,7 +21,9 @@ use serde_json::{json, Value as Json};
 use std::collections::BTreeMap;
 
 /// What a grant or token may do. No wildcard.
-pub const SCOPES: [&str; 4] = ["read", "files", "act", "contacts"];
+pub const SCOPES: [&str; 5] = ["read", "files", "act", "contacts", "browser:read"];
+/// The scope an approval never carries unless the owner names it in `--scopes`.
+pub const BY_NAME: &str = "browser:read";
 
 /// What a scope lets through, for `approve` and the docs.
 pub fn scope_meaning(s: &str) -> &'static str {
@@ -30,6 +32,7 @@ pub fn scope_meaning(s: &str) -> &'static str {
         "files" => "search the owner's files on every device, fetch one here, send one with Taildrop",
         "act" => "change the theme and settings, switch workspaces, open the launcher, focus and move windows",
         "contacts" => "the owner's contacts (no tools use it yet)",
+        "browser:read" => "the titles and addresses of the owner's open browser tabs, only while the owner allows it in Polycarp's Settings; never a page's text, a private window or a click",
         _ => "unknown",
     }
 }
@@ -675,8 +678,8 @@ Start connecting again in the assistant."
         tunnel && !assistant_host
     }
 
-    /// The owner's yes, on this machine. `scopes` None grants what the client asked for. An unverified request needs
-    /// `unverified_ok`, the owner's `--unverified`.
+    /// The owner's yes, on this machine. `scopes` None grants what the client asked for, except `browser:read`, which
+    /// the owner grants only by naming it. An unverified request needs `unverified_ok`, the owner's `--unverified`.
     pub fn approve(
         &mut self,
         approval: &str,
@@ -700,7 +703,20 @@ Claude, ChatGPT or Grok. The name \"{name}\" is whatever the visitor typed. If y
             ));
         }
         let p = self.pending_by_code(approval, now)?;
-        let grant = scopes.unwrap_or_else(|| p.scopes.clone());
+        let grant = match scopes {
+            Some(s) => s,
+            None => {
+                let rest: Vec<String> =
+                    p.scopes.iter().filter(|s| *s != BY_NAME).cloned().collect();
+                if rest.is_empty() && !p.scopes.is_empty() {
+                    return Err(format!(
+                        "not approved: this connection asks only for {BY_NAME}, which is granted only by name. To \
+let it see your tabs' titles and addresses, run `polycarp agent approve {approval} --scopes {BY_NAME}`."
+                    ));
+                }
+                rest
+            }
+        };
         if grant.is_empty() || grant.iter().any(|s| !SCOPES.contains(&s.as_str())) {
             return Err("grant at least one known scope".into());
         }

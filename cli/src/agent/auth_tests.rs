@@ -581,6 +581,12 @@ fn local_bearer_tokens_are_hashed_scoped_revocable_and_stay_off_tunnels_unless_a
 #[test]
 fn scopes_parse_strictly() {
     assert_eq!(parse_scopes("act, read").unwrap(), vec!["read", "act"]);
+    assert_eq!(
+        parse_scopes("browser:read read").unwrap(),
+        vec!["read", "browser:read"]
+    );
+    assert!(parse_scopes("browser").is_err());
+    assert!(parse_scopes("browser:*").is_err());
     assert_eq!(parse_scopes("read files act contacts").unwrap().len(), 4);
     assert!(parse_scopes("").is_err());
     assert!(parse_scopes("read,admin").is_err());
@@ -645,6 +651,53 @@ fn approved_tokens(st: &mut State, c: &str, scopes: &[&str], now: i64) -> Json {
     };
     let code = param(&url, "code").unwrap();
     exchange(st, c, &code, VERIFIER, now + 1).unwrap()
+}
+
+#[test]
+fn a_plain_approve_never_grants_browser_read() {
+    let mut st = State::default();
+    let c = register(&mut st);
+    let ask = |st: &mut State, scope: &str, now: i64| {
+        st.authorize(
+            &authorize_query(&c, &[("scope", scope)]),
+            RESOURCE,
+            Origin::Tunnel,
+            now,
+        )
+        .unwrap()
+        .1
+    };
+    let granted = |p: &Pending| match &p.decision {
+        Some(Decision::Approved(s)) => s.clone(),
+        _ => vec![],
+    };
+    let p = ask(&mut st, "read browser:read", T0);
+    let p = st.approve(&p.approval, None, false, T0).unwrap();
+    assert_eq!(granted(&p), vec!["read"]);
+    assert_eq!(
+        p.scopes,
+        vec!["read", "browser:read"],
+        "what it asked for is kept, for approve to say so"
+    );
+
+    let p = ask(&mut st, "read browser:read", T0 + 1);
+    let named = Some(vec!["read".to_string(), "browser:read".to_string()]);
+    assert_eq!(
+        granted(&st.approve(&p.approval, named, false, T0 + 1).unwrap()),
+        vec!["read", "browser:read"]
+    );
+
+    let p = ask(&mut st, "browser:read", T0 + 2);
+    let e = st.approve(&p.approval, None, false, T0 + 2).unwrap_err();
+    assert!(e.contains("--scopes browser:read"), "{e}");
+    assert!(st
+        .approve(
+            &p.approval,
+            Some(vec!["browser:read".into()]),
+            false,
+            T0 + 2
+        )
+        .is_ok());
 }
 
 #[test]
