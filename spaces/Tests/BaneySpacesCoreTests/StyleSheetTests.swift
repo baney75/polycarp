@@ -218,7 +218,7 @@ final class StyleSheetTests: XCTestCase {
             XCTAssertEqual(problems("bar .\(m.id) { color: red }"), [], "every bar module has its class: \(m.id)")
         }
         XCTAssertEqual(StyleTarget.barModule.parts, ["mark", "workspaces", "app-menus", "status", "hour", "clock", "date", "verse",
-                                                     "battery", "network", "notifications"])
+                                                     "battery", "network", "agents", "notifications"])
         XCTAssertEqual(problems("bar .workspace.current:hover { color: red } bar .workspace:hover.current { color: red } :root { --x: 1px }"), [])
         XCTAssertEqual(problems("BAR { color: red }"), [], "a type selector is case-insensitive")
     }
@@ -464,8 +464,8 @@ final class StyleSheetTests: XCTestCase {
     /// The bar's text in every region and state, each once: what the warnings look at.
     func testContrastLooksAtEveryTextPartInEveryState() {
         let bar = StyleSheet.textNodes.filter { $0.0 == .bar }
-        // The bar, 3 regions, 11 modules in no region or one of 3, hovered or not, and a number in 4 places and 4 states.
-        XCTAssertEqual(bar.count, 1 + 3 + 11 * 4 * 2 + 4 * 4)
+        // The bar, 3 regions, 12 modules in no region or one of 3, hovered or not, and a number in 4 places and 4 states.
+        XCTAssertEqual(bar.count, 1 + 3 + 12 * 4 * 2 + 4 * 4)
         XCTAssertEqual(Set(bar.map { "\($0.1 ?? "")|\($0.2 ?? "")|\($0.3.map(\.rawValue).sorted())" }).count, bar.count)
         XCTAssertFalse(bar.contains { $0.1 == "island" }, "an island draws no text of its own")
         for t in StyleTarget.allCases where StyleProperty.byName["color"]!.applies(to: t) {

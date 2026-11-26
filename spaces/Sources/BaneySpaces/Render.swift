@@ -196,6 +196,16 @@ enum Render {
             topBar.status = apps.indices.map { BarStatus.Item(owner: "sample.\($0)", label: "App \($0)") }
                 + [("wifi", "Wi-Fi"), ("sound", "Sound"), ("battery", "Battery"), ("controlcenter", "Control Center")]
                 .map { BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra." + $0.0, label: $0.1) }
+            let sample = [("a", "Fix the window jump", "Claude needs your permission to use Bash"), ("b", "Polycarp browser import", ""), ("c", "Course site", "")]
+                .map { id, title, notice in
+                    var i = Item(id: id, bundleID: "com.apple.Terminal", appName: "Terminal", role: .terminal, kind: .terminal, group: id, title: title,
+                                 detail: "~/code", activity: id == "a" ? .waiting : .working)
+                    i.notice = notice
+                    i.workspace = id == "c" ? 3 : 0
+                    return i
+                }
+            topBar.agents = BarAgents(items: sample, unseen: ["a"])
+            topBar.bar.right = [.agents, .status, .split, .notifications]
             for (name, sides, height) in [("topbar-full.png", nil, 26.0), ("topbar-full-notch.png", (left: 656.0, right: 656.0), 37.0),
                                           ("topbar-drawer.png", nil, 26.0), ("topbar-drawer-notch.png", (left: 656.0, right: 656.0), 37.0)]
                 as [(String, (left: CGFloat, right: CGFloat)?, CGFloat)] {
@@ -220,6 +230,7 @@ enum Render {
             shelf.take(NoticeReader.read([node]), at: topBar.now)
         }
         notices.sample(shelf, quiet: ["com.apple.Music": "Music"])
+        guard save(AgentsList(model: topBar, room: 620, open: { _ in }) {}.padding(20), "agents.png", CGSize(width: 380, height: 0)) else { return 1 }
         guard save(BarCalendar(model: CalendarModel(now: topBar.now)) {}.padding(20), "calendar.png", CGSize(width: 316, height: 0)) else { return 1 }
         guard save(NoticeList(watcher: notices, room: 620) {}.padding(20), "notices.png", CGSize(width: 412, height: 0)) else { return 1 }
         notices.sample(NoticeShelf())

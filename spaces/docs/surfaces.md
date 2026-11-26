@@ -147,13 +147,13 @@ for none, `from` `paper` or the place's own path). Error codes, beyond the surfa
 | `bar.style` | `"islands"` | `islands` (each group of modules floats in its own rounded island over the desktop; `"\|"` in a module list starts a new island; style them with `bar .island` in style.css), `solid` (the theme's background color), `glass` (blurred, see-through) or `hairline` (the desktop shows through, with a thin line under it). |
 | `bar.modules.left` | `["mark","workspaces","\|","app-menus"]` | Module ids, in order. `"\|"` starts a new island, as often as you like. |
 | `bar.modules.center` | `["clock"]` | Module ids, in order. |
-| `bar.modules.right` | `["status","\|","notifications"]` | Module ids, in order. |
+| `bar.modules.right` | `["agents","status","\|","notifications"]` | Module ids, in order. |
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
 | `bar.tray` | `"drawer"` | `drawer` (your apps' status items fold behind a chevron) or `row` (they stay in the row with macOS's). |
 
 Module ids: `mark`, `workspaces`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
-`battery`, `network`, `notifications`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
+`battery`, `network`, `agents`, `notifications`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
 
 What each one draws:
 
@@ -167,6 +167,7 @@ What each one draws:
 | `verse` | The desktop's verse for now, with its reference. |
 | `battery` | The charge, only off power or while charging. Nothing on a desktop Mac. |
 | `network` | "Offline" when there is no connection; nothing when there is. |
+| `agents` | How many coding agents need you, beside an accent mark, and how many are working, a step quieter; nothing when there are none. Click it for the list, the ones that need you first, and choose one to go to it. |
 | `app-menus` | The front app's menus: the Apple logo, the app's name in bold, then File, Edit and the rest. Click one to open it, as from the macOS bar. Titles past the room are left out whole, from the end. |
 | `status` | The status items of macOS and your apps, in the macOS bar's order: Wi-Fi, the battery, Control Center and the like as symbols in the bar's text color, an app's own as its icon in its own colors. Two or more of your apps' fold into a drawer behind a chevron: point at it and they slide out, click it and they stay out. With `bar.tray` row they are all in one row. Click one to open it. The macOS clock is left out beside `clock` or `date`, the battery beside `battery`; Polycarp's own is under the mark, and what macOS hid behind its "Show Hidden Menu Bar Items" button stays hidden. |
 | `notifications` | A bell, with how many notifications are new. Click it for the list, by app: open one, dismiss it, clear an app or all of them, keep an app quiet, or open Notification Center. |
@@ -182,7 +183,7 @@ semibold and its menus regular, and no color but the accent at the workspace you
 27 points, whatever its own shape, and everything you can click lights a soft face under the pointer and presses in; the
 whole height of the bar takes the click, so the pointer can rest on the screen's edge. Groups between `"|"` are a little
 apart and there are no lines between them. On a screen with a notch the middle's modules sit beside the camera, on its
-right, and the right's at the screen's edge. By default the bar shows the mark, the numbers, the app's menus, the clock, the status row and the bell,
+right, and the right's at the screen's edge. By default the bar shows the mark, the numbers, the app's menus, the clock, the agents while there are any, the status row and the bell,
 nothing else.
 
 **Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
