@@ -22,12 +22,14 @@ final class DefaultAppsStore {
     // Only on `queue`.
     private var choices = DefaultAppsFile.Choices()
     private var due = false
+    /// What stops each watch. Kept: a watch whose stop is let go is freed, and hears nothing.
+    private var stops: [() -> Void] = []
 
     func start(log: @escaping (String) -> Void) {
         self.log = log
         let home = NSHomeDirectory()
-        for path in [DefaultAppsFile.path(), "/Applications", home + "/Applications"] {
-            _ = PolycarpThemeWatcher.fileEvents(queue, path) { [weak self] in self?.look(after: 0.3) }
+        stops = [DefaultAppsFile.path(), "/Applications", home + "/Applications"].map { path in
+            PolycarpThemeWatcher.fileEvents(queue, path) { [weak self] in self?.look(after: 0.3) }
         }
         refresh()
     }
