@@ -43,6 +43,12 @@ into a file only this account can read, read once and deleted; the terminal is t
 that file's name. An agent that can't be given a prompt as one argument opens without it, and the prompt is put on the
 clipboard. No agent is given an option that turns off its permission questions.
 
+### R-D11 Opening a job's app
+Opening a role goes to its app's newest window on this workspace, else on the nearest one, else opens a new window, else
+launches it; a window is never brought here from another workspace. Asked for a new window, it opens one. A folder
+opens in the terminal, the agent, the editor or the file manager. With no agent chosen, or the chosen one gone, it asks
+on screen; the answer is kept and opens at once. Never for another machine.
+
 ### R-D9 The file
 The choices are the `[defaults]` table of the configuration file (config.md), a role to an id, only for roles you chose:
 
