@@ -549,12 +549,12 @@
     b.type = "button";
     b.addEventListener("click", () => openLeave(t, got));
     bar.append(b);
-    S.getMeta(leftKey(got.m)).then((r) => {
-      if (!r || !b.isConnected) return;
-      b.disabled = true;
-      b.textContent = "Unsubscribe request sent " + when(r.at);
-    });
+    S.getMeta(leftKey(got.m)).then((r) => { if (r && b.isConnected) markLeft(b, r.at); });
     return bar;
+  }
+  function markLeft(b, at) {
+    b.disabled = true;
+    b.textContent = "Unsubscribe request sent " + when(at);
   }
   let leaving = null;
   function openLeave(t, got) {
@@ -587,9 +587,12 @@
     try {
       const r = a && a.adapter && a.adapter.unsubscribe ? await a.adapter.unsubscribe(p) : await U.send(p);
       if (!r.ok) return toast(hostOf(p.url) + " answered " + r.status + ", so you may still be on the list.");
-      await S.setMeta(leftKey(m), { at: Date.now(), url: p.url });
+      const at = Date.now();
+      await S.setMeta(leftKey(m), { at, url: p.url });
       toast("Asked " + hostOf(p.url) + " to take you off the list. Mail already on its way can still arrive.");
-      if (st.open === t.id) { const g = await S.thread(t.id); if (g) paint(g); }
+      // Only the button changes: a repaint would drop a reply being written in this thread.
+      const b = st.open === t.id && $("pane").querySelector(".leave button");
+      if (b) markLeft(b, at);
     } catch (e) { toast("Couldn't reach " + hostOf(p.url) + ": " + e.message); }
   }
 
