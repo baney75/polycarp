@@ -124,6 +124,9 @@ Item {
 
   Process {
     id: scanner
+    // A look asked for while a scan runs is kept, and made once the scan is over.
+    property bool again: false
+    onRunningChanged: if (!running && again) { again = false; look.restart() }
     command: ["bash", decodeURIComponent(String(Qt.resolvedUrl("scripts/agents-scan")).replace("file://", ""))]
     stdout: StdioCollector {
       onStreamFinished: {
@@ -139,6 +142,7 @@ Item {
     id: look
     interval: 1200
     onTriggered: {
+      if (scanner.running) { scanner.again = true; return }
       Hyprland.refreshToplevels()
       scanner.running = true
     }
@@ -201,7 +205,9 @@ Item {
     stdout: StdioCollector {
       onStreamFinished: {
         try {
-          root.animationsOff = JSON.parse(text).bool === false
+          // Hyprland 0.56 prints a bool; a Hyprland whose options are all numbers prints an int.
+          var o = JSON.parse(text)
+          root.animationsOff = o.bool === false || o.int === 0
         } catch (e) {
         }
       }
