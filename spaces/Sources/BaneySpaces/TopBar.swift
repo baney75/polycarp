@@ -668,9 +668,8 @@ struct TopBarView: View {
         } else {
             let gap = r.gap.map { CGFloat($0) } ?? spacing
             let groups = placed(BarArrange.list(shown, place), place, region)
-            let handles = model.arranging || dragging
             Group {
-                if groups.isEmpty, handles {
+                if groups.isEmpty, model.arranging || dragging {
                     // An empty row while arranging or moving: somewhere to drop a module.
                     BarShape.face.strokeBorder(Chrome.wash(0.45), style: StrokeStyle(lineWidth: Chrome.width(.overviewChip), dash: [3, 3]))
                         .frame(width: CGFloat(BarGeometry.slot) + 12).padding(.vertical, 4)
@@ -678,14 +677,14 @@ struct TopBarView: View {
                     // A fixed space between islands; the region's gap still spaces the modules inside each.
                     HStack(spacing: 6) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                            if let split = group.split { if handles { splitHandle(split, place) } } else { island(group.items, place, region, gap: r.gap, room: room) }
+                            if let split = group.split { splitHandle(split, place) } else { island(group.items, place, region, gap: r.gap, room: room) }
                         }
                     }
                 } else {
                     HStack(spacing: CGFloat(BarGeometry.group) + gap) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                             if let split = group.split {
-                                if handles { splitHandle(split, place) }
+                                splitHandle(split, place)
                             } else {
                                 HStack(spacing: gap) {
                                     ForEach(group.items) { item($0, place, region, room: room) }
@@ -735,28 +734,22 @@ struct TopBarView: View {
 
     private var slide: Animation? { Chrome.reduceMotion ? nil : Chrome.spring(0.22, damping: 0.86) }
 
-    /// A group of modules `|` parts from the next, or (`split`) the `|` itself, by its index.
-    struct Run {
-        var items: [Placed] = []
-        var split: Int?
-    }
-
-    /// A row's modules in the groups `|` splits them into, without those that draw nothing or the groups left empty, each
-    /// `|` between them as a run of its own while arranging or moving, when it is drawn as a handle.
-    private func placed(_ modules: [Surfaces.BarModule], _ place: BarRow, _ region: StyleBook.Region) -> [Run] {
-        var out: [Run] = [Run()]
-        for (i, m) in modules.enumerated() {
-            if m == .split { out += [Run(split: i), Run()] } else if BarLayout.drawn(m), draws(m, region) { out[out.count - 1].items.append(Placed(index: i, module: m)) }
-        }
-        let handles = model.arranging || dragging
-        return out.filter { !$0.items.isEmpty || (handles && $0.split != nil) }
+    /// A row's modules in the groups `|` splits them into (`BarArrange.runs`), each `|` a grip of its own in arrange mode.
+    private func placed(_ modules: [Surfaces.BarModule], _ place: BarRow, _ region: StyleBook.Region) -> [(items: [Placed], split: Int?)] {
+        BarArrange.runs(modules, arranging: model.arranging) { BarLayout.drawn($0) && draws($0, region) }
+            .map { r in (r.items.map { Placed(index: $0, module: modules[$0]) }, r.split) }
     }
 
     /// Where one island ends and the next begins, drawn so it can be moved like any module (R-BA2).
     private func splitHandle(_ index: Int, _ place: BarRow) -> some View {
-        let moving = model.drag.map { $0.display == display && $0.module == .split && $0.from == BarSlot(place, index) } ?? false
+        // The bar draws the lists as they will be after the drop, so the grip being moved sits where it lands.
+        let d = model.drag.flatMap { $0.display == display && $0.module == .split ? $0 : nil }
+        let moving = d.map { d in (d.target.map { BarArrange.landing(from: d.from, to: $0) } ?? d.from) == BarSlot(place, index) } ?? false
         return BarSplitHandle()
-            .opacity(moving ? 0 : 1)
+            .opacity(moving ? (d?.target == nil ? 0.3 : 0) : 1)
+            .overlay(alignment: .leading) {
+                if moving, d?.target != nil { Capsule().fill(Chrome.accent).frame(width: 2).padding(.vertical, 5) }
+            }
             .barMeasured(.item(place, index))
             .accessibilityLabel("Island split")
             .modifier(BarMoveActions(slot: BarSlot(place, index), bar: model.bar, run: model.onStep))

@@ -160,6 +160,7 @@ final class BarDragger {
             guard let d = model.drag else { return false }
             model.drag = nil
             holdKeys(near: nil)
+            defer { restartIdle() }
             // The lists changed under the drag (a `surfaces set`, an earlier move's write coming back): the place it was
             // taken from may hold another module now, so nothing moves.
             let list = BarArrange.list(model.bar, d.from.row)
@@ -168,7 +169,6 @@ final class BarDragger {
                 return true
             }
             if let to = d.target { drop(d.from, to) } else { Trace.log("top bar: move dropped off the bar, nothing changed") }
-            restartIdle()
             return true
         default:
             return false
@@ -269,10 +269,11 @@ final class ArrangeKeys: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onEscape() }
     override func keyDown(with event: NSEvent) { if event.keyCode == 53 { onEscape() } }
+    /// ⌘Z undoes; every other shortcut stops here, so ⌘Q or ⌘W pressed while it holds the keyboard never reaches
+    /// Polycarp's own menu.
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "z" else { return super.performKeyEquivalent(with: event) }
-        onUndo()
+        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+           event.charactersIgnoringModifiers?.lowercased() == "z" { onUndo() }
         return true
     }
 

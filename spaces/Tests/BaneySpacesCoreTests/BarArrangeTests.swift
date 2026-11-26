@@ -235,4 +235,27 @@ final class BarArrangeTests: XCTestCase {
         XCTAssertNotNil(BarArrange.write(Surfaces.defaults.bar, file: path))
         XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), text)
     }
+
+    /// A ⌘-drag outside arrange mode draws no grips: one that came in after the press would move every module after a
+    /// split away from the place the press measured it (PR #869 review, first-F1).
+    func testGripsOnlyInArrangeMode() {
+        let row = ["agents", "status", "|", "notifications"].compactMap(Surfaces.BarModule.init(id:))
+        XCTAssertEqual(BarArrange.runs(row, arranging: false) { _ in true }, [.init(items: [0, 1]), .init(items: [3])])
+        XCTAssertEqual(BarArrange.runs(row, arranging: true) { _ in true },
+                       [.init(items: [0, 1]), .init(split: 2), .init(items: [3])])
+        // Modules that draw nothing leave no group; a split with nothing either side is still a grip in arrange mode.
+        XCTAssertEqual(BarArrange.runs(row, arranging: false) { $0 != .notifications }, [.init(items: [0, 1])])
+        XCTAssertEqual(BarArrange.runs(row, arranging: true) { $0 == .notifications }, [.init(split: 2), .init(items: [3])])
+    }
+
+    /// Where a moved module sits after the move matches `move`, so the grip being moved hides at its landing place.
+    func testLandingMatchesMove() {
+        let b = bar(["mark", "workspaces", "|"], ["clock"], ["status", "|", "notifications"])
+        for (from, to) in [(BarSlot(.left, 2), BarSlot(.left, 0)), (BarSlot(.right, 1), BarSlot(.right, 3)),
+                           (BarSlot(.right, 1), BarSlot(.center, 1)), (BarSlot(.left, 0), BarSlot(.left, 3))] {
+            let after = BarArrange.move(b, from: from, to: to)
+            let at = BarArrange.landing(from: from, to: to)
+            XCTAssertEqual(BarArrange.list(after, at.row)[at.index], BarArrange.list(b, from.row)[from.index], "\(from) to \(to)")
+        }
+    }
 }

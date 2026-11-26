@@ -66,11 +66,33 @@ public enum BarArrange {
         let module = source.remove(at: from.index)
         set(&out, from.row, source)
         var target = list(out, to.row)
-        // In the same row the gaps after the module close up by one once it is out.
-        let at = from.row == to.row && to.index > from.index ? to.index - 1 : to.index
-        target.insert(module, at: at)
+        target.insert(module, at: landing(from: from, to: to).index)
         set(&out, to.row, target)
         return out
+    }
+
+    /// Where the module from `from` sits in the lists after `move` puts it in the gap `to`: in the same row the gaps
+    /// after it close up by one once it is out.
+    public static func landing(from: BarSlot, to: BarSlot) -> BarSlot {
+        BarSlot(to.row, from.row == to.row && to.index > from.index ? to.index - 1 : to.index)
+    }
+
+    /// A row's modules in the groups `|` parts them into: each group the indices of the modules `draws` keeps, empty
+    /// groups left out. In arrange mode each `|` is a run of its own (`split`, its index), drawn as a grip so it can
+    /// be moved. Only then: a grip that came in with a ⌘-drag would move the modules after the press measured them.
+    public struct Run: Equatable, Sendable {
+        public var items: [Int] = []
+        public var split: Int?
+        public init(items: [Int] = [], split: Int? = nil) { self.items = items; self.split = split }
+    }
+
+    public static func runs(_ modules: [Surfaces.BarModule], arranging: Bool,
+                            draws: (Surfaces.BarModule) -> Bool) -> [Run] {
+        var out = [Run()]
+        for (i, m) in modules.enumerated() {
+            if m == .split { out += [Run(split: i), Run()] } else if draws(m) { out[out.count - 1].items.append(i) }
+        }
+        return out.filter { !$0.items.isEmpty || (arranging && $0.split != nil) }
     }
 
     /// The gap a drop at `x` lands in: the row whose stretch holds `x` (each from its `minX` up to, not including, its
