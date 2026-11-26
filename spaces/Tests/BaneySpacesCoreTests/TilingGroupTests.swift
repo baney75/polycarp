@@ -217,13 +217,25 @@ final class TilingGroupTests: XCTestCase {
         _ = run(&f, .join(.left), 2)
         let tabs = f.engine.tabs(1)
         let names: [WindowID: (title: String, app: String, pid: Int32)] = [1: ("Notes", "TextEdit", 11), 2: ("", "Terminal", 22)]
-        let drawn = TilingTabs.drawn(tabs, moving: nil) { names[$0]! }
+        let drawn = TilingTabs.drawn(tabs, moving: nil, onScreen: [1, 2]) { names[$0]! }
         XCTAssertEqual(drawn, [TilingTabs.Drawn(frame: tabs[0].frame, tabs: [
             .init(id: 1, title: "Notes", pid: 11, front: false),
             .init(id: 2, title: "Terminal", pid: 22, front: true),
         ])], "a window with no title goes by its app")
-        XCTAssertEqual(TilingTabs.drawn(tabs, moving: 2) { names[$0]! }, [], "none while its front is dragged")
-        XCTAssertEqual(TilingTabs.drawn(tabs, moving: 1) { names[$0]! }.count, 1, "a window behind it on the move leaves it")
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: 2, onScreen: [1, 2]) { names[$0]! }, [], "none while its front is dragged")
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: 1, onScreen: [1, 2]) { names[$0]! }.count, 1, "a window behind it on the move leaves it")
+    }
+
+    func testAStripShowsOnlyOnTheDesktopItsGroupIsOn() {
+        var f = three()
+        _ = run(&f, .join(.left), 2)
+        let tabs = f.engine.tabs(1)
+        let name: (WindowID) -> (title: String, app: String, pid: Int32) = { _ in ("A", "App", 1) }
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: nil, onScreen: [1, 2, 3], window: name).count, 1)
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: nil, onScreen: [3], window: name), [], "another macOS desktop is in use")
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: nil, onScreen: [2], window: name).count, 1, "the front one is what shows")
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: nil, onScreen: [1], window: name), [],
+                       "a window behind is parked in a corner, which can count as on screen on any desktop")
     }
 
     func testAGroupOfOneIsOneAgainWhenItComesBack() {

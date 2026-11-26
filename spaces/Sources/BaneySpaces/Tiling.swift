@@ -121,7 +121,11 @@ final class Tiling {
         let center = NSWorkspace.shared.notificationCenter
         for name in [NSWorkspace.didHideApplicationNotification, NSWorkspace.didUnhideApplicationNotification,
                      NSWorkspace.activeSpaceDidChangeNotification] {
-            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.lookSoon(0.15) }
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                // The strips are on every desktop: they go now, not only if the look gets as far as them.
+                if note.name == NSWorkspace.activeSpaceDidChangeNotification { self?.drawStrips() }
+                self?.lookSoon(0.15)
+            }
         }
         // Polycarp's bar takes another height, comes or goes.
         for name in [SurfacesStore.didChange, StyleSheetStore.didChange, NSWindow.didResizeNotification] {
