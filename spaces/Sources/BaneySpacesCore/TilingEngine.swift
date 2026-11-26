@@ -323,7 +323,7 @@ public struct TilingEngine: Equatable, Sendable {
         var out = frames
         for (id, f) in frames {
             stowed[id] = nil
-            guard let corner = shot.corner, !TileLayout.shows(f, in: area, displays: shot.displays) else { continue }
+            guard let corner = shot.corner, id != shot.focused, !TileLayout.shows(f, in: area, displays: shot.displays) else { continue }
             out[id] = CGRect(origin: corner, size: f.size)
             stowed[id] = CGRect(x: area.midX - f.width / 2, y: f.minY, width: f.width, height: f.height).integral
         }
@@ -396,8 +396,12 @@ public struct TilingEngine: Equatable, Sendable {
         guard let key = key(workspace), let slot = slots[key], slot.layout.style != .floating else { return ([:], []) }
         let lone = options.lone.width(in: slot.area).map { CGSize(width: $0, height: .infinity) }
         func solve(_ l: TileLayout) -> [WindowID: CGRect] {
+            // A strip scrolls on what is solved: a window stacked or rounded up moves the columns after it.
+            var l = l
+            l.reveal(slot.focused, area: slot.area, gaps: options.gaps, minimums: minimums)
             let out = l.frames(in: slot.area, gaps: options.gaps, minimums: minimums, loneMax: lone)
             guard !l.full, let least = roundedUp(l, out, slot.area) else { return out }
+            l.reveal(slot.focused, area: slot.area, gaps: options.gaps, minimums: least)
             return l.frames(in: slot.area, gaps: options.gaps, minimums: least, loneMax: lone)
         }
         guard !slot.layout.full, !fits(slot.layout, slot.area, minimums) else { return (solve(slot.layout), []) }

@@ -70,16 +70,29 @@ final class TileStripTests: XCTestCase {
     }
 
     func testAStripScrolledPastItsEndStandsAtItsEnd() {
-        var f = fake(4)
-        let key = f.engine.key(1)!
+        var l = TileLayout(style: .scrolling)
+        for id in WindowID(1)...4 { l.insert(id, beside: id == 1 ? nil : id - 1, area: area) }
         for (scroll, edge) in [(5000.0, 1608.0), (-300, 8)] {
-            f.engine.slots[key]!.layout.scroll = scroll
-            let w = f.engine.frames(1)
+            l.scroll = scroll
+            let w = l.frames(in: area, gaps: gaps)
             XCTAssertEqual(scroll > 0 ? w[4]!.maxX : w[1]!.minX, edge, "scrolled to \(scroll)")
         }
+        var f = fake(4)
         f.focused = 4; f.rest()
         f.wins[4] = nil; f.focused = 3; f.rest()
         XCTAssertEqual(f.engine.frames(1)[3]!.maxX, 1608, "the last column closed, the strip ends at the area's edge")
+    }
+
+    func testAWindowRoundedUpBeforeTheOneInUseLeavesItWhollyInView() {
+        let mine = CGRect(x: 0, y: 0, width: 1616, height: 1080), right = CGRect(x: 1616, y: 0, width: 1616, height: 1080)
+        var f = fake(4, displays: [mine, right])
+        f.engine.rounded[3] = CGSize(width: 796 + 12, height: 1000)
+        f.rest()
+        let w = f.engine.frames(1)
+        XCTAssertEqual(w[3]!.width, 808, "the rounding is taken")
+        XCTAssertEqual(w[4]!.maxX, 1608, "and the strip scrolls for it")
+        XCTAssertNil(f.engine.stowed[4])
+        XCTAssertEqual(f.wins[4]!.w.frame, w[4]!)
     }
 
     func testAColumnIsNeverWiderThanTheAreaNorLeftUnderWhatItWasGiven() {
