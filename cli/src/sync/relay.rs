@@ -66,38 +66,39 @@ impl Relay {
                 Ok(b) => Ok(Some(b)),
                 Err(Some(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(Some(e)) => Err(format!("could not read the relay at {}: {e}", d.display())),
-                Err(None) => Err(gone(d)),
+                Err(None) => Err(gone(&d.display().to_string())),
             },
             Relay::Ssh { host, dir } => {
-                // `test -e` first, so a missing file (exit 3) is told apart from an unreachable host (255).
-                let script =
-                    format!("if test -e {dir}/{name}; then cat {dir}/{name}; else exit 3; fi");
-                let out = ssh(host, &script, None)?;
-                match out.0 {
-                    0 => Ok(Some(out.1)),
+                let (code, out) = ssh(host, &get_script(dir, name), None)?;
+                match code {
+                    0 => unframe(&out).map(Some).ok_or_else(|| {
+                        format!(
+                            "the relay {host} sent {name} damaged or with other output mixed in"
+                        )
+                    }),
                     3 => Ok(None),
+                    4 => Err(gone(&format!("{host}:{dir}"))),
                     c => Err(format!("the relay {host} did not answer (ssh exit {c})")),
                 }
             }
         }
     }
 
-    /// Puts a file whole: a temp file, then a rename, so no device reads half of one.
+    /// Puts a file whole: a temp file, then a rename once every byte is there, so no device reads half of one.
     pub fn put(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
         assert!(valid_name(name), "relay names are fixed by the caller");
         match self {
             Relay::Dir(d) => {
-                there(d).map_err(|_| gone(d))?;
+                there(d).map_err(|_| gone(&d.display().to_string()))?;
                 let tmp = d.join(format!("{name}.{}.tmp", std::process::id()));
                 fs::write(&tmp, bytes)
                     .and_then(|_| fs::rename(&tmp, d.join(name)))
                     .map_err(|e| format!("could not write the relay at {}: {e}", d.display()))
             }
             Relay::Ssh { host, dir } => {
-                let script =
-                    format!("umask 077 && mkdir -p {dir} && cat > {dir}/{name}.$$.tmp && mv {dir}/{name}.$$.tmp {dir}/{name}");
-                match ssh(host, &script, Some(bytes))? {
+                match ssh(host, &put_script(dir, name, bytes.len()), Some(bytes))? {
                     (0, _) => Ok(()),
+                    (4, _) => Err(gone(&format!("{host}:{dir}"))),
                     (c, _) => Err(format!(
                         "could not write to the relay {host} (ssh exit {c})"
                     )),
@@ -110,15 +111,16 @@ impl Relay {
         assert!(valid_name(name), "relay names are fixed by the caller");
         match self {
             Relay::Dir(d) => {
-                there(d).map_err(|_| gone(d))?;
+                there(d).map_err(|_| gone(&d.display().to_string()))?;
                 match fs::remove_file(d.join(name)) {
                     Ok(()) => Ok(()),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
                     Err(e) => Err(format!("could not remove {name} from the relay: {e}")),
                 }
             }
-            Relay::Ssh { host, dir } => match ssh(host, &format!("rm -f {dir}/{name}"), None)? {
+            Relay::Ssh { host, dir } => match ssh(host, &remove_script(dir, name), None)? {
                 (0, _) => Ok(()),
+                (4, _) => Err(gone(&format!("{host}:{dir}"))),
                 (c, _) => Err(format!(
                     "could not remove {name} from the relay {host} (ssh exit {c})"
                 )),
@@ -127,23 +129,63 @@ impl Relay {
     }
 }
 
-/// A folder relay must already be there. A share that is not mounted leaves an empty folder or none, and either must
-/// read as a relay that can't be reached, never as one with no files, or a device would start over on its own disk.
+/// The file that marks a relay folder. A relay folder must already hold it: a share that is not mounted, a folder
+/// name with a typo or a home that isn't there must read as a relay that can't be reached, never as one with no
+/// files, or a device would start over on its own disk.
+pub const MARKER: &str = "polycarp-sync";
+
 fn there(d: &std::path::Path) -> Result<(), Option<std::io::Error>> {
-    if d.is_dir() && fs::read_dir(d).is_ok_and(|mut r| r.next().is_some()) {
+    if d.join(MARKER).is_file() {
         Ok(())
     } else {
         Err(None)
     }
 }
 
-fn gone(d: &std::path::Path) -> String {
+fn gone(place: &str) -> String {
     format!(
-        "the relay folder {} is missing or empty; if it is a share, mount it. A new relay folder needs one file to \
-         start: create it with `touch {}/polycarp-sync`",
-        d.display(),
-        d.display()
+        "the relay folder {place} is missing or has no {MARKER} file; if it is a share, mount it. A new relay \
+         folder needs that file once: `mkdir -p DIR && touch DIR/{MARKER}` on the relay"
     )
+}
+
+// The remote scripts. Every name in them was checked by `valid_name` and `parse`, so none needs quoting. Exit 4: the
+// relay folder or its marker is not there. Exit 3: the folder is there and the file isn't.
+fn get_script(dir: &str, name: &str) -> String {
+    format!(
+        "test -f {dir}/{MARKER} || exit 4; test -e {dir}/{name} || exit 3; \
+         printf 'PCSYNC %s\\n' \"$(wc -c < {dir}/{name} | tr -d ' ')\" && cat {dir}/{name}"
+    )
+}
+
+/// `head -c` takes exactly the bytes sent and the size is checked before the rename, so a put cut off partway
+/// (the sender killed, the laptop asleep) leaves the old file in place.
+fn put_script(dir: &str, name: &str, len: usize) -> String {
+    let tmp = format!("{dir}/{name}.$$.tmp");
+    format!(
+        "test -f {dir}/{MARKER} || exit 4; umask 077 && head -c {len} > {tmp} && \
+         test \"$(wc -c < {tmp} | tr -d ' ')\" = {len} && mv {tmp} {dir}/{name} || {{ rm -f {tmp}; exit 1; }}"
+    )
+}
+
+fn remove_script(dir: &str, name: &str) -> String {
+    format!("test -f {dir}/{MARKER} || exit 4; rm -f {dir}/{name}")
+}
+
+/// The bytes after a `PCSYNC <len>` line, when exactly that many follow it. Anything a login script printed comes
+/// before the marker; a short or padded reply is refused.
+fn unframe(out: &[u8]) -> Option<Vec<u8>> {
+    let tag = b"PCSYNC ";
+    out.windows(tag.len())
+        .enumerate()
+        .filter(|(i, w)| *w == tag && (*i == 0 || out[i - 1] == b'\n'))
+        .find_map(|(i, _)| {
+            let rest = &out[i + tag.len()..];
+            let nl = rest.iter().position(|&b| b == b'\n')?;
+            let len: usize = std::str::from_utf8(&rest[..nl]).ok()?.parse().ok()?;
+            let body = &rest[nl + 1..];
+            (body.len() == len).then(|| body.to_vec())
+        })
 }
 
 fn ssh_program() -> PathBuf {
@@ -238,6 +280,47 @@ mod tests {
                 && !valid_name("a b")
         );
         assert_eq!(ssh_args("parish1", "true")[8], "--");
+        assert_eq!(unframe(b"PCSYNC 3\nabc").unwrap(), b"abc");
+        assert_eq!(unframe(b"welcome\nPCSYNC 3\nabc").unwrap(), b"abc");
+        assert!(unframe(b"PCSYNC 4\nabc").is_none() && unframe(b"abc").is_none());
+    }
+
+    /// The remote scripts, run by a local `sh` the way the relay's would run them, in a home folder of its own.
+    #[cfg(unix)]
+    #[test]
+    fn the_ssh_scripts_keep_the_old_file_when_a_put_is_cut_off_and_tell_missing_from_gone() {
+        let home = std::env::temp_dir().join(format!("polycarp-relay-sh-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join("r")).unwrap();
+        let sh = |script: String, input: &[u8]| {
+            let mut c = Command::new("/bin/sh")
+                .args(["-c", &script])
+                .current_dir(&home)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .unwrap();
+            c.stdin.take().unwrap().write_all(input).unwrap();
+            let o = c.wait_with_output().unwrap();
+            (o.status.code().unwrap(), o.stdout)
+        };
+        // No marker: every script says the folder is gone (4), and nothing is written.
+        assert_eq!(sh(get_script("r", "devices.json"), b"").0, 4);
+        assert_eq!(sh(put_script("r", "devices.json", 1), b"x").0, 4);
+        assert_eq!(sh(remove_script("r", "devices.json"), b"").0, 4);
+        assert!(!home.join("r/devices.json").exists());
+        fs::write(home.join("r").join(MARKER), b"").unwrap();
+        assert_eq!(sh(get_script("r", "devices.json"), b"").0, 3);
+        assert_eq!(sh(put_script("r", "devices.json", 5), b"hello").0, 0);
+        let (code, out) = sh(get_script("r", "devices.json"), b"");
+        assert_eq!((code, unframe(&out).unwrap()), (0, b"hello".to_vec()));
+        // Cut off after three of five bytes: refused, the old file stands, no temp file is left.
+        assert_ne!(sh(put_script("r", "devices.json", 5), b"bye").0, 0);
+        assert_eq!(fs::read(home.join("r/devices.json")).unwrap(), b"hello");
+        assert_eq!(fs::read_dir(home.join("r")).unwrap().count(), 2);
+        assert_eq!(sh(remove_script("r", "devices.json"), b"").0, 0);
+        assert!(!home.join("r/devices.json").exists());
+        let _ = fs::remove_dir_all(&home);
     }
 
     #[test]
@@ -248,6 +331,7 @@ mod tests {
         // Not there, or there and empty, as an unmounted share is: unreachable, never "no such file".
         assert!(r.get("devices.json").is_err() && r.put("devices.json", b"x").is_err());
         fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("other"), b"").unwrap();
         assert!(r.get("devices.json").unwrap_err().contains("mount"));
         assert!(r.put("devices.json", b"x").is_err() && r.remove("devices.json").is_err());
         fs::write(d.join("polycarp-sync"), b"").unwrap();
