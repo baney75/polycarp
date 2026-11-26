@@ -1883,6 +1883,9 @@ final class Spaces {
         NSRunningApplication(processIdentifier: pid)?.activate(options: [])
     }
 
+    /// Whether the app has a window on any workspace.
+    func hasWindow(_ pid: pid_t) -> Bool { windows.values.contains { $0.pid == pid && model.workspace(of: $0.id) != nil } }
+
     /// Opens a new window of a running app here, with the app's own New Window command, and
     /// focuses it once it exists. The app stays hidden until then, and its windows on other
     /// workspaces stay where they are. `orElse` runs when the app has no New Window command; an app that makes no

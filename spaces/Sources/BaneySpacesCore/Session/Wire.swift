@@ -74,6 +74,9 @@ public enum Wire {
             /// or email, `target` the query, `args` the flags (`--full`, `--text` and the draft). Never sends a message.
             /// Local callers only (`Remote.allows` never lets it through).
             case contacts
+            /// Opens the app for a job (`RoleRequest`): `target` is the role, `text` a prompt for the agent, `args` the
+            /// flags. Local callers only: nothing is opened for another machine (`Remote.allows`).
+            case role
         }
         public var op: Op
         public var target: String?

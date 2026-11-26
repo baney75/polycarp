@@ -493,6 +493,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         StyleSheetStore.shared.start(log: { Trace.log($0) })
         // [defaults] in config.toml: which app does each job (docs/default-apps.md).
         DefaultAppsStore.shared.start(log: { Trace.log($0) })
+        RoleOpener.hooks = RoleOpener.Hooks(
+            // Before the workspaces start, macOS itself decides: opening a running app shows its windows or makes one.
+            hasWindow: { [weak self] pid in self?.started != true || self?.spaces.hasWindow(pid) == true },
+            focus: { [weak self] pid in self?.spaces.focusApp(pid) },
+            newWindow: { [weak self] pid, orElse in if let self { self.spaces.openWindowHere(pid, orElse: orElse) } else { orElse() } },
+            folder: { [weak self] in
+                guard let self else { return nil }
+                return Item.workingFolder(self.session.engine.items, front: NSWorkspace.shared.frontmostApplication?.bundleIdentifier)
+            },
+            ghosttyWindow: { [weak self] folder in self?.session.engine.newTerminal(in: folder) })
         Styles.shared.sync()
         // Settings › Appearance › "Theme sets the desktop picture" (off by default): looks once now, then on each change.
         ThemeWallpaperApplier.shared.start()

@@ -339,6 +339,13 @@ final class SessionController {
         return "in force: \(p.title) (\(p.name), mode \(p.mode.rawValue)); it overrides appearance.theme and appearance.palette, which are kept"
     }
 
+    /// `polycarp-spaces open <role>`. Another machine never gets here (`Remote.allows`), and this check keeps it so.
+    private func role(_ r: Wire.Request) -> Wire.Reply {
+        guard r.caller?.hasPrefix("remote ") != true else { return .init(ok: false, error: "apps are opened on each machine itself") }
+        guard let request = RoleRequest(wire: r) else { return .init(ok: false, error: "usage: \(RoleRequest.usage)") }
+        return RoleOpener.open(request)
+    }
+
     func handle(_ r: Wire.Request) -> Wire.Reply {
         // Looks need no Accessibility, so they answer before the session engine has started.
         if r.op == .setting { return setting(r) }
@@ -358,6 +365,7 @@ final class SessionController {
         if r.op == .play { return play(r) }
         // People in Contacts need no Accessibility either; another machine never gets here (`Remote.allows`).
         if r.op == .contacts { return ContactsLibrary.shared.handle(r) }
+        if r.op == .role { return role(r) }
         guard started else { return .init(ok: false, error: "Polycarp hasn't finished starting (it needs Accessibility)") }
         switch r.op {
         case .ping:
@@ -404,6 +412,8 @@ final class SessionController {
             return play(r)
         case .contacts:
             return ContactsLibrary.shared.handle(r)
+        case .role:
+            return role(r)
         case .remote:
             switch r.text ?? "status" {
             case "on":
