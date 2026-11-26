@@ -296,6 +296,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             DefaultAppsStore.shared.refresh()
         }
         c.model.onQuickTerminalKeyChange = { [weak self] _ in self?.registerShortcuts() }
+        c.model.onPauseKeys = { [weak self] on in
+            self?.keysPaused = on
+            self?.registerShortcuts()
+        }
         c.model.onUninstall = { [weak self] in self?.uninstall() }
         c.model.onBringBack = { [weak self] in self?.bringBack() }
         c.model.onAbout = { [weak self] in self?.about() }
@@ -873,11 +877,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The default apps' keys as they were last registered.
     private var roleKeys = RoleKeys.Plan()
     private var roleKeysWatch: NSObjectProtocol?
+    /// Settings is recording a key.
+    private var keysPaused = false
 
     private func registerShortcuts() {
         hotkeys.removeAll()
         cmdSpaceHeld = false
         keysHold.stop()
+        guard !keysPaused else { return }
         if Launcher.onCmdSpace, !SystemShortcuts.spotlightOwnsCmdSpace {
             cmdSpaceHeld = hotkeys.register(keyCode: kVK_Space, modifiers: cmdKey) { [weak self] in self?.launcher.toggle() }
         }

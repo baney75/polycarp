@@ -42,6 +42,8 @@ public struct Chord: Hashable, Sendable {
     public var carbon: Int { mods.reduce(0) { $0 | $1.carbon } }
     /// What the keymap and the shortcut sheet show.
     public var tokens: [String] { Mod.allCases.filter(mods.contains).map(\.token) + [Self.shown[key] ?? key.uppercased()] }
+    /// As macOS writes it: ⌃⌘Return.
+    public var display: String { tokens.map { KeyBinding.modifierSymbols[$0] ?? $0 }.joined() }
     /// The same with Option too: a new window. Nil when Option is in it already.
     public var withOption: Chord? { mods.contains(.alt) ? nil : Chord(mods.union([.alt]), key) }
 
@@ -111,6 +113,9 @@ public enum RoleKeys {
         return Chord(role == .terminal ? [.ctrl, .cmd] : [.ctrl, .cmd, .shift], key)!
     }
 
+    /// What has a chord your file gives to nothing.
+    static let yoursForNothing = "you, for nothing"
+
     public static func action(_ role: AppRole, new: Bool) -> String { "open \(role.rawValue)" + (new ? " --new" : "") }
 
     /// `owner` says who else has a chord: macOS, or another Polycarp key.
@@ -130,7 +135,7 @@ public enum RoleKeys {
                 plan.warnings.append("keys.bindings.\"\(key)\" (line \(line)): a key opens a role with --new or nothing more")
             } else {
                 // Yours for something else, or for nothing: no default takes it.
-                used[chord] = action == "none" ? "you, for nothing" : "your own binding, \(action)"
+                used[chord] = action == "none" ? yoursForNothing : "your own binding, \(action)"
             }
         }
         func add(_ chord: Chord, _ role: AppRole, _ new: Bool, yours: Bool) {
@@ -161,13 +166,20 @@ public enum RoleKeys {
     /// Reads the file, this person's other Polycarp keys and macOS's shortcuts. `modifier` is the app's setting. Not for
     /// the main thread.
     public static func now(modifier: String?) -> Plan {
+        let text = (try? DefaultAppsFile.text(at: DefaultAppsFile.path())) ?? ""
+        let mod = self.mod(setting: modifier)
+        return plan(text, mod: mod, owner: owners(mod))
+    }
+
+    /// Who else has a chord on this Mac now. Not for the main thread.
+    public static func owner(modifier: String?) -> (Chord) -> String? { owners(mod(setting: modifier)) }
+
+    private static func owners(_ mod: Set<Chord.Mod>) -> (Chord) -> String? {
         let domain = "com.apple.symbolichotkeys" as CFString
         CFPreferencesAppSynchronize(domain)
         let hotkeys = CFPreferencesCopyAppValue("AppleSymbolicHotKeys" as CFString, domain) as? [String: Any] ?? [:]
-        let text = (try? DefaultAppsFile.text(at: DefaultAppsFile.path())) ?? ""
-        let mod = self.mod(setting: modifier)
         let mine = Keymap.rows(surfaces())
-        return plan(text, mod: mod) { polycarpOwner($0, mod: mod, in: mine) ?? systemOwner($0, hotkeys: hotkeys) }
+        return { polycarpOwner($0, mod: mod, in: mine) ?? systemOwner($0, hotkeys: hotkeys) }
     }
 
     /// surfaces.json, which holds the tiling keys as this person has them; as Polycarp comes when there is none or it

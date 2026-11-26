@@ -83,7 +83,7 @@ public enum DefaultAppsFile {
     }
 
     /// The table a line opens, or nil when it opens none.
-    private static func header(_ line: some StringProtocol) -> String? {
+    static func header(_ line: some StringProtocol) -> String? {
         let t = line.trimmed
         guard t.hasPrefix("["), let end = t.firstIndex(of: "]") else { return nil }
         return t[t.index(after: t.startIndex)..<end].trimmed
@@ -156,7 +156,11 @@ public enum DefaultAppsFile {
     public static func set(_ role: AppRole, to app: DefaultApp?, path: String) throws {
         let before = try text(at: path)
         if before == nil, app == nil { return }
-        let after = try edit(before ?? "", role: role, to: app)
+        try write(edit(before ?? "", role: role, to: app), over: before, path: path)
+    }
+
+    /// Writes the whole file or none of it, through a link to it when it is one.
+    static func write(_ after: String, over before: String?, path: String) throws {
         if after == before { return }
         let target = resolved(path)
         var st = stat()

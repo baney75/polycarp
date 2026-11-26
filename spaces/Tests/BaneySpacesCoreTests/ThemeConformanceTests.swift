@@ -145,7 +145,7 @@ final class ThemeConformanceTests: XCTestCase {
     /// value of the BaneySpaces theme may be written down.
     private let surfaceFiles = ["WorkspaceSwitcher", "Launcher", "Viewer", "SwitchHUD", "Setup", "Appearance",
                                 "Permissions/PermissionsPane", "Permissions/DragHelper", "Player", "TopBar", "BarParts", "BarModules", "KeysSheet",
-                                "DefaultApps/DefaultAppsPane"]
+                                "DefaultApps/DefaultAppsPane", "DefaultApps/RoleKeysGroup"]
 
     private let banned: [(String, String)] = [
         (#"cornerRadius:\s*[0-9]"#, "a corner radius"),

@@ -16,6 +16,8 @@ final class SetupModel: ObservableObject {
     @Published var viewerKeys = MissionControlKeys.enabled
     @Published var topDrag = TopDragWatcher.enabled
     var onTopDragChange: ((Bool) -> Void)?
+    /// Polycarp's keys stop for true, while Settings records one, and come back for false.
+    var onPauseKeys: ((Bool) -> Void)?
     @Published var cmdTab = MissionControlKeys.cmdTabMode
     var onCmdTabChange: ((CmdTabMode) -> Void)?
     /// Whether Claude Code and Grok report to BaneySpaces; the launcher's agent rows need it.
@@ -578,6 +580,8 @@ struct SetupView: View {
                 }
             }
         }
+
+        RoleKeysGroup { [weak model] in model?.onPauseKeys?($0) }
 
         SettingsGroup("Overview") {
             SettingsRow("Use Polycarp's overview instead of Mission Control", help: "The Mission Control key, ⌃↑ and hot corners open it.") {
