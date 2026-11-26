@@ -80,6 +80,7 @@ node --test tests/hub-search.test.mjs # search: fields, filters, prefixes, and 1
 node --test tests/hub-rules.test.mjs # rules: plain lines into searches and actions, problems named by line, bundle rules over the headers
 node tests/hub-rules.spec.mjs # rules in Chromium: the editor, a bundle rule, and rules acting only on new mail
 node --test tests/hub-later.test.mjs # snooze and reminders: the times offered, waking on new mail, and what counts as back
+node tests/hub-later.spec.mjs # snooze and reminders in Chromium: the picker, Back now, undo, and the minute check under a fake clock
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact
 node tests/store-shots.mjs       # the Chrome Web Store screenshots and promo tile to tests/out/store
 node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Kokoro voice once

@@ -129,3 +129,12 @@ main > .compose { padding: var(--s5) var(--s6); }
 .rules textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 .rules ul { list-style: none; margin: var(--s2) 0 0; padding: 0; color: var(--warn); font-size: var(--t-sm); }
 .rules .cbar { margin-top: var(--s3); }
+
+/* Later: a few times to pick from, each with its key, and a box for any other. */
+.later { width: min(440px, calc(100vw - 32px)); }
+.later .choices { display: grid; gap: var(--s2); }
+.later .choices .btn { justify-content: flex-start; gap: var(--s2); text-align: left; }
+.later .choices .muted { margin-left: auto; color: var(--muted); font-size: var(--t-sm); }
+.later .pick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-top: var(--s4); font-size: var(--t-sm); }
+.later .pick input { font: inherit; padding: var(--s1) var(--s2); border: var(--bw) solid var(--line); border-radius: var(--r-md); background: var(--bg); color: var(--ink); }
+.later .err { margin: var(--s2) 0 0; color: var(--warn); min-height: 1lh; }
