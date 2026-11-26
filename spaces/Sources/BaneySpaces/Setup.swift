@@ -28,7 +28,7 @@ final class SetupModel: ObservableObject {
         didSet {
             // A pane switch in the open window, timed in timing.log as `open settings-<pane>=` (#350). Not while the window
             // is shut: `show` picks the pane before it opens, and the offscreen harness has no window.
-            let clock = windowVisible() && tab != oldValue ? OpenClock("settings-" + tab.rawValue.lowercased()) : nil
+            let clock = windowVisible() && tab != oldValue ? OpenClock("settings-" + tab.slug) : nil
             defer { clock?.shown() }
             if tab == .automation { reloadParked() }
         }
@@ -416,15 +416,18 @@ final class SetupModel: ObservableObject {
 
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General", keys = "Keys", windows = "Windows", agents = "Agents", appearance = "Appearance", launcher = "Launcher",
+    case general = "General", keys = "Keys", windows = "Windows", defaults = "Default apps", agents = "Agents", appearance = "Appearance", launcher = "Launcher",
          automation = "Automation", permissions = "Permissions", updates = "Updates"
     var id: Self { self }
+    /// The section's name where there are no spaces: timing.log, and a picture's file.
+    var slug: String { rawValue.lowercased().replacingOccurrences(of: " ", with: "-") }
 
     var symbol: String {
         switch self {
         case .general: "gearshape"
         case .keys: "keyboard"
         case .windows: "rectangle.split.2x1"
+        case .defaults: "star"
         case .agents: "sparkles"
         case .appearance: "paintpalette"
         case .launcher: "magnifyingglass"
@@ -455,6 +458,7 @@ struct SetupView: View {
                     case .general: general
                     case .keys: keys
                     case .windows: WindowsPane()
+                    case .defaults: DefaultAppsPane()
                     case .agents: agents
                     case .appearance: appearanceTab
                     case .launcher: launcher
