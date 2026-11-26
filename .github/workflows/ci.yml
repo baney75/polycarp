@@ -41,8 +41,9 @@ jobs:
         with:
           filters: |
             # The cli tests also replay an older Linux update against the stubs in spaces/platforms/linux,
-            # and check the spaces workspace's binary names.
-            cli: ['cli/**', 'browser/**', 'spaces/platforms/linux/**', 'spaces/Cargo.toml', 'spaces/Cargo.lock', '.github/workflows/ci.yml']
+            # check the spaces workspace's binary names, and check that every field on the surfaces page says
+            # whether a look holds it (tests/look.rs).
+            cli: ['cli/**', 'browser/**', 'spaces/platforms/linux/**', 'spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/docs/surfaces.md', '.github/workflows/ci.yml']
             # The root install.sh is read by the spaces tests (RootInstallerTests, FeaturesTests).
             spaces: ['spaces/**', 'browser/**', 'install.sh', '.github/workflows/ci.yml']
             # The spaces Rust workspace: the shared core, the conformance cases, the Windows crates and the Linux update stub.
