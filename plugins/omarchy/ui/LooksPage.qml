@@ -15,6 +15,10 @@ Item {
   property string mode: ""
   property int cursor: 0
   readonly property var under: all.length > 0 ? all[Math.min(cursor, all.length - 1)] : null
+  // The cursor stays on a card when the list gets shorter, as it does after Remove.
+  onAllChanged: cursor = Math.max(0, Math.min(cursor, all.length - 1))
+  // The saved Omarchy theme can go only when Polycarp wrote it: the button and the key ask the same thing.
+  readonly property bool removable: looks !== null && looks.here !== null && looks.saved && list.taken[looks.here.id] !== true
 
   // Opens on the mode in use.
   readonly property string used: list.colors && list.colors.mode === "light" ? "light" : "dark"
@@ -33,7 +37,7 @@ Item {
     else if (k === "z" || k === "u") looks.undo()
     else if (k === "s") looks.save()
   }
-  function remove() { looks.forget() }
+  function remove() { if (removable) looks.forget() }
 
   // What the look under the cursor is, or how the last action went.
   readonly property string words: {
@@ -174,12 +178,12 @@ Item {
         anchors.right: parent.right
 
         PageButton {
-          visible: omarchy.here !== null && root.looks.saved && root.list.taken[omarchy.here.id] !== true
+          visible: root.removable
           ink: Color.popups.text
           family: root.page ? root.page.family : ""
           held: true
           text: root.strings.removeIt || ""
-          onClicked: root.looks.forget()
+          onClicked: root.remove()
         }
 
         PageButton {

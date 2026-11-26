@@ -120,10 +120,18 @@ test('an Omarchy theme becomes a Polycarp theme that Polycarp would accept, and 
       assert.ok(!made.fitted.some((f) => f.role === 'foreground'))
     }
     assert.equal(m.fromOmarchy('x', { mode: 'dark', background: 'red' }, ''), null)
+    const { mode, ...unsaid } = pastel
+    assert.equal(m.fromOmarchy('latte', unsaid, '').mode, 'light', 'a palette that does not say its mode has its page\'s')
+    assert.equal(m.fromOmarchy('nord', { ...faint, mode: undefined }, '').mode, 'dark')
+    const deep = m.fromOmarchy('deep', { mode: 'light', background: '#ffffff', foreground: '#222222', dark_background: '#b0b0b0', red: '#c0392b' }, '')
+    eq(deep.misses, [], 'status on a dark sunken ground still reads')
+    assert.ok(deep.fitted.some((f) => f.role === 'urgent'))
   }
   check(L)
+  control(t, 'Looks.js', ', [want.sunken], MARK, far)', ', [], MARK, far)', check)
+  control(t, 'Looks.js', ' : contrast("#000000", bg) > contrast("#ffffff", bg) ? "light" : "dark"', ' : "dark"', check)
   control(t, 'Looks.js', 'out.muted = fit(want.muted, grounds, TEXT, out.strong)', ';', check)
-  control(t, 'Looks.js', 'colors.mode === "light" ? "light" : "dark"', '"dark"', check)
+  control(t, 'Looks.js', 'colors.mode === "light" || colors.mode === "dark" ? colors.mode :', '"dark" ||', check)
 })
 
 test('the Polycarp theme written is one Polycarp reads: names, mode, font', (t) => {
@@ -192,7 +200,8 @@ test('the looks offered: built-ins first, the user\'s own that are whole, never 
   const check = (m) => {
     const all = m.offer(themes, {
       mine: { extends: 'polycarp', title: 'Mine', dark: { accent: '#ffffff' } }, broken: { extends: 'gone' },
-      polycarp: { title: 'Not this', extends: 'evening', dark: { accent: '#dddddd' } }, 'omarchy-nord': { extends: 'polycarp', dark: { accent: '#eeeeee' } }
+      polycarp: { title: 'Not this', extends: 'evening', dark: { accent: '#dddddd' } }, 'omarchy-nord': { extends: 'polycarp', dark: { accent: '#eeeeee' } },
+      hasOwnProperty: { extends: 'gone' }
     }, { 'polycarp-evening': true })
     eq(all.map((x) => x.name), ['polycarp', 'still-water', 'evening', 'parchment', 'mine'], 'blocks and calm are the default in other shapes')
     assert.equal(all[0].title, 'Polycarp')
@@ -201,8 +210,9 @@ test('the looks offered: built-ins first, the user\'s own that are whole, never 
   }
   check(L)
   control(t, 'Looks.js', ' && key.indexOf("omarchy-") !== 0', '', check)
-  control(t, 'Looks.js', 'if (!builtin.hasOwnProperty(key) &&', 'if (', check)
+  control(t, 'Looks.js', 'if (!own(builtin, key) &&', 'if (', check)
   control(t, 'Looks.js', 'if (seen[colors] || seen[ids[0]]', 'if (seen[ids[0]]', check)
+  control(t, 'Looks.js', 'return Object.prototype.hasOwnProperty.call(o, k)', 'return o.hasOwnProperty(k)', check)
 })
 
 test('no two looks offered share an Omarchy id; the one listed first keeps it', (t) => {

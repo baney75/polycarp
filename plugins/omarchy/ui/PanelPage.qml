@@ -14,6 +14,7 @@ Item {
   readonly property string family: host.bar ? host.bar.fontFamily : Style.font.family
   readonly property var names: [strings.looks, strings.apps, strings.sync, strings.keys]
   property int at: 0
+  readonly property bool typing: page.item ? page.item.typing === true : false
 
   function send(name, a, b) {
     return page.item && typeof page.item[name] === "function" ? page.item[name](a, b) : undefined
@@ -22,6 +23,7 @@ Item {
   function move(dx, dy) { send("move", dx, dy) }
   function activate() { send("activate") }
   function remove() { send("remove") }
+  function back() { return send("back") }
   function tab(direction) { at = (at + direction + names.length) % names.length; return true }
   function key(text) {
     var n = "1234".indexOf(text)
