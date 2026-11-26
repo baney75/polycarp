@@ -15,18 +15,21 @@ struct BarButton<Content: View>: View {
     let label: String
     /// A tooltip, where the button doesn't say what it is.
     var help: String?
-    let action: () -> Void
+    var action: () -> Void = {}
+    /// For what opens under it: the middle of the button, across the screens.
+    var under: ((CGFloat) -> Void)?
     @ViewBuilder let content: Content
     @State private var over = false
+    @State private var place = BarPlace()
 
     var body: some View {
-        Button(action: action) {
+        Button { if let under { under(place.middle) } else { action() } } label: {
             content
                 .padding(.horizontal, inset)
                 .frame(minWidth: width, minHeight: face)
         }
         .buttonStyle(BarPress(over: over, held: held))
-        .background { PointerArea { over = $0 } }
+        .background { PointerArea(place: place) { over = $0 } }
         .modifier(BarHelp(text: help))
         .accessibilityLabel(label)
     }
@@ -85,19 +88,31 @@ extension EnvironmentValues {
     }
 }
 
+/// Where a bar button is.
+final class BarPlace {
+    weak var view: NSView?
+    var middle: CGFloat {
+        guard let view, let window = view.window else { return NSEvent.mouseLocation.x }
+        return window.convertToScreen(view.convert(view.bounds, to: nil)).midX
+    }
+}
+
 /// Says when the pointer comes and goes, in an app that isn't in front, and takes no clicks itself. With `onScroll` it
 /// also hears the wheel over it.
 struct PointerArea: NSViewRepresentable {
+    let place: BarPlace?
     var onScroll: ((NSEvent) -> Void)?
     let onOver: (Bool) -> Void
 
-    init(onScroll: ((NSEvent) -> Void)? = nil, onOver: @escaping (Bool) -> Void) {
+    init(place: BarPlace? = nil, onScroll: ((NSEvent) -> Void)? = nil, onOver: @escaping (Bool) -> Void) {
+        self.place = place
         self.onScroll = onScroll
         self.onOver = onOver
     }
 
     func makeNSView(context: Context) -> Area { Area() }
     func updateNSView(_ view: Area, context: Context) {
+        place?.view = view
         view.onOver = onOver
         view.onScroll = onScroll
     }

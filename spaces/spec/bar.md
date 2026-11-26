@@ -55,6 +55,8 @@ On Windows the current workspace's number is drawn in `foreground` with a 2 px `
   one before or after, one a trackpad gesture or wheel click and none while a trackpad glides (`BarScroll`). Windows: not yet.
 - macOS: two or more apps' status items fold behind a chevron that opens under the pointer, and stays open on a click
   (`bar.tray`; `BarTray`). Windows has no tray yet.
+- macOS: the clock and the date open a calendar under the bar: today, then one month in six weeks from the calendar's
+  first day of the week (`MonthGrid`). It goes as the bell's list does (`BarPanel`). Windows has none yet.
 
 ## Colors and type
 
