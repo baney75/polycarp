@@ -17,6 +17,10 @@ QtObject {
     exited(code)
     if (late) end(text)
   }
+  function exit(code) {
+    running = false
+    exited(code)
+  }
   function end(text) {
     if (!stdout) return
     stdout.text = text

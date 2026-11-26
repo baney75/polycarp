@@ -75,6 +75,20 @@ Item {
       function() {
         ok(looks.said === "read failed", "an undo whose list cannot be read does not name the theme from before it")
         ok(looks.busy === "", "and it ends")
+        looks.look()
+        l.reader.exit(0)
+        looks.look()
+      },
+      function() {
+        ok(!l.reader.running, "a look between a read's exit and its output starts no second read")
+        l.reader.end("\u001etheme nord\n")
+      },
+      function() {
+        ok(looks.list.theme === "nord", "the read it waited on is whole")
+        ok(l.reader.running, "and the look asked for follows it")
+        l.reader.finish(0, "\u001etheme nord\n")
+      },
+      function() {
         apps.set("editor", "helix")
         apps.look()
         a.writer.finish(1, "")
@@ -89,7 +103,20 @@ Item {
         apps.look()
         a.reader.finish(1, "")
       },
-      function() { ok(apps.rows.length === 1, "apps: rows that cannot be read keep the last ones") }
+      function() {
+        ok(apps.rows.length === 1, "apps: rows that cannot be read keep the last ones")
+        apps.look()
+        a.reader.exit(0)
+        apps.look()
+      },
+      function() {
+        ok(!a.reader.running, "apps: a look between a read's exit and its output starts no second read")
+        a.reader.end("editor\tnvim\tnvim\thelix\n")
+      },
+      function() {
+        ok(apps.rows[0].now === "nvim" && a.reader.running, "apps: the read is whole and the look asked for follows it")
+        a.reader.finish(0, "editor\tnvim\tnvim\thelix\n")
+      }
     ]
     set = true
   }

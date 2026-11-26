@@ -31,11 +31,13 @@ test('a panel that opens while a change runs shows the state after it, and a fai
   assert.equal(r.status, 0, r.stderr)
   assert.match(r.stderr, /state: pass/)
   for (const [file, from, to] of [
-    ['ui/Looks.qml', 'if (reader.running) again = true\n    else reader.running = true', 'reader.running = true'],
+    ['ui/Looks.qml', 'if (reader.running || reader.code >= 0 || reader.ended) again = true\n    else reader.running = true', 'reader.running = true'],
+    ['ui/Looks.qml', 'if (reader.running || reader.code >= 0 || reader.ended)', 'if (reader.running)'],
     ['ui/Looks.qml', 'if (ok) list =', 'list ='],
     ['ui/Looks.qml', 'if (reader.code < 0 || !reader.ended) return', 'if (reader.code < 0) return'],
     ['ui/Looks.qml', ': strings.listFailed', ': say(writer.what, writer.target, writer.code)'],
-    ['ui/Apps.qml', 'if (reader.running) again = true\n    else reader.running = true', 'reader.running = true'],
+    ['ui/Apps.qml', 'if (reader.running || reader.code >= 0 || reader.ended) again = true\n    else reader.running = true', 'reader.running = true'],
+    ['ui/Apps.qml', 'if (reader.running || reader.code >= 0 || reader.ended)', 'if (reader.running)'],
     ['ui/Apps.qml', 'if (ok) rows =', 'rows ='],
     ['ui/Apps.qml', 'if (reader.code < 0 || !reader.ended) return', 'if (reader.code < 0) return']
   ]) assert.notEqual(planted(t, file, from, to).status, 0, `control: ${file} with "${from}" as "${to}"`)

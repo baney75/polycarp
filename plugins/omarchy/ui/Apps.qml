@@ -15,7 +15,8 @@ Item {
   readonly property string script: decodeURIComponent(String(Qt.resolvedUrl("../scripts/apps")).replace("file://", ""))
 
   function look() {
-    if (reader.running) again = true
+    // A read is in flight from its start until both its exit and its output are in.
+    if (reader.running || reader.code >= 0 || reader.ended) again = true
     else reader.running = true
   }
 
