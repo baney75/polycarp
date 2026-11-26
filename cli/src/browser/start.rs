@@ -25,7 +25,11 @@ pub fn empty_profile(tools: &dyn Tools, app: &Path, work: &Path) -> Result<PathB
     running::stop_inside(app);
     let (ran, home) = started?;
     let first = home.join("profile/Default");
-    if first.join("History").is_file() && first.join("Cookies").is_file() {
+    // Newer Chromium keeps its cookies in `Network`.
+    let cookies = ["Cookies", "Network/Cookies"]
+        .iter()
+        .any(|c| first.join(c).is_file());
+    if first.join("History").is_file() && cookies {
         return Ok(first);
     }
     let why = format!("it made no new profile ({})", ran.last_line());

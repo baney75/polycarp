@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
+use super::keys::Keys;
 use super::tools::Tools;
 use super::{chromium, clear, pages, refuse, running, Asked, Place, Refused};
 
@@ -163,7 +164,12 @@ pub fn pick<'a>(profiles: &'a [Profile], asked: Option<&str>) -> Result<&'a Prof
 }
 
 /// `polycarp browser import [browser [--profile NAME] --yes]`.
-pub fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Refused> {
+pub fn answer(
+    tools: &dyn Tools,
+    keys: &dyn Keys,
+    place: &Place,
+    asked: &Asked,
+) -> Result<String, Refused> {
     let Some(word) = &asked.what else {
         return Ok(list(&place.home));
     };
@@ -181,8 +187,8 @@ pub fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String,
         let (what, also) = match whole {
             true => ("profile", KEYCHAIN),
             false => (
-                "bookmarks and history, from profile",
-                "Its passwords and sign-ins stay there.",
+                "bookmarks, history and sign-ins, from profile",
+                "Its passwords stay there. macOS asks for two keys in your keychain, that browser's and \"Helium Storage Key\"; say no and the sign-ins stay too.",
             ),
         };
         return Ok(format!(
@@ -191,7 +197,7 @@ pub fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String,
         ));
     }
     if !whole {
-        let brought = chromium::import(tools, place, from, profile)?;
+        let brought = chromium::import(tools, keys, place, from, profile)?;
         return Ok(brought.text(from, profile));
     }
     let dir = clone(place, from, profile)?;
@@ -345,9 +351,18 @@ fn copy(from: &Path, to: &Path, top: bool) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::keys::{Denied, Secret};
     use super::super::testing::*;
     use super::*;
     use std::os::unix::fs::symlink;
+
+    struct NoKeys;
+
+    impl Keys for NoKeys {
+        fn password(&self, _: &str, _: &str) -> Result<Secret, Denied> {
+            panic!("a copied profile needs no key")
+        }
+    }
 
     fn helium() -> &'static Browser {
         &BROWSERS[0]
@@ -462,7 +477,7 @@ mod tests {
                 flags: yes.then(|| "--yes".to_string()).into_iter().collect(),
                 ..Asked::default()
             };
-            answer(&t, &place, &asked).map_err(|e| e.why)
+            answer(&t, &NoKeys, &place, &asked).map_err(|e| e.why)
         };
         assert!(ask("helium", false).unwrap().contains("Add --yes"));
         assert!(ask("netscape", true).unwrap_err().contains("not one of"));
