@@ -2,7 +2,8 @@
 # Polycarp's themes in Omarchy, and Omarchy's in Polycarp.
 #   looks list            what is there now, in sections that start with a record separator
 #   looks apply <id>      stdin: the background in base64 on one line, then colors.toml
-#   looks undo            back to the theme before the last apply
+#   looks undo            back to the theme before the last apply; a look applied again over itself, even with new
+#                         colors, is not a step of its own, so undo goes back to the theme before that look
 #   looks import <id>     stdin: a Polycarp theme; the background in use is copied beside it
 #   looks forget <id>     takes an imported theme away again
 # Only what this script wrote, and nobody changed since, is ever replaced or removed. Exit 3 means it was left alone.
@@ -99,6 +100,10 @@ import)
   tmp=$(mktemp "$polycarp/.omarchy.XXXXXX") || exit 1
   trap 'rm -f -- "${tmp:?}"' EXIT
   cat >"$tmp" && [[ -s $tmp ]] && chmod 644 "$tmp" && mv "$tmp" "$file" && keep "polycarp.$id" "$file" || exit 1
+  # The picture goes with the theme as it is now: a copy from an earlier import goes first, unless somebody changed it.
+  for copy in "$polycarp/$id".*; do
+    [[ $copy != "$file" ]] && ours "picture.$id.${copy##*.}" "$copy" && drop "picture.$id.${copy##*.}" "$copy"
+  done
   picture=$(readlink -f "$current/background" 2>/dev/null)
   ext=${picture##*.}
   copy=$polycarp/$id.$ext

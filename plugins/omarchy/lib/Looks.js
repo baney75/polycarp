@@ -39,6 +39,11 @@ function parseToml(text) {
   return out
 }
 
+// Whether o has k of its own: a theme named hasOwnProperty cannot stand in for the method.
+function own(o, k) {
+  return Object.prototype.hasOwnProperty.call(o, k)
+}
+
 function unsafe(key) {
   return key === "__proto__" || key === "constructor" || key === "prototype"
 }
@@ -119,7 +124,7 @@ function fromHsl(h, s, l) {
 function resolve(name, themes) {
   var chain = []
   for (var at = name; at; at = themes[at].extends) {
-    if (!themes.hasOwnProperty(at) || chain.length > 8) return null
+    if (!own(themes, at) || chain.length > 8) return null
     for (var i = 0; i < chain.length; i++) if (chain[i] === themes[at]) return null
     chain.push(themes[at])
   }
@@ -268,10 +273,11 @@ function base64(bytes) {
 // An Omarchy palette as a Polycarp theme. Polycarp refuses a theme that is hard to read, so a color that misses goes
 // toward the foreground until it reads; `fitted` says which, and how they read before.
 function fromOmarchy(id, colors, font) {
-  var mode = colors.mode === "light" ? "light" : "dark"
   var bg = colors.background
   var fg = colors.foreground
   if (!isHex(bg) || !isHex(fg)) return null
+  // A palette that does not say its mode has the mode of its page.
+  var mode = colors.mode === "light" || colors.mode === "dark" ? colors.mode : contrast("#000000", bg) > contrast("#ffffff", bg) ? "light" : "dark"
   var strong = isHex(colors.bright_foreground) ? colors.bright_foreground : fg
   // Ink that reads on all three grounds, whatever the theme calls its brightest.
   var far = contrast("#ffffff", bg) > contrast("#000000", bg) ? "#ffffff" : "#000000"
@@ -302,7 +308,7 @@ function fromOmarchy(id, colors, font) {
   out.selection = fit2(want.selection, [out.foreground, out.strong], TEXT, want.background)
   var status = ["urgent", "working", "done", "accent"]
   for (var i = 0; i < status.length; i++)
-    out[status[i]] = fit(want[status[i]], [want.background, want.surface], TEXT, far)
+    out[status[i]] = fit(fit(want[status[i]], [want.background, want.surface], TEXT, far), [want.sunken], MARK, far)
   out.on_accent = contrast(bg, out.accent) >= TEXT ? bg : contrast("#ffffff", out.accent) > contrast("#000000", out.accent) ? "#ffffff" : "#000000"
   var fitted = []
   for (key in want) {
@@ -383,7 +389,7 @@ function offer(builtin, user, taken) {
   var all = {}
   var key
   for (key in builtin) all[key] = builtin[key]
-  for (key in user) if (!builtin.hasOwnProperty(key) && key.indexOf("omarchy-") !== 0) all[key] = user[key]
+  for (key in user) if (!own(builtin, key) && key.indexOf("omarchy-") !== 0) all[key] = user[key]
   var out = []
   var seen = {}
   for (key in all) {
@@ -394,7 +400,7 @@ function offer(builtin, user, taken) {
     if (seen[colors] || seen[ids[0]] || seen[ids[1]]) continue
     seen[colors] = seen[ids[0]] = seen[ids[1]] = true
     out.push({
-      name: key, title: theme.title, description: theme.description, own: !builtin.hasOwnProperty(key),
+      name: key, title: theme.title, description: theme.description, own: !own(builtin, key),
       dark: toOmarchy(theme, "dark"), light: toOmarchy(theme, "light"),
       taken: { dark: taken[ids[0]] === true, light: taken[ids[1]] === true }
     })

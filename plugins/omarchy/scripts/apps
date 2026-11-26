@@ -13,11 +13,14 @@ desktop() {
   return 1
 }
 
-# A stub that would install the app when run is not the app.
+# Omarchy's mise wrapper for an app stays in place after the app is installed, so the app is there only when mise has
+# the package the wrapper names: `mise use -g --quiet "npm:@openai/codex" || exit 1`.
 command_here() {
-  local path
+  local path package
   path=$(command -v "$1") || return 1
-  if [[ -f $path && ! -L $path ]] && head -c 2048 "$path" | tr -d '\0' | grep -q '^mise use -g'; then mise where "$1" >/dev/null 2>&1; fi
+  [[ -f $path && ! -L $path ]] || return 0
+  package=$(head -c 2048 "$path" | tr -d '\0' | sed -n 's/^mise use -g \(--quiet \)\{0,1\}"\{0,1\}\([^" ]*\)"\{0,1\}.*/\2/p' | head -n 1)
+  [[ -z $package ]] || mise where "$package" >/dev/null 2>&1
 }
 
 installed() {
