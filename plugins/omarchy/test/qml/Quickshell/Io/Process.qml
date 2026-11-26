@@ -10,9 +10,16 @@ QtObject {
   signal exited(int exitCode)
   onRunningChanged: if (running) started()
   function write(text) {}
-  function finish(code, text) {
-    if (stdout) stdout.text = text
+  // Quickshell does not promise whether the output ends before or after the exit; late puts the exit first.
+  function finish(code, text, late) {
+    if (!late) end(text)
     running = false
     exited(code)
+    if (late) end(text)
+  }
+  function end(text) {
+    if (!stdout) return
+    stdout.text = text
+    stdout.streamFinished()
   }
 }

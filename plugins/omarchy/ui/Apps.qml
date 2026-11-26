@@ -27,21 +27,39 @@ Item {
     writer.running = true
   }
 
+  // As in Looks.qml: a read is over when the script has exited and its output has ended.
+  function read() {
+    if (reader.code < 0 || !reader.ended) return
+    var ok = reader.code === 0
+    reader.code = -1
+    reader.ended = false
+    if (ok) rows = Model.parse(out.text)
+    if (again) {
+      again = false
+      Qt.callLater(look)
+      return
+    }
+    if (writer.done) {
+      writer.done = false
+      busy = ""
+    }
+  }
+
   Process {
     id: reader
+    property int code: -1
+    property bool ended: false
     command: ["bash", root.script, "list"]
-    stdout: StdioCollector { id: out }
+    stdout: StdioCollector {
+      id: out
+      onStreamFinished: {
+        reader.ended = true
+        root.read()
+      }
+    }
     onExited: function(exitCode) {
-      if (exitCode === 0) root.rows = Model.parse(out.text)
-      if (root.again) {
-        root.again = false
-        Qt.callLater(root.look)
-        return
-      }
-      if (writer.done) {
-        writer.done = false
-        root.busy = ""
-      }
+      code = exitCode
+      root.read()
     }
   }
 

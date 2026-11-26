@@ -32,8 +32,11 @@ test('a panel that opens while a change runs shows the state after it, and a fai
   assert.match(r.stderr, /state: pass/)
   for (const [file, from, to] of [
     ['ui/Looks.qml', 'if (reader.running) again = true\n    else reader.running = true', 'reader.running = true'],
-    ['ui/Looks.qml', 'if (exitCode === 0) root.list', 'root.list'],
+    ['ui/Looks.qml', 'if (ok) list =', 'list ='],
+    ['ui/Looks.qml', 'if (reader.code < 0 || !reader.ended) return', 'if (reader.code < 0) return'],
+    ['ui/Looks.qml', ': strings.listFailed', ': say(writer.what, writer.target, writer.code)'],
     ['ui/Apps.qml', 'if (reader.running) again = true\n    else reader.running = true', 'reader.running = true'],
-    ['ui/Apps.qml', 'if (exitCode === 0) root.rows', 'root.rows']
+    ['ui/Apps.qml', 'if (ok) rows =', 'rows ='],
+    ['ui/Apps.qml', 'if (reader.code < 0 || !reader.ended) return', 'if (reader.code < 0) return']
   ]) assert.notEqual(planted(t, file, from, to).status, 0, `control: ${file} with "${from}" as "${to}"`)
 })

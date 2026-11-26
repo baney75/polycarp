@@ -66,23 +66,42 @@ Item {
     return code === 0 ? s.removed : s.saveLeft
   }
 
+  // A read is over when the script has exited and its output has ended, in whichever order those come.
+  function read() {
+    if (reader.code < 0 || !reader.ended) return
+    var ok = reader.code === 0
+    reader.code = -1
+    reader.ended = false
+    // A list that could not be read keeps the last one, rather than showing no looks.
+    if (ok) list = Model.parseList(out.text)
+    if (again) {
+      again = false
+      Qt.callLater(look)
+      return
+    }
+    if (writer.done) {
+      // The undo message names the theme from this read, so a failed read says only that.
+      said = ok || writer.code !== 0 ? say(writer.what, writer.target, writer.code) : strings.listFailed
+      writer.done = false
+      busy = ""
+    }
+  }
+
   Process {
     id: reader
+    property int code: -1
+    property bool ended: false
     command: ["bash", root.script, "list"]
-    stdout: StdioCollector { id: out }
+    stdout: StdioCollector {
+      id: out
+      onStreamFinished: {
+        reader.ended = true
+        root.read()
+      }
+    }
     onExited: function(exitCode) {
-      // A list that could not be read keeps the last one, rather than showing no looks.
-      if (exitCode === 0) root.list = Model.parseList(out.text)
-      if (root.again) {
-        root.again = false
-        Qt.callLater(root.look)
-        return
-      }
-      if (writer.done) {
-        root.said = root.say(writer.what, writer.target, writer.code)
-        writer.done = false
-        root.busy = ""
-      }
+      code = exitCode
+      root.read()
     }
   }
 
