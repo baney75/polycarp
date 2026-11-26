@@ -8,6 +8,7 @@ mod release;
 // The install step that uses these two comes next.
 #[cfg_attr(not(test), allow(dead_code))]
 mod running;
+mod sign;
 mod source;
 #[cfg_attr(not(test), allow(dead_code))]
 mod spot;
@@ -115,26 +116,30 @@ fn dry_run(tools: &dyn Tools, place: &Place, arch: &str) -> Result<String, Refus
     let work = place.work(tools)?;
     let built = build(tools, place, &dmg, &work, &release.version);
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
-    built?;
+    let (_, note) = built?;
     cleared?;
+    let note = note.map(|n| format!("{n}\n")).unwrap_or_default();
     Ok(format!(
-        "Helium {} was downloaded, passed its checks and was made into Polycarp Browser. Nothing was installed.",
+        "{note}Helium {} was downloaded, passed its checks and was made into Polycarp Browser. Nothing was installed.",
         release.version
     ))
 }
 
-/// The finished app, in `work`: checked first, then changed.
+/// The finished app, in `work`: checked first, then changed and signed. With it, a line to print about the signature.
 fn build(
     tools: &dyn Tools,
     place: &Place,
     dmg: &Path,
     work: &Path,
     version: &str,
-) -> Result<PathBuf, Refused> {
+) -> Result<(PathBuf, Option<&'static str>), Refused> {
     let changes = change::Changes::read(&place.parts)?;
+    let (identity, note) = sign::Identity::find(tools, &place.parts)?;
     let app = source::unpack(tools, dmg, work, version)?;
     change::apply(tools, &app, &place.parts, &changes)?;
-    Ok(app)
+    identity.again(tools, &place.parts)?;
+    sign::sign(tools, &app, work, &identity, &changes)?;
+    Ok((app, note))
 }
 
 /// None when these arguments are not a browser command yet.
@@ -181,6 +186,13 @@ mod tests {
         assert!(line.contains(VERSION), "{line}");
         assert!(!t.place().cache.join("work").exists());
         assert!(!t.mounted(), "the disk image stayed mounted");
+        // Once to refuse before anything is unpacked, and again to unlock the key just before signing.
+        let asked = t
+            .calls()
+            .iter()
+            .filter(|c| c.contains("signing-identity.sh"))
+            .count();
+        assert_eq!(asked, 2);
     }
 
     #[test]

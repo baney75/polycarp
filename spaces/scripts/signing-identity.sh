@@ -5,6 +5,8 @@
 # certificate keeps it. The key lives in its own keychain under Application Support. It never
 # touches the login keychain and is not trusted for anything else.
 #   scripts/signing-identity.sh   ->  "Polycarp Local Signing<TAB>/path/to/polycarp-signing.keychain-db"
+#   scripts/signing-identity.sh --keep   for updates nobody watches: never makes, restores or replaces a key.
+#     It exits 3 when there is no key (the caller signs ad hoc) and 1 when the key can't be used now.
 # A key made for BaneySpaces is reused as it is: it is the key every release is pinned to
 # (release-requirement.txt), and macOS ties the Accessibility permission to it. It keeps its old
 # name and folder until a Polycarp release key is made; that is the owner's decision, so this script
@@ -28,6 +30,10 @@ if [ ! -f "$KC" ] && [ -f "$LEGACY_DIR/baneyspaces-signing.keychain-db" ]; then
   KC="$DIR/baneyspaces-signing.keychain-db"
 fi
 PASS_FILE="$DIR/keychain-password"
+if [ "${1:-}" = --keep ] && [ ! -f "$KC" ] && [ ! -s "$PASS_FILE" ]; then
+  echo "signing-identity.sh: there is no $NAME key" >&2
+  exit 3
+fi
 
 # `security -i` reads commands from stdin. The password is base64, so it needs no further quoting.
 keychain() { printf '%s\n' "$1" | security -i >/dev/null; }
@@ -90,6 +96,10 @@ if ! healthy && [ -f "$KC" ] && [ -s "$PASS_FILE" ]; then
 fi
 
 if ! healthy; then
+  if [ "${1:-}" = --keep ]; then   # it got here with a key: there was none, it exited 3 above
+    echo "signing-identity.sh: the $NAME key can't be used now, and it was left alone" >&2
+    exit 1
+  fi
   if [ -f "$KC" ] || [ -s "$PASS_FILE" ]; then
     echo "note: the $NAME key was unusable and has been replaced. macOS will treat the" >&2
     echo "      new build as a different app: open setup and click Fix Permission to allow it again." >&2
