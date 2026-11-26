@@ -360,7 +360,10 @@ fn every_list_of_jobs_names_the_apps_jobs() {
 }
 
 fn repo_file(rel: &str) -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)).unwrap()
+    // A Windows checkout has CRLF line ends; the tests read lines as Git stores them.
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel))
+        .unwrap()
+        .replace("\r\n", "\n")
 }
 
 /// #3 second-S3, second-S5: an open item in PLAN.md says how it will be checked.
