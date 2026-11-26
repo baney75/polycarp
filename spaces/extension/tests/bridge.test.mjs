@@ -178,6 +178,12 @@ test('a download on its way is told again until it is done, and a private or pau
   assert.equal(y.sent('browser.change', 'downloads').length, 1, 'one already on its way when the app asks');
 });
 
+test('a download says when it ended only once it is whole', () => {
+  const d = { id: 1, filename: 'a.zip', incognito: false, endTime: '2026-11-25T12:00:00.000Z' };
+  assert.equal(B.downloadRow({ ...d, state: 'complete' }).ended, Date.UTC(2026, 10, 25, 12));
+  for (const not of [{ state: 'interrupted' }, { state: 'in_progress' }, { state: 'complete', endTime: undefined }, { state: 'complete', endTime: 'soon' }]) assert.ok(!('ended' in B.downloadRow({ ...d, ...not })), JSON.stringify(not));
+});
+
 test('an app from before the line, or none, is asked once a start', async () => {
   const none = browser({ fails: 'Specified native messaging host not found.' });
   await none.b.start();

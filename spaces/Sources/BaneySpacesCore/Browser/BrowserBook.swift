@@ -64,6 +64,8 @@ public final class BrowserBook {
     }
     /// A source's new rows while they come in: the old ones answer until the last piece is here.
     private var coming: [BrowserPeer: [BrowserSource: Shelf]] = [:]
+    /// Downloads already given back as finished, by browser: a full shelf has no room to remember one.
+    private var filed: [BrowserPeer: Set<String>] = [:]
 
     public init(allowed: Set<BrowserSource> = Set(BrowserSource.allCases)) { self.allowed = allowed }
 
@@ -77,25 +79,49 @@ public final class BrowserBook {
     public func forget(_ peer: BrowserPeer) {
         browsers[peer] = nil
         coming[peer] = nil
+        filed[peer] = nil
     }
 
-    public func take(_ m: BrowserMessage, from peer: BrowserPeer) {
-        guard allowed.contains(m.source) else { return }
+    /// Whether a browser still lists a download, so its entry in the notification list may stay (R-B5). Off, a source has no shelf.
+    public func holds(_ download: BrowserWindows.Front) -> Bool {
+        guard let shelf = browsers[download.peer]?[.downloads] else { return false }
+        return shelf.slots[download.tab.key] != nil || filed[download.peer]?.contains(download.tab.key) == true
+    }
+
+    /// Gives back the downloads that just finished: those of a change that weren't done before, and ended in the last minute.
+    @discardableResult
+    public func take(_ m: BrowserMessage, from peer: BrowserPeer, at now: Date = Date()) -> [BrowserRow] {
+        guard allowed.contains(m.source) else { return [] }
         switch m.change {
         case .rows(let rows, let first, let last):
             // A piece with no beginning belongs to a list that was dropped (the switch went off and on).
-            guard var shelf = first ? Shelf() : coming[peer]?[m.source] else { return }
+            guard var shelf = first ? Shelf() : coming[peer]?[m.source] else { return [] }
             for (r, f) in zip(rows, m.folded) { shelf.put(r, f) }
             coming[peer, default: [:]][m.source] = last ? nil : shelf
-            if last { browsers[peer, default: [:]][m.source] = shelf }
+            if last {
+                browsers[peer, default: [:]][m.source] = shelf
+                // A whole list is all the browser has: one it no longer lists was erased, or its switch went off there.
+                if m.source == .downloads { filed[peer] = filed[peer]?.filter { shelf.slots[$0] != nil } }
+            }
         case .change(let rows, let gone):
             // The whole list comes first; a change before it would look like all there is.
-            guard var shelf = browsers[peer]?[m.source] else { return }
+            guard var shelf = browsers[peer]?[m.source] else { return [] }
             browsers[peer]?[m.source] = nil
-            for k in gone { shelf.drop(k) }
+            let done = rows.filter { r in
+                guard let ended = r.ended, abs(now.timeIntervalSince(ended)) < 60, filed[peer]?.contains(r.key) != true else { return false }
+                return shelf.slots[r.key].flatMap { shelf.rows[$0] }?.ended == nil
+            }
+            for k in gone { shelf.drop(k); filed[peer]?.remove(k) }
             for (r, f) in zip(rows, m.folded) { shelf.put(r, f) }
             browsers[peer]?[m.source] = shelf
+            if !done.isEmpty {
+                var told = filed[peer] ?? []
+                if told.count >= BrowserSource.downloads.most { told = [] }
+                filed[peer] = told.union(done.map(\.key))
+            }
+            return done
         }
+        return []
     }
 
     /// Every row of a source, by browser; none when it is off.
@@ -110,6 +136,12 @@ public final class BrowserBook {
         browsers.sorted { $0.key < $1.key }.filter { $0.key.bundleID == bundleID }.flatMap { peer, shelves in
             (shelves[.tabs]?.rows.values.filter(\.front) ?? []).sorted { $0.window < $1.window }.map { BrowserWindows.Front(peer, $0) }
         }
+    }
+
+    /// A tab open on a site in a browser: one in front of its window before another.
+    public func tab(on site: String, of bundleID: String) -> BrowserWindows.Front? {
+        let there = rows(.tabs).filter { $0.peer.bundleID == bundleID && $0.row.site == site }
+        return (there.first(where: \.row.front) ?? there.first).map { .init($0.peer, $0.row) }
     }
 
     /// The tab group `typed` names best.

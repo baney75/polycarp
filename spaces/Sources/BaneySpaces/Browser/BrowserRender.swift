@@ -17,6 +17,8 @@ enum BrowserRender {
                      icon: NSImage(systemSymbolName: "tree.fill", accessibilityDescription: nil))
     }
 
+    static func download() -> NoticeBanner { BrowserNotices.done(page().now.downloads!.one, app: "Safari") }
+
     private static func book() -> BrowserBook {
         let book = BrowserBook()
         func take(_ source: BrowserSource, _ rows: [[String: Any]]) {

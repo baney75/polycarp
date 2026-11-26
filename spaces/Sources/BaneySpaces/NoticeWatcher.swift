@@ -32,6 +32,19 @@ final class NoticeWatcher: ObservableObject {
 
     deinit { detach() }
 
+    /// The tab a notice's site is open in, and the site's icon (`BrowserHub`), and what goes to one.
+    var place: (NoticeBanner) -> BrowserWindows.Front? = { _ in nil }
+    var icon: (NoticeShelf.Notice) -> NSImage? = { _ in nil }
+    var goTo: (BrowserWindows.Front) -> Void = { _ in }
+
+    /// A download finished: filed while the list is kept.
+    func add(_ b: NoticeBanner, opens place: BrowserWindows.Front) { if check != nil { shelf.add(b, opens: place, at: Date()) } }
+    func dropOwn(unless held: (BrowserWindows.Front) -> Bool) {
+        if shelf.notices.contains(where: { $0.place.map { !held($0) } ?? false }) { shelf.dropOwn(unless: held) }
+    }
+    /// A site's icon came, or its tab did.
+    func sitesChanged() { if !shelf.notices.isEmpty { objectWillChange.send() } }
+
     /// For a rendered still.
     func sample(_ shelf: NoticeShelf, quiet: [String: String] = [:]) { self.shelf = shelf; self.quiet = quiet }
 
@@ -153,7 +166,8 @@ final class NoticeWatcher: ObservableObject {
 
     func see() { if shelf.unread > 0 { shelf.see() } }
 
-    /// Opens a notification: pressed while its banner is up, so its app shows what it is about; its app after that.
+    /// Opens a notification: pressed while its banner is up, so its app shows what it is about; after that the tab its site
+    /// is open in, else its app.
     func open(_ n: NoticeShelf.Notice) {
         shelf.dismiss(n.id)
         // A stack only spreads out when pressed.
@@ -221,6 +235,7 @@ final class NoticeWatcher: ObservableObject {
     }
 
     private func openApp(_ n: NoticeShelf.Notice) {
+        if let place = n.place ?? place(n.banner) { return goTo(place) }
         guard let url = app(n.key, name: n.banner.app) else { return }
         NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
     }

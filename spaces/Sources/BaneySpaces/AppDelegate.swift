@@ -566,6 +566,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         tiling.settingsChanged()
         topBar.page = { [weak self] in self?.page(on: $0) }
         topBar.goTo = { [weak self] in self?.openBrowser(BrowserHit($0)) }
+        topBar.notices.goTo = topBar.goTo
+        topBar.notices.place = { BrowserHub.shared.place($0) }
+        topBar.notices.icon = { BrowserHub.shared.icon($0) }
+        BrowserHub.shared.onDone = { [weak self] in
+            let app = NSRunningApplication.runningApplications(withBundleIdentifier: $0.peer.bundleID).first?.localizedName
+            self?.topBar.notices.add(BrowserNotices.done($0, app: app ?? $0.peer.bundleID), opens: $0)
+        }
         // It reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
         // A new theme redraws the menu bar indicator as well as the panels.
@@ -623,6 +630,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         BrowserHub.shared.onChange = { [weak self] in
             self?.switcher.titlesChanged()
             self?.topBar.pageChanged()
+            // A download's entry goes with its browser, its switch or the browser's own record of it (R-B5).
+            self?.topBar.notices.dropOwn(unless: BrowserHub.shared.book.holds)
+            self?.topBar.notices.sitesChanged()
             if self?.launcherBuilt == true { self?.launcher.rowsChanged() }
         }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }

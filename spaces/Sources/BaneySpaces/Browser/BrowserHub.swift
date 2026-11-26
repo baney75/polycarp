@@ -14,6 +14,8 @@ final class BrowserHub {
     private var icons = BrowserIconBook<NSImage>()
     /// What is open changed; said at most ten times a second.
     var onChange: () -> Void = {}
+    /// A download finished.
+    var onDone: (BrowserWindows.Front) -> Void = { _ in }
     private var saying = false
 
     func start() {
@@ -24,7 +26,7 @@ final class BrowserHub {
         }
         server.message = { [weak self] m, link in
             guard let self, self.links[link.peer] != nil else { return }
-            self.book.take(m, from: link.peer)
+            self.book.take(m, from: link.peer).forEach { self.onDone(.init(link.peer, $0)) }
             self.changed()
         }
         server.icon = { [weak self] i, link in
@@ -79,10 +81,23 @@ final class BrowserHub {
 
     /// A row's site's icon, as its browser has it. Asked for the first time it is wanted; `onChange` follows.
     func icon(_ hit: BrowserHit) -> NSImage? { icon(hit.row, hit.peer) }
-    func icon(_ row: BrowserRow, _ peer: BrowserPeer) -> NSImage? {
-        let (image, ask) = icons.icon(row.url)
+    func icon(_ row: BrowserRow, _ peer: BrowserPeer) -> NSImage? { icon(row.url, peer) }
+    private func icon(_ url: String, _ peer: BrowserPeer) -> NSImage? {
+        let (image, ask) = icons.icon(url)
         if let ask { links[peer]?.send(["op": "browser.icon", "url": ask]) }
         return image
+    }
+
+    /// A notice's site: the tab it is open in, and its icon, the browser's copy whether it is open or not.
+    private func site(_ b: NoticeBanner) -> (site: String, bundleID: String)? {
+        for app in Set(links.keys.map(\.bundleID)) { if let s = BrowserNotices.site(b, from: app) { return (s, app) } }
+        return nil
+    }
+    func place(_ b: NoticeBanner) -> BrowserWindows.Front? { site(b).flatMap { book.tab(on: $0.site, of: $0.bundleID) } }
+    func icon(_ n: NoticeShelf.Notice) -> NSImage? {
+        if let p = n.place { return icon(p.tab.url, p.peer) }
+        guard let s = site(n.banner), let peer = peers(of: s.bundleID).first else { return nil }
+        return place(n.banner).flatMap { icon($0.tab.url, $0.peer) } ?? icon("https://" + s.site + "/", peer)
     }
 
     /// Moves a tab group to one of the browser's windows, or to a new one.
