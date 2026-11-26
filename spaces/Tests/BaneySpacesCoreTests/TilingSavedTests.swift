@@ -61,6 +61,36 @@ final class TilingSavedTests: XCTestCase {
         }
     }
 
+    func testAGroupIsKeptWithItsTabsAndItsFront() {
+        var f = three()
+        f.focused = 3
+        XCTAssertEqual(f.engine.run(.join(.up), on: 1, focused: 3), .changed)
+        f.rest()
+        let tabs = f.engine.tabs(1), was = f.wins.mapValues(\.w.frame)
+        XCTAssertEqual(tabs.map(\.windows), [[2, 3]])
+        var g = restart(f)
+        g.engine.claim(titles.map { live($0.key, $0.value) })
+        g.rest()
+        XCTAssertEqual(g.engine.tabs(1), tabs)
+        XCTAssertEqual(g.writes, 0)
+        // The Mac restarted: the windows open one by one, the one behind first.
+        for order in [[WindowID(2), 3, 1], [3, 1, 2]] {
+            g = restart(f)
+            g.wins = [:]
+            g.focused = nil
+            for old in order {
+                g.open(old + 500, pid: 900)
+                g.engine.claim([live(old + 500, titles[old]!, pid: 900)])
+                g.rest()
+            }
+            XCTAssertEqual(g.engine.tabs(1).map(\.windows), [[502, 503]], "\(order)")
+            XCTAssertEqual(g.wins.mapValues(\.w.frame), Dictionary(uniqueKeysWithValues: was.map { ($0.key + 500, $0.value) }), "\(order)")
+        }
+        // A file from before there were groups.
+        let old = String(decoding: three().engine.saved { self.record($0) }.data()!, as: UTF8.self)
+        XCTAssertFalse(old.contains("groups"))
+    }
+
     func testAWindowWithAnotherTitleTakesNoPlace() {
         var g = restart(three())
         g.wins = [:]

@@ -100,7 +100,7 @@ public enum Keymap {
                 let four = ["Left", "Right", "Up", "Down"].map { (family + "-" + $0.lowercased(), $0) }
                 if four.contains(where: { $0.0 == command.name }),
                    four.allSatisfy({ keys[$0.0]?.key == $0.1 && keys[$0.0]?.modifiers == chord.modifiers }) {
-                    out.append(KeyBinding(id: "tile." + family, keys: chord.parts.dropLast() + ["\u{2190}\u{2192}\u{2191}\u{2193}"],
+                    out.append(KeyBinding(id: "tile." + family + (keys[family] == nil ? "" : "-way"), keys: chord.parts.dropLast() + ["\u{2190}\u{2192}\u{2191}\u{2193}"],
                                           title: title, group: .windows, scope: .global, note: note))
                     done.formUnion(four.map(\.0))
                     continue
@@ -113,6 +113,7 @@ public enum Keymap {
 
     private static let families: [(name: String, title: String)] = [
         ("focus", "Focus the window that way"), ("move", "Move the tiled window that way"), ("grow", "Move the tiled window's edge that way"),
+        ("group", "Move the window into the tile that way, or out of its group"),
     ]
 
     private static let fixed: [KeyBinding] = [

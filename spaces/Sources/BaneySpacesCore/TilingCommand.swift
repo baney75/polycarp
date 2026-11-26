@@ -9,6 +9,11 @@ public enum TilingCommand: Equatable, Sendable {
     case move(TileDirection)
     case grow(TileDirection)
     case balance, flip, promote, float, full
+    /// The window's tile becomes a group of windows in tabs, or the group comes apart.
+    case group
+    /// Into the tile that way, or out of its group.
+    case join(TileDirection)
+    case groupCycle(backward: Bool)
     /// Nil is the next one.
     case style(TileStyle?)
     /// The window goes to the next display's workspace.
@@ -31,6 +36,10 @@ public enum TilingCommand: Equatable, Sendable {
         add("promote", "Make the window the main one", .promote)
         add("float", "Float the window, or tile it again", .float)
         add("full", "Give the window the whole area, or put it back", .full)
+        add("group", "Make the tile a group of tabs, or take it apart", .group)
+        for d in TileDirection.allCases { add("group-\(d.rawValue)", "Move the window into the tile \(d.phrase), or out of its group", .join(d)) }
+        add("group-next", "Focus the next window of the group", .groupCycle(backward: false))
+        add("group-previous", "Focus the previous window of the group", .groupCycle(backward: true))
         add("next-display", "Send the window to the next display", .nextDisplay)
         for s in TileStyle.allCases { add("style-\(s.rawValue)", "Tile in the \(s.rawValue) style", .style(s)) }
         return all
@@ -78,7 +87,9 @@ extension TilingEngine {
         guard options.tiles(workspace) else { return .nothing("this workspace isn't tiled") }
         if case .style(let s) = command { return restyle(s, workspace) }
         // Without a tiled window in focus the one used last answers, so a key after a click on the desktop still works.
-        guard let key = key(workspace), let slot = slots[key] else { return .nothing("no window is tiled here") }
+        guard let key = key(workspace) else { return .nothing("no window is tiled here") }
+        if let focused { slots[key]?.show(focused) }
+        guard let slot = slots[key] else { return .nothing("no window is tiled here") }
         if command == .float { return float(focused, slot) }
         if slot.layout.style == .floating { return run(command, floating: slot, focused: focused) }
         guard let id = focused.flatMap({ slot.layout.contains($0) ? $0 : nil }) ?? slot.focused ?? slot.layout.windows.first else {
@@ -86,7 +97,7 @@ extension TilingEngine {
         }
         let isTiled = focused.map { slot.layout.contains($0) } ?? false
         var layout = slot.layout
-        let area = slot.area, gaps = options.gaps
+        let area = slot.area, gaps = options.gaps, minimums = needs(slot)
         switch command {
         case .focus(let d):
             guard isTiled else { return .focus(id) }
@@ -98,13 +109,14 @@ extension TilingEngine {
             guard isTiled else { return .nothing("the window in front isn't tiled") }
             if layout.full { return .nothing("a window is at full size") }
             if !layout.move(id, toward: d, area: area, gaps: gaps, minimums: minimums) { return .cross(d, carrying: id) }
-        case .grow(let d): grow(id, d, &layout, area)
+        case .grow(let d): grow(id, d, &layout, area, minimums)
         case .balance: layout.balance(nil)
         case .flip: layout.flip(id, area: area)
         case .promote:
             if layout.style == .main { layout.promote(id) } else if let first = layout.windows.first { layout.swap(id, first) }
         case .full: layout.full.toggle()
         case .nextDisplay: return isTiled ? .nextDisplay(id) : .nothing("the window in front isn't tiled")
+        case .group, .join, .groupCycle: return group(command, isTiled ? id : nil, key)
         case .toggle, .style, .float: break
         }
         guard layout != slot.layout else { return .nothing("there is nothing to change") }
@@ -112,13 +124,27 @@ extension TilingEngine {
         return .changed
     }
 
+    private mutating func group(_ command: TilingCommand, _ id: WindowID?, _ key: TilingKey) -> TilingOutcome {
+        guard let id, var slot = slots[key] else { return .nothing("the window in front isn't tiled") }
+        switch command {
+        case .join(let d):
+            guard join(id, toward: d, &slot) else { return .nothing("there is no window that way") }
+        case .groupCycle(let backward):
+            guard let next = Self.nextInGroup(id, backward: backward, slot) else { return .nothing("the window isn't in a group with another") }
+            return .focus(next)
+        default: Self.toggleGroup(id, &slot)
+        }
+        slots[key] = slot
+        return .changed
+    }
+
     /// The `floating` style: windows have no tiles, so going to another is by where they stand.
     private func run(_ command: TilingCommand, floating slot: Slot, focused: WindowID?) -> TilingOutcome {
-        let here = focused.flatMap { slot.layout.contains($0) ? $0 : nil }
+        let here = focused.flatMap { slot.holds($0) ? $0 : nil }
         switch command {
         case .focus(let d):
             guard let here else { return (slot.focused ?? slot.layout.windows.first).map { .focus($0) } ?? .nothing("there is no window here") }
-            let frames = seen.filter { slot.layout.contains($0.key) && !$0.value.away }.mapValues(\.frame)
+            let frames = seen.filter { slot.holds($0.key) && !$0.value.away }.mapValues(\.frame)
             return TileLayout.nearest(to: here, toward: d, in: frames).map { .focus($0) } ?? .cross(d, carrying: nil)
         case .cycle(let backward):
             guard let next = slot.layout.next(after: here ?? slot.focused ?? 0, backward: backward), next != here else {
@@ -131,7 +157,7 @@ extension TilingEngine {
     }
 
     /// A window's edge moves one step that way: the far edge out, and at the area's own edge the near one in.
-    private func grow(_ id: WindowID, _ d: TileDirection, _ layout: inout TileLayout, _ area: CGRect) {
+    private func grow(_ id: WindowID, _ d: TileDirection, _ layout: inout TileLayout, _ area: CGRect, _ minimums: [WindowID: CGSize]) {
         guard var f = layout.frames(in: area, gaps: options.gaps, minimums: minimums)[id] else { return }
         let atEdge = layout.neighbor(of: id, toward: d, in: area, gaps: options.gaps, minimums: minimums) == nil
         let (dx, dy) = d.axis == .horizontal ? (Self.step, 0) : (0, Self.step)
@@ -170,14 +196,16 @@ extension TilingEngine {
     }
 
     /// A window got the focus between two looks: the next window opened goes beside it.
-    /// True when its strip has to scroll for it.
+    /// True when its strip has to scroll for it, or its group shows another tab.
     @discardableResult
     public mutating func focused(_ id: WindowID) -> Bool {
         if recent.first != id, seen[id] != nil { recent = [id] + recent.filter { $0 != id } }
         var scrolls = false
-        for key in slots.keys where slots[key]!.layout.contains(id) {
+        for key in slots.keys where slots[key]!.holds(id) {
+            // A hidden window of a group has the focus now: its tab is the one in front.
+            if slots[key]!.show(id) { scrolls = true }
             var l = slots[key]!.layout
-            l.reveal(id, area: slots[key]!.area, gaps: options.gaps, minimums: minimums)
+            l.reveal(id, area: slots[key]!.area, gaps: options.gaps, minimums: needs(slots[key]!))
             scrolls = scrolls || l != slots[key]!.layout
             slots[key]!.focused = id
         }
@@ -189,11 +217,14 @@ extension TilingEngine {
     /// Where a window held over a tiled workspace in sight would go, for the outline. Nil over its own tile and off every
     /// area.
     public func dropFrame(_ id: WindowID, at point: CGPoint) -> CGRect? {
-        if let (_, slot, drop) = drop(id, at: point) { return slot.layout.dropFrame(drop, id, area: slot.area, gaps: options.gaps, minimums: minimums) }
+        if let t = tabs(at: point, for: id) { return t.frame }
+        if let (_, slot, drop) = drop(id, at: point) {
+            return slot.layout.dropFrame(drop, id, area: slot.area, gaps: options.gaps, minimums: needs(slot))
+        }
         // Over another display: where it lands there. A window out of sight isn't in anyone's hand.
         guard let w = seen[id], inSight.contains(w.workspace) else { return nil }
         for workspace in inSight where options.tiles(workspace) {
-            guard let key = key(workspace), var slot = slots[key], !slot.layout.contains(id), slot.area.contains(point) else { continue }
+            guard let key = key(workspace), var slot = slots[key], !slot.holds(id), slot.area.contains(point) else { continue }
             var after = self
             after.landing[id] = point
             after.insert(id, beside: slot.focused, mirrored: options.side == .before, &slot)
@@ -207,6 +238,13 @@ extension TilingEngine {
     @discardableResult
     public mutating func drop(_ id: WindowID, on point: CGPoint) -> Bool {
         touched(id)
+        if let t = tabs(at: point, for: id), let workspace = seen[id]?.workspace, let key = key(workspace), var slot = slots[key] {
+            slot.take(id)
+            slot.join(id, to: t.front, showing: true)
+            slot.focused = id
+            slots[key] = slot
+            return true
+        }
         guard let (key, _, drop) = drop(id, at: point) else { return false }
         slots[key]!.layout.apply(drop, to: id, area: slots[key]!.area)
         return true
@@ -216,7 +254,7 @@ extension TilingEngine {
         for (workspace, display) in lastDisplay {
             let key = TilingKey(workspace, display)
             guard options.tiles(workspace), let slot = slots[key], slot.layout.contains(id), slot.layout.style != .floating else { continue }
-            return slot.layout.drop(id, at: point, area: slot.area, gaps: options.gaps, minimums: minimums).map { (key, slot, $0) }
+            return slot.layout.drop(id, at: point, area: slot.area, gaps: options.gaps, minimums: needs(slot)).map { (key, slot, $0) }
         }
         return nil
     }
@@ -232,7 +270,7 @@ extension TilingEngine {
             let key = TilingKey(workspace, display)
             guard options.tiles(workspace), var slot = slots[key], slot.layout.contains(id), slot.layout.style != .floating else { continue }
             let was = slot.layout
-            slot.layout.resize(id, to: frame, from: start, area: slot.area, gaps: options.gaps, minimums: minimums)
+            slot.layout.resize(id, to: frame, from: start, area: slot.area, gaps: options.gaps, minimums: needs(slot))
             slots[key] = slot
             return slot.layout != was
         }
@@ -252,7 +290,7 @@ extension TilingEngine {
     public func last(on workspace: Int) -> WindowID? {
         key(workspace).flatMap { slots[$0] }.flatMap { $0.focused ?? $0.layout.windows.first }
     }
-    public func windows(of workspace: Int) -> [WindowID] { key(workspace).flatMap { slots[$0]?.layout.windows } ?? [] }
+    public func windows(of workspace: Int) -> [WindowID] { key(workspace).flatMap { slots[$0]?.all } ?? [] }
 
     /// The display to the side of another, the nearest of those that share some of its height (or width).
     public static func display(_ d: TileDirection, of from: DisplayKey, in displays: [DisplayKey: CGRect]) -> DisplayKey? {

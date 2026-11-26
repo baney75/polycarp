@@ -41,6 +41,11 @@ view, and the strip scrolls no further than that takes. A window out of view wai
 display, and comes back in reach when Polycarp quits or stops placing windows. `floating` writes no frame after the one
 that puts a window back where it was.
 
+### R-T9 Groups
+A group's windows share one tile and one frame, under a strip of tabs that is inside the tile and that no tiled window
+lies over. A window is in one group at most and a group has one window in front. A group lasts until its last window goes
+or a person takes it apart; a window back from the Dock or from hiding is in its group again.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without

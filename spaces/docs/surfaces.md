@@ -357,6 +357,13 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.keys.promote` | `"ctrl+opt+Return"` | Make the window the main one. |
 | `tiling.keys.float` | `"ctrl+opt+F"` | Float the window, or tile it again. |
 | `tiling.keys.full` | `"ctrl+opt+M"` | Give the window the whole area, or put it back. |
+| `tiling.keys.group` | `"ctrl+opt+G"` | Make the tile a group of tabs, or take it apart. |
+| `tiling.keys.group-left` | `"ctrl+opt+shift+cmd+Left"` | Move the window into the tile to the left, or out of its group. |
+| `tiling.keys.group-right` | `"ctrl+opt+shift+cmd+Right"` | Move the window into the tile to the right, or out of its group. |
+| `tiling.keys.group-up` | `"ctrl+opt+shift+cmd+Up"` | Move the window into the tile above, or out of its group. |
+| `tiling.keys.group-down` | `"ctrl+opt+shift+cmd+Down"` | Move the window into the tile below, or out of its group. |
+| `tiling.keys.group-next` | `"ctrl+opt+Tab"` | Focus the next window of the group. |
+| `tiling.keys.group-previous` | `"ctrl+opt+shift+Tab"` | Focus the previous window of the group. |
 | `tiling.keys.next-display` | `"ctrl+opt+N"` | Send the window to the next display. |
 | `tiling.keys.style-dwindle` | `""` | Tile in the dwindle style. |
 | `tiling.keys.style-columns` | `""` | Tile in the columns style. |

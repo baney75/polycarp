@@ -96,7 +96,7 @@ struct FakeWindows {
         return most
     }
 
-    func tiled(_ workspace: Int) -> [WindowID] { engine.key(workspace).flatMap { engine.slots[$0] }?.layout.windows ?? [] }
+    func tiled(_ workspace: Int) -> [WindowID] { engine.key(workspace).flatMap { engine.slots[$0] }?.all ?? [] }
 }
 
 final class TilingEngineTests: XCTestCase {
