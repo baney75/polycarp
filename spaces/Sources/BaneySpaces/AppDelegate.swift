@@ -30,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }()
     /// Windows side by side (`tiling.*` in surfaces.json); reads and moves nothing until a workspace tiles.
     private lazy var tiling = Tiling(spaces: spaces)
+    /// The tiling keys registered last; nil before the first time.
+    private var tilingShortcuts: TilingShortcuts?
+    private var voiceOver: NSKeyValueObservation?
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
@@ -544,6 +547,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
         NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.tiling.settingsChanged()
+            self?.tilingKeysMayHaveChanged()
+        }
+        voiceOver = NSWorkspace.shared.observe(\.isVoiceOverEnabled) { [weak self] _, _ in
+            DispatchQueue.main.async { self?.tilingKeysMayHaveChanged() }
         }
         tiling.settingsChanged()
         // It reads surfaces.json and stays away while `bar.enabled` is off.
@@ -859,6 +866,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.spaces.moveFocused(to: n)
             }
         }
+        registerTilingKeys()
+    }
+
+    private func registerTilingKeys() {
+        tilingShortcuts = TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+        for key in tilingShortcuts?.keys ?? [] {
+            guard let command = TilingCommand(words: [key.name]) else { continue }
+            hotkeys.register(keyCode: key.chord.keyCode, modifiers: key.chord.carbon) { [weak self] in
+                guard let self, self.stillTrusted() else { return }
+                self.tiling.run(command)
+            }
+        }
+    }
+
+    /// The tiling keys changed, the first or last workspace started or stopped tiling, or VoiceOver came or went.
+    private func tilingKeysMayHaveChanged() {
+        let now = TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+        if let was = tilingShortcuts, was != now { registerShortcuts() }
     }
 
     /// Once: the windows an older build's agents moved onto the agent workspace go back (`AgentAPI.OldMovedIn`), then the

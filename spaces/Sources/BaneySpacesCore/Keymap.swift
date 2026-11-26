@@ -77,7 +77,45 @@ public struct KeyBinding: Equatable {
 /// docs/keys.md all read it. `KeymapTests` fails when the code takes a key that has no row here, a row outlives its
 /// key, or docs/keys.md says something else.
 public enum Keymap {
-    public static let all: [KeyBinding] = [
+    /// Every shortcut with the keys Polycarp comes with: what docs/keys.md lists.
+    public static let all: [KeyBinding] = rows(tiling: Surfaces.defaults.tiling.keys, anywhere: true)
+
+    /// Every shortcut as this person has it. The tiling keys are theirs to choose (`tiling.keys` in surfaces.json), and
+    /// only the one that turns tiling on is taken while no workspace tiles.
+    public static func rows(_ s: Surfaces) -> [KeyBinding] { rows(tiling: s.tiling.keys, anywhere: s.tiling.anywhere) }
+
+    private static func rows(tiling keys: [String: KeyChord], anywhere: Bool) -> [KeyBinding] {
+        let i = fixed.firstIndex { $0.group == .terminal } ?? fixed.endIndex
+        return fixed[..<i] + tiling(keys, anywhere: anywhere) + fixed[i...]
+    }
+
+    /// The tiling keys: a command on all four arrows with the same modifiers is one row.
+    static func tiling(_ keys: [String: KeyChord], anywhere: Bool) -> [KeyBinding] {
+        var out: [KeyBinding] = []
+        var done: Set<String> = []
+        for command in TilingKeys.all where !done.contains(command.name) && (anywhere || command.name == "toggle") {
+            guard let chord = keys[command.name] else { continue }
+            let note = command.name == "toggle" ? nil : "While this workspace tiles"
+            if let (family, title) = families.first(where: { command.name.hasPrefix($0.name + "-") }) {
+                let four = ["Left", "Right", "Up", "Down"].map { (family + "-" + $0.lowercased(), $0) }
+                if four.contains(where: { $0.0 == command.name }),
+                   four.allSatisfy({ keys[$0.0]?.key == $0.1 && keys[$0.0]?.modifiers == chord.modifiers }) {
+                    out.append(KeyBinding(id: "tile." + family, keys: chord.parts.dropLast() + ["\u{2190}\u{2192}\u{2191}\u{2193}"],
+                                          title: title, group: .windows, scope: .global, note: note))
+                    done.formUnion(four.map(\.0))
+                    continue
+                }
+            }
+            out.append(KeyBinding(id: "tile." + command.name, keys: chord.parts, title: command.title, group: .windows, scope: .global, note: note))
+        }
+        return out
+    }
+
+    private static let families: [(name: String, title: String)] = [
+        ("focus", "Focus the window that way"), ("move", "Move the tiled window that way"), ("grow", "Move the tiled window's edge that way"),
+    ]
+
+    private static let fixed: [KeyBinding] = [
         // Launcher
         KeyBinding(id: "launcher.cmdSpace", keys: ["cmd", "Space"], title: "Open the launcher", group: .launcher, scope: .global,
                    note: "When Settings puts the launcher on ⌘Space and Spotlight doesn't hold it"),
@@ -165,21 +203,23 @@ public enum Keymap {
     }
 
     /// The groups in sheet order, each with its rows in table order. Empty groups are left out.
-    public static var grouped: [(group: KeyBinding.Group, rows: [KeyBinding])] {
+    public static var grouped: [(group: KeyBinding.Group, rows: [KeyBinding])] { grouped(all) }
+
+    static func grouped(_ list: [KeyBinding]) -> [(group: KeyBinding.Group, rows: [KeyBinding])] {
         KeyBinding.Group.allCases.compactMap { g in
-            let rows = all.filter { $0.group == g }
+            let rows = list.filter { $0.group == g }
             return rows.isEmpty ? nil : (g, rows)
         }
     }
 
     /// `polycarp-spaces keys`: a cheat sheet, grouped, with the keys in macOS symbols.
-    public static func cheatSheet(modifierSymbol: String) -> String {
-        let keyWidth = all.map { $0.display(modifierSymbol: modifierSymbol).count }.max() ?? 0
-        let titleWidth = all.map(\.title.count).max() ?? 0
-        let scopeWidth = all.map(\.scope.title.count).max() ?? 0
+    public static func cheatSheet(modifierSymbol: String, rows list: [KeyBinding] = all) -> String {
+        let keyWidth = list.map { $0.display(modifierSymbol: modifierSymbol).count }.max() ?? 0
+        let titleWidth = list.map(\.title.count).max() ?? 0
+        let scopeWidth = list.map(\.scope.title.count).max() ?? 0
         func pad(_ s: String, _ n: Int) -> String { s + String(repeating: " ", count: max(0, n - s.count)) }
         var lines = ["Polycarp shortcuts. Your modifier is \(modifierSymbol) (Settings > Keys); docs/keys.md has the same list."]
-        for (g, rows) in grouped {
+        for (g, rows) in grouped(list) {
             lines.append("")
             lines.append(g.title)
             for r in rows {
@@ -192,8 +232,8 @@ public enum Keymap {
 
     /// `polycarp-spaces keys --json`: an array of {id, keys, display, title, group, scope, note}, in table order; note
     /// is null when the keys always work in their scope.
-    public static func json(modifierSymbol: String) -> String {
-        let rows: [[String: Any]] = all.map { r in
+    public static func json(modifierSymbol: String, rows list: [KeyBinding] = all) -> String {
+        let rows: [[String: Any]] = list.map { r in
             ["id": r.id, "keys": r.keys, "display": r.display(modifierSymbol: modifierSymbol), "title": r.title,
              "group": r.group.rawValue, "scope": r.scope.rawValue, "note": r.note.map { $0 as Any } ?? NSNull()]
         }

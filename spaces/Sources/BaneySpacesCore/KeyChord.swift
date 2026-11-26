@@ -75,6 +75,11 @@ public struct KeyChord: Hashable, Sendable {
     public var symbols: String { parts.map { KeyBinding.modifierSymbols[$0] ?? $0 }.joined() }
 }
 
+public extension KeyChord {
+    /// The modifiers as Carbon's hotkeys take them.
+    var carbon: Int { modifiers.reduce(0) { $0 | [.cmd: 0x100, .shift: 0x200, .opt: 0x800, .ctrl: 0x1000][$1]! } }
+}
+
 /// Every tiling command a key can have, with the key it has until a person picks another ("" is none).
 public enum TilingKeys {
     public static let all: [(name: String, title: String, key: String)] = {

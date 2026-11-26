@@ -184,7 +184,8 @@ final class KeysSheetPanel {
 struct KeysSheetView: View {
     let modifier: String
 
-    private var columns: [[KeyBinding.Group]] { KeysSheetLayout.columns(Keymap.all, count: 3) }
+    private var rows: [KeyBinding] { Keymap.rows(SurfacesStore.shared.current) }
+    private var columns: [[KeyBinding.Group]] { KeysSheetLayout.columns(rows, count: 3) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -214,7 +215,7 @@ struct KeysSheetView: View {
     private func section(_ group: KeyBinding.Group) -> some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(group.title.uppercased()).font(Chrome.font(10.5, .semibold)).kerning(0.6).foregroundStyle(Chrome.muted)
-            ForEach(Keymap.all.filter { $0.group == group }, id: \.id) { row($0) }
+            ForEach(rows.filter { $0.group == group }, id: \.id) { row($0) }
         }
     }
 
