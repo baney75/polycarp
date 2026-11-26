@@ -854,7 +854,7 @@ struct TopBarView: View {
                 OliveMark().fill(s.ink(Chrome.accent)).frame(width: 15, height: 15)
             }
         case .workspaces:
-            WorkspaceStrip(shown: BarWorkspaces.shown(occupied: model.occupied, current: here), here: here,
+            WorkspaceStrip(shown: BarWorkspaces.shown(occupied: model.occupied, current: here), here: here, occupied: model.occupied,
                            elsewhere: Set(model.current.filter { $0.key != display }.values), style: s, region: region, book: styles.book) { model.onPick($0, screen) }
         case .hour:
             words(BarText.hour(model.now, names: model.bar.hourNames), s).foregroundStyle(quiet).modifier(BarInset())

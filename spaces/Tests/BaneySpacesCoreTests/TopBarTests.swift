@@ -191,11 +191,19 @@ final class TopBarTests: XCTestCase {
         XCTAssertFalse(BarLayout.drawn(.custom("x")))
     }
 
-    func testTheNumbersAreOccupiedWorkspacesAndTheCurrentOne() {
-        XCTAssertEqual(BarWorkspaces.shown(occupied: [3, 1], current: 5), [1, 3, 5])
-        XCTAssertEqual(BarWorkspaces.shown(occupied: [], current: 2), [2])
-        XCTAssertEqual(BarWorkspaces.shown(occupied: [2, 7], current: 2), [2, 7], "the current one once")
-        XCTAssertEqual(BarWorkspaces.shown(occupied: [0, 12, 4], current: 4), [4], "only workspaces 1 to 9")
+    func testTheNumbersAreOneToFiveAndAnyOtherOccupiedOrCurrent() {
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [3, 1], current: 3), [1, 2, 3, 4, 5], "Donovan's bar showed only 1 and 3")
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [], current: 1), [1, 2, 3, 4, 5])
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [7], current: 2), [1, 2, 3, 4, 5, 7])
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [], current: 9), [1, 2, 3, 4, 5, 9])
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [2, 7], current: 7), [1, 2, 3, 4, 5, 7], "the current one once")
+        XCTAssertEqual(BarWorkspaces.shown(occupied: [0, 12, 4], current: 4), [1, 2, 3, 4, 5], "only workspaces 1 to 9")
+    }
+
+    func testAnEmptyNumberIsOneWithNoWindowsYoureNotOn() {
+        XCTAssertTrue(BarWorkspaces.isEmpty(2, occupied: [1, 3], current: 3))
+        XCTAssertFalse(BarWorkspaces.isEmpty(1, occupied: [1, 3], current: 3))
+        XCTAssertFalse(BarWorkspaces.isEmpty(4, occupied: [], current: 4), "you're on it")
     }
 
     func testTheCurrentNumbersMarkerFollowsTheTheme() {

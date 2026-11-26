@@ -12,7 +12,8 @@ enum BarWords {
     }
 }
 
-/// A number for each workspace with windows and the one you're on (`BarWorkspaces.shown`), each in a slot of one size,
+/// A number for workspaces 1 to 5, any other with windows and the one you're on (`BarWorkspaces.shown`), the empty ones
+/// at half strength as Omarchy draws them, each in a slot of one size,
 /// with one marker that slides to the one you're on (`BarWorkspaces.marker`). Click a number to go there, or turn the
 /// wheel over them for the one before or after.
 /// The sheet's `bar .workspace` (with `.current` and `:hover`) styles each number; a background or line it sets for
@@ -20,6 +21,8 @@ enum BarWords {
 struct WorkspaceStrip: View {
     let shown: [Int]
     let here: Int
+    /// The workspaces with windows: the rest are drawn at half strength.
+    var occupied: Set<Int> = []
     /// What the other displays show, which the wheel passes over.
     let elsewhere: Set<Int>
     let style: ComputedStyle
@@ -63,6 +66,7 @@ struct WorkspaceStrip: View {
                 BarWords.text("\(n)", w, on ? .semibold : .regular)
                     .monospacedDigit()
                     .foregroundStyle(w.ink(ink(n, on: on)))
+                    .opacity(BarWorkspaces.isEmpty(n, occupied: occupied, current: here) && over != n ? 0.5 : 1)
                     .modifier(StyledText(style: w))
                     .modifier(StyledBox(style: w))
             }

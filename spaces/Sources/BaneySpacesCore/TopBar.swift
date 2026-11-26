@@ -133,10 +133,16 @@ public enum BarWorkspaces {
         case block
     }
 
-    /// Every workspace with windows, and the one you're on, in number order.
+    /// Workspaces always in the bar, with windows or not, as Omarchy keeps 1 to 5 in its Waybar.
+    public static let always = 1...5
+
+    /// Workspaces 1 to 5, any other with windows, and the one you're on, in number order.
     public static func shown(occupied: Set<Int>, current: Int) -> [Int] {
-        Array(occupied.union([current])).filter { Workspaces.range.contains($0) }.sorted()
+        Array(occupied.union([current]).union(always)).filter { Workspaces.range.contains($0) }.sorted()
     }
+
+    /// A number with no windows that you're not on is drawn at half the strength of the others.
+    public static func isEmpty(_ n: Int, occupied: Set<Int>, current: Int) -> Bool { n != current && !occupied.contains(n) }
 
     /// The marker for a theme's indicator: the pill for a `dot`, the line for a `bar` and the block for a
     /// `number-block` (Omarchy's).
