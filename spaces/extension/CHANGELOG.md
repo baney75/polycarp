@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- The polycarp command can be Polycarp Mail's helper on this computer (`polycarp mail host`, started by the browser). It names where Fastmail, iCloud and Proton Mail Bridge accounts are and what each needs.
 - Snooze and reminders in Polycarp Mail. H snoozes a conversation until later today, tomorrow morning, the weekend, next week or a time you pick; it leaves the inbox, G then H lists it, and new mail in it ends the snooze. W, on a conversation where you wrote last, asks for it back in a day, three days or a week if no one replies. Either way it returns at the top of the inbox under Back now, and opening it or pressing E clears that. Both live in this profile only; the account is never told.
 - Polycarp Mail draws only the newest list it loaded, so switching views while an older list is still loading, such as G then D just after new mail arrives, no longer shows the inbox under the Drafts name.
 - Rules in Polycarp Mail, written as plain lines: a search, then "then", then what to do, such as `list:almanac then keep with people` or `from:shop.example then mark read and archive`. A rule can archive, mark read, flag, put mail in a bundle or keep it with people. Edit rules in the command bar opens them; a line Polycarp can't read is named by its number and nothing saves until it is fixed. Bundle rules change the list at once; the rest act only on mail that arrives after the rules were saved, through the account, so mail already there, a newly added account's included, is never touched.
