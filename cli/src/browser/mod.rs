@@ -222,6 +222,10 @@ fn read_args(args: &[OsString]) -> Result<Asked, String> {
     if let Some(flag) = asked.flags.iter().find(|f| !allowed.contains(&f.as_str())) {
         return Err(format!("{flag} is not an option of {}", asked.verb));
     }
+    let mut flags = asked.flags.iter().enumerate();
+    if let Some((_, flag)) = flags.find(|(i, f)| asked.flags[..*i].contains(f)) {
+        return Err(format!("{flag} is given twice"));
+    }
     let has = |f: &str| asked.flags.iter().any(|x| x == f);
     if has("--yes") && !has("--profile") {
         return Err("--yes goes with --profile".into());
@@ -296,7 +300,8 @@ pub fn run(
         return Some(1);
     }
     let resources = resources.unwrap_or_default();
-    if asked.verb == "uninstall" && asked.flags == ["--profile"] {
+    let has = |f: &str| asked.flags.iter().any(|x| x == f);
+    if asked.verb == "uninstall" && has("--profile") && !has("--yes") {
         println!("{}", gone::would_remove(&home));
         return Some(2);
     }
@@ -457,9 +462,23 @@ mod tests {
         let home = t.work().join("home");
         let profile = gone::profile(&home);
         fs::create_dir_all(&profile[0]).unwrap();
-        let args: Vec<OsString> = ["uninstall", "--profile"].iter().map(Into::into).collect();
-        assert_eq!(run(&args, Some(home), Some(t.work()), None), Some(2));
-        assert!(profile[0].exists());
+        for asked in [
+            &["uninstall", "--profile"][..],
+            &["uninstall", "--profile", "--profile"],
+        ] {
+            let args: Vec<OsString> = asked.iter().map(Into::into).collect();
+            assert_eq!(
+                run(&args, Some(home.clone()), Some(t.work()), None),
+                Some(2),
+                "{asked:?}"
+            );
+            assert!(profile[0].exists(), "{asked:?}");
+        }
+        let twice: Vec<OsString> = ["uninstall", "--profile", "--yes", "--yes"]
+            .iter()
+            .map(Into::into)
+            .collect();
+        assert_eq!(read_args(&twice).unwrap_err(), "--yes is given twice");
     }
 
     #[test]
