@@ -524,14 +524,16 @@
     rules.list = R.parse(rules.text).rules;
   }
   // Mark read, flag and archive, for mail that arrived after the rules were saved, through the account like a key press.
+  // Arrival is a pull past an account's cursor: its first pull brings mail that was already there, and is skipped.
   const DOES = [["read", "mark it read", (ad, id, a, ids) => A.actions.markRead(id, ad, S, ids, true)],
     ["flag", "flag it", (ad, id, a, ids) => A.actions.flag(id, ad, S, ids, true)],
     ["archive", "archive it", (ad, id, a, ids) => A.actions.archive(id, ad, S, ids)]];
   async function applyRules(ids) {
+    await loadRules(); // another page may have saved newer rules
     const plan = new Map();
     for (const id of ids) {
       const m = await S.message(id);
-      if (!m || m.folder === "sent" || m.date < rules.saved) continue;
+      if (!m || m.folder === "sent") continue;
       const does = R.actionsFor(rules.list, m);
       for (const [kind] of DOES) {
         if (!does[kind] || (kind === "archive" && m.folder !== "inbox") || (kind === "read" && !m.unread) || (kind === "flag" && m.flagged)) continue;
@@ -744,7 +746,7 @@
     let pending = 0;
     S.onChange((ev) => {
       // Only the page whose pull stored the mail acts on it, so two open pages don't both change the account.
-      if (ev && ev.local && ev.added && ev.added.length && rules.list.length) applyRules(ev.added);
+      if (ev && ev.local && !ev.first && ev.added && ev.added.length) applyRules(ev.added);
       clearTimeout(pending);
       pending = setTimeout(refresh, 120);
     });

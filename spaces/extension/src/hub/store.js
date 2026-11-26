@@ -185,8 +185,9 @@
     if (gone.length) await backend().del("threads", gone);
   }
 
-  // Stores what an adapter sent (raw messages for one account) and returns the threads they touched.
-  function upsert(accountId, raws) {
+  // Stores what an adapter sent (raw messages for one account) and returns the threads they touched. opts.first marks
+  // an account's first pull, whose mail was there before, so its change event says `first`.
+  function upsert(accountId, raws, opts) {
     return queue(async () => {
       const touched = new Set();
       const known = new Map();
@@ -210,7 +211,7 @@
       await backend().put("messages", out);
       await resummarize(touched);
       return { threads: Array.from(touched), added };
-    }).then((r) => { emit({ type: "messages", threads: r.threads, added: r.added }); return r.threads; });
+    }).then((r) => { emit({ type: "messages", threads: r.threads, added: r.added, first: !!(opts && opts.first) }); return r.threads; });
   }
 
   function remove(ids) {

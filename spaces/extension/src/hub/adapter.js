@@ -13,7 +13,8 @@
   //   reply(remoteId, draft)      -> {remoteId}
   //   archive(remoteIds), move(remoteIds, folderId), flag(remoteIds, on), markRead(remoteIds, on) -> true
   //   attachment(remoteId, attachmentId) -> {name, type, bytes: Uint8Array}
-  //   changesSince(cursor)        -> {messages: [raw], removed: [remoteId], cursor}; a null cursor is the first pull
+  //   changesSince(cursor)        -> {messages: [raw], removed: [remoteId], cursor, fresh?}; a null cursor is the first
+  //                                  pull, and `fresh: true` says this one started over too (the server renumbered)
   // A site route (the signed-in page itself) can't send or change anything: it says so in `info().can`.
   const METHODS = ["info", "list", "threads", "read", "search", "send", "reply", "archive", "move", "flag", "markRead", "attachment", "changesSince"];
 
@@ -31,7 +32,8 @@
     const since = (await S.cursor(accountId)) ?? null;
     const r = await adapter.changesSince(since);
     if (!r || !Array.isArray(r.messages) || !Array.isArray(r.removed)) throw new Error("changesSince answered with no messages or removed list");
-    const touched = r.messages.length ? await S.upsert(accountId, r.messages) : [];
+    // A first pull, or one that started over, brings mail that was already there, not mail that just arrived.
+    const touched = r.messages.length ? await S.upsert(accountId, r.messages, { first: since === null || r.fresh === true }) : [];
     if (r.removed.length) await S.remove(r.removed.map((id) => accountId + ":" + id));
     await S.setCursor(accountId, r.cursor);
     return { added: r.messages.length, removed: r.removed.length, threads: touched };

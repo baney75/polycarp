@@ -41,6 +41,8 @@ try {
   await p.click('#tryFake');
   await p.waitForSelector('#rows [data-bundle="newsletters"]');
   const nlBefore = await p.$$eval('#rows [aria-label*="Garden Almanac"]', (os) => os.length);
+  const adaState = () => p.evaluate(async () => (await globalThis.PolycarpHubStore.allMessages()).filter((m) => /^ada\./.test(m.from.addr)).map((m) => m.folder + (m.flagged ? '+f' : '') + (m.unread ? '+u' : '')).sort().join());
+  const adaSeed = await adaState();
   check(nlBefore === 0, 'the almanac starts folded into Newsletters', nlBefore);
 
   // The editor opens from the command bar with the example as notes, and takes focus.
@@ -88,16 +90,38 @@ try {
   check(filed.flagged && filed.folder === 'lists', 'a rule flags mail outside the inbox but archives only from the inbox', await message(p, 'made-up:filed-ada'));
   const sent = await message(p, 'made-up:sent-ada');
   check(sent.folder === 'sent' && !sent.flagged, 'mail in Sent gets no rules', sent);
+  // Arrival counts, not the sender's date: mail dated last month that arrives now gets the rules.
   await deliver(p, { remoteId: 'late-ada', messageId: '<late-ada@x>', from: { name: 'Ada Arden', addr: 'ada.arden@example.com' }, subject: 'From last month', date: Date.now() - 30 * 86400000 });
-  await new Promise((r) => setTimeout(r, 600));
-  const late = await message(p, 'made-up:late-ada');
-  check(late.folder === 'inbox' && !late.flagged, 'older mail that arrives late, dated before the rules, is left alone', late);
+  const late = await until(async () => { const m = await message(p, 'made-up:late-ada'); return m && m.folder === 'archive' && m.flagged && m; });
+  check(!!late, 'mail dated before the rules that arrives after them gets them', await message(p, 'made-up:late-ada'));
+
+  // An account added after the rules were saved keeps its mail as it was: its first pull is not new mail.
+  const command = async (label) => {
+    await p.keyboard.press('Meta+k');
+    await p.waitForSelector('#cmd[open]');
+    await p.fill('#cmdIn', label.toLowerCase());
+    await p.waitForFunction((l) => document.querySelector('#cmdList li span')?.textContent === l, label);
+    await p.keyboard.press('Enter');
+  };
+  await command('Remove the made-up mail');
+  await p.waitForSelector('#tryFake', { state: 'visible' });
+  await command('Try it with made-up mail');
+  await p.waitForSelector('#rows [role="option"]');
+  await new Promise((r) => setTimeout(r, 800)); // a rule would act right after the pull
+  const adaAgain = await adaState();
+  check(adaAgain === adaSeed, 'an account added after the rules keeps its mail untouched', { adaSeed, adaAgain });
+
+  // Rules another Mail page saved are the ones this page acts with.
+  await p.evaluate(() => globalThis.PolycarpHubStore.setMeta('rules', { text: 'list:almanac then keep with people\nfrom:ada then flag, archive\nfrom:cleo then flag', saved: Date.now() }));
+  await deliver(p, { remoteId: 'cleo-2', messageId: '<cleo-2@x>', from: { name: 'Cleo Corran', addr: 'cleo.corran@example.com' }, subject: 'Second note' });
+  const cleo2 = await until(async () => { const m = await message(p, 'made-up:cleo-2'); return m && m.flagged && m; });
+  check(!!cleo2 && cleo2.folder === 'inbox', 'rules saved in another page act on the next new mail', await message(p, 'made-up:cleo-2'));
 
   // The rules last across a reload, and the editor shows them as saved.
   await p.reload();
   await p.waitForSelector('#rows [role="option"]');
   await openRules(p);
-  check((await p.inputValue('#rulesText')) === 'list:almanac then keep with people\nfrom:ada then flag, archive', 'the rules come back as written after a reload', await p.inputValue('#rulesText'));
+  check((await p.inputValue('#rulesText')) === 'list:almanac then keep with people\nfrom:ada then flag, archive\nfrom:cleo then flag', 'the rules come back as written after a reload', await p.inputValue('#rulesText'));
   await p.keyboard.press('e');
   check((await p.inputValue('#rulesText')).endsWith('e') && (await p.$$eval('#rows [role="option"]', (os) => os.length)) > 0, 'keys type into the editor and do not act on the list', null);
   const archived = () => p.evaluate(async () => (await globalThis.PolycarpHubStore.allMessages()).filter((m) => m.folder === 'archive').length);
