@@ -308,6 +308,8 @@
       subject: String(d.subject || ""), text: String(d.text || ""),
       replyTo: String(d.replyTo || ""), threadId: String(d.threadId || ""),
       by: old ? old.by : String(d.by || ""),
+      // Any change to a draft takes back a send that was waiting on it.
+      sendAt: 0,
       updated: Date.now()
     };
     await queue(() => backend().put("drafts", [rec]));
@@ -318,6 +320,16 @@
   async function drafts(account) {
     const all = await backend().all("drafts");
     return all.filter((d) => !account || d.account === account).sort((a, b) => b.updated - a.updated);
+  }
+  // When a waiting send of this draft goes, or 0 for none. Kept in the store, so a reload or a second page finds it.
+  function setSendAt(id, at) {
+    return queue(async () => {
+      const d = await backend().get("drafts", id);
+      if (!d) return null;
+      const rec = Object.assign({}, d, { sendAt: at });
+      await backend().put("drafts", [rec]);
+      return rec;
+    }).then((rec) => { emit({ type: "drafts" }); return rec; });
   }
   async function deleteDraft(id) {
     await queue(() => backend().del("drafts", [id]));
@@ -335,7 +347,7 @@
     DB_NAME, useMemoryStore, open: () => backend().open().then(() => true), onChange,
     putAccount, accounts, removeAccount,
     upsert, remove, update, restore, message, thread, threads, after, allMessages, allThreads,
-    saveDraft, draft, drafts, deleteDraft,
+    saveDraft, draft, drafts, setSendAt, deleteDraft,
     getMeta, setMeta, cursor, setCursor
   };
 })();

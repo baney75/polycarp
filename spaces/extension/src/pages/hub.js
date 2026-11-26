@@ -634,6 +634,8 @@
     });
     let pending = 0;
     S.onChange(() => { clearTimeout(pending); pending = setTimeout(refresh, 120); });
+    // Closing the page during the wait asks first; if it closes anyway, the send finishes when Mail opens again.
+    addEventListener("beforeunload", (e) => { if (outbox.size) { e.preventDefault(); e.returnValue = ""; } });
   }
 
   async function start() {
@@ -642,6 +644,15 @@
     await S.open();
     await loadAccounts();
     await refresh();
+    // A send that was waiting when the page last closed goes now, or waits out what is left of its 10 seconds.
+    const left = await outbox.resume();
+    if (left.waiting.length) {
+      const id = left.waiting[0];
+      st.undo = async () => { if (outbox.undo(id)) await resume(id); else toast("It already went."); };
+      toast(left.waiting.length === 1 ? "A message you sent is still waiting to go" : left.waiting.length + " messages you sent are still waiting to go", true, SEND_DELAY);
+    } else if (left.sent.length) {
+      toast(left.sent.length === 1 ? "A message you sent before the page closed has gone" : left.sent.length + " messages you sent before the page closed have gone");
+    }
     await pullAll();
     $("rows").focus({ preventScroll: true });
     setInterval(() => { if (!document.hidden) pullAll(); }, 60000);

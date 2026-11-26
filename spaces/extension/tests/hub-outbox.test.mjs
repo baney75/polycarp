@@ -20,8 +20,10 @@ const X = globalThis.PolycarpHubOutbox;
 function clock() {
   let n = 0;
   const due = new Map();
+  const waits = [];
   return {
-    setTimer: (f) => { due.set(++n, f); return n; },
+    waits,
+    setTimer: (f, ms) => { due.set(++n, f); waits.push(ms); return n; },
     clearTimer: (id) => { due.delete(id); },
     async tick() { const fs = Array.from(due.values()); due.clear(); for (const f of fs) await f(); },
     get count() { return due.size; }
@@ -123,4 +125,102 @@ test("removing an account takes its drafts", async () => {
 test("made-up mail is all in the past, so a reply sent now is the newest", () => {
   const now = Date.UTC(2026, 10, 20, 15);
   for (const seed of [1, 2, 3, 7]) assert.ok(F.corpus({ seed, size: 300, now }).every((m) => m.date < now), "seed " + seed);
+});
+
+// A lock shared by two "pages", like navigator.locks: one holder per name at a time.
+function mutex() {
+  const tails = new Map();
+  return (name, fn) => {
+    const prev = tails.get(name) || Promise.resolve();
+    const run = prev.then(() => fn());
+    tails.set(name, run.catch(() => {}));
+    return run;
+  };
+}
+function page(ad, lock, now) {
+  const c = clock();
+  const sent = [], failed = [];
+  const box = X.create({ adapterFor: (id) => (id === "home" ? ad : null), setTimer: c.setTimer, clearTimer: c.clearTimer, lock, now: now || (() => Date.now()), onSent: (d) => sent.push(d.id), onFail: (d, e) => failed.push(e.message) });
+  return { c, box, sent, failed };
+}
+
+test("a send waiting when the page closed goes once when Mail opens again", async () => {
+  const { ad, box } = await setup();
+  const d = await S.saveDraft({ account: "home", to: "ada@example.com", subject: "Closed", text: "Bye" });
+  const r = await box.send(d.id);
+  assert.equal((await S.draft(d.id)).sendAt, r.sendAt, "the send time is kept on the draft");
+  // The page closes: its timer never fires. A new page opens after the wait.
+  const later = page(ad, mutex(), () => r.sendAt + 1);
+  const got = await later.box.resume();
+  assert.deepEqual(got, { sent: [d.id], waiting: [] });
+  assert.equal(ad.sent.length, 1);
+  assert.equal(await S.draft(d.id), undefined);
+  assert.deepEqual(await later.box.resume(), { sent: [], waiting: [] }, "a second open sends nothing");
+  assert.equal(ad.sent.length, 1);
+});
+
+test("a send still inside its wait is armed again for what is left, and can be taken back", async () => {
+  const { ad, box } = await setup();
+  const d = await S.saveDraft({ account: "home", to: "ada@example.com", text: "Soon" });
+  const r = await box.send(d.id);
+  const p = page(ad, mutex(), () => r.sendAt - 4000);
+  assert.deepEqual(await p.box.resume(), { sent: [], waiting: [d.id] });
+  assert.equal(ad.sent.length, 0, "nothing goes before its time");
+  assert.equal(p.box.waiting(d.id), true);
+  assert.deepEqual(p.c.waits, [4000], "it waits only what is left");
+  assert.equal(p.box.undo(d.id), true);
+  await p.c.tick();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(ad.sent.length, 0);
+  assert.equal((await S.draft(d.id)).sendAt, 0, "undo is kept on the draft");
+  const q = page(ad, mutex(), () => r.sendAt + 1);
+  assert.deepEqual(await q.box.resume(), { sent: [], waiting: [] }, "an undone send stays undone after another reload");
+});
+
+test("two open pages send a message once", async () => {
+  const { ad } = await setup();
+  const lock = mutex();
+  const a = page(ad, lock), b = page(ad, lock);
+  const d = await S.saveDraft({ account: "home", to: "ada@example.com", text: "Once" });
+  await a.box.send(d.id);
+  // The second page opened during the wait and armed the same send.
+  assert.deepEqual((await b.box.resume()).waiting, [d.id]);
+  await Promise.all([a.c.tick(), b.c.tick()]);
+  assert.equal(ad.sent.length, 1);
+  assert.equal(a.sent.length + b.sent.length, 1);
+});
+
+test("undo in one page stops the send armed in another", async () => {
+  const { ad } = await setup();
+  const lock = mutex();
+  const a = page(ad, lock), b = page(ad, lock);
+  const d = await S.saveDraft({ account: "home", to: "ada@example.com", text: "Stop" });
+  await a.box.send(d.id);
+  await b.box.resume();
+  assert.equal(a.box.undo(d.id), true);
+  await new Promise((r) => setTimeout(r, 10));
+  await b.c.tick();
+  assert.equal(ad.sent.length, 0);
+  assert.ok(await S.draft(d.id));
+});
+
+test("editing a draft during the wait takes the send back", async () => {
+  const { ad, c, box } = await setup();
+  const d = await S.saveDraft({ account: "home", to: "ada@example.com", text: "First" });
+  await box.send(d.id);
+  await S.saveDraft(Object.assign({}, await S.draft(d.id), { text: "Second thoughts" }));
+  await c.tick();
+  assert.equal(ad.sent.length, 0);
+  assert.equal((await S.draft(d.id)).text, "Second thoughts");
+});
+
+test("a refused send clears its time, so a reload does not try again", async () => {
+  const { ad, c, box, failed } = await setup(["send"]);
+  const d = await S.saveDraft({ account: "home", to: "ada@example.com", text: "No" });
+  const r = await box.send(d.id);
+  await c.tick();
+  assert.equal(failed.length, 1);
+  assert.equal((await S.draft(d.id)).sendAt, 0);
+  const p = page(ad, mutex(), () => r.sendAt + 1);
+  assert.deepEqual(await p.box.resume(), { sent: [], waiting: [] });
 });

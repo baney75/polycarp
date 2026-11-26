@@ -134,6 +134,31 @@ try {
   await p.waitForFunction(() => document.getElementById('toastText').textContent === 'Add someone to send it to.');
   check(!!(await p.$('form.compose')), 'a draft with no one to send to stays open and says why', null);
 
+  // Closing during the wait asks first; reloaded anyway, the send waits out its time and goes once.
+  await p.keyboard.press('Escape');
+  const asked = [];
+  const onDialog = (d) => { asked.push(d.type()); d.accept().catch(() => {}); };
+  p.on('dialog', onDialog);
+  await p.focus('#rows');
+  await p.keyboard.press('c');
+  await p.waitForSelector('form.compose');
+  await p.keyboard.type('di@example.com');
+  await p.fill('form.compose [name=subject]', 'Left early');
+  await p.focus('form.compose [name=text]');
+  await p.keyboard.press('Meta+Enter');
+  await p.waitForFunction(() => document.getElementById('toastText').textContent === 'Sending in 10 seconds');
+  await p.clock.runFor(3000);
+  await p.reload();
+  await p.waitForSelector('#rows [role="option"]');
+  await p.waitForFunction(() => /still waiting to go/.test(document.getElementById('toastText').textContent));
+  check(asked.includes('beforeunload'), 'closing the page during the wait asks first', asked);
+  check((await sentWith(p, 'Left early')) === 0, 'after a reload the send still waits out its time', null);
+  await p.clock.runFor(8000);
+  await p.waitForFunction(() => document.getElementById('toastText').textContent === 'Sent');
+  const left = await drafts(p);
+  check((await sentWith(p, 'Left early')) === 1 && !left.some((d) => d.subject === 'Left early'), 'then it goes, once, and leaves Drafts', left);
+  p.off('dialog', onDialog);
+
   // Narrow: new mail fills the page without sideways scroll.
   await p.keyboard.press('Escape');
   await p.setViewportSize({ width: 390, height: 844 });
