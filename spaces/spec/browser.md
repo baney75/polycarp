@@ -10,7 +10,8 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   (`Fuzzy`): the whole title 1000, its start 900, the site's start 880, a word's start 700 in the title and 650 in the
   address, inside 500 and 450, less a point for each character of the title, up to 99. Up to four words typed apart must
   all be there, and rank as the weakest of them, at most 600; found together as typed, they rank as one word does. A
-  row's use adds up to 60. Ties go to the row added last.
+  row's use adds up to 60. Ties go to the row added last. A row is offered only when its match, before its use, is 380
+  or more.
 - **R-B2 Speed.** With 2,000 tabs and 50,000 visited pages a key press's search stays under 16 ms at p90
   (`BrowserTableTests` and `BrowserSpeedTests`, built optimized as it ships, for the slowest of the searches it tries).
 - **R-B3 Private windows.** Nothing from a private window enters the record. A tab, tab group or download counts only when the
@@ -22,7 +23,8 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   encoded, printing one says only its kind, and an id says nothing of the page. A name and
   password in an address are dropped as it is read.
 - **R-B6 One place, one row.** An address that is open in a tab is offered as that tab and not again as a bookmark, a
-  visited page or a download; a bookmark goes before a visited page. Two tabs of one page are two rows. A tab's id is the
+  visited page or a download, even when only the bookmark matched; the tab is this browser's if it has one open, its
+  front tab first. A bookmark goes before a visited page. Two tabs of one page are two rows. A tab's id is the
   session engine's id for it, so a tab both know is one row.
 - **R-B7 Limits.** At most 5,000 tabs, 500 tab groups, 20,000 bookmarks, 50,000 visited pages and 500 downloads are kept from one browser
   profile. A tab's use is 25, a tab group's 30 and a bookmark's 10; a visited page's is its visits, up to 30, and 20 for today, 12 for this
@@ -73,3 +75,5 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   window; it is the launcher's query and nothing keeps it. "Quick Look at Page" asks the extension for the page's readable
   text, at most 100,000 letters, and shows it until Esc or a click elsewhere; the app takes only the answer for the tab it
   asked about, from that browser, within 10 seconds, keeps it nowhere else, and a text prints as its size only.
+- **R-B19 A list in pieces.** A change that comes while a list comes in pieces holds: a row it closed or changed stays so
+  when a later piece, read before it, still has the old one.
