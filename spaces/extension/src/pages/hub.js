@@ -5,6 +5,7 @@
   const S = globalThis.PolycarpHubStore;
   const A = globalThis.PolycarpHubAdapter;
   const O = globalThis.PolycarpHubOrganize;
+  const L = globalThis.PolycarpHubLater;
   const I = globalThis.PolycarpIcons;
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -16,12 +17,13 @@
     archive: { name: "Archive", folder: "archive" },
     sent: { name: "Sent", folder: "sent" },
     drafts: { name: "Drafts", drafts: true },
-    search: { name: "Search", search: true }
+    search: { name: "Search", search: true },
+    snoozed: { name: "Snoozed", snoozed: true }
   };
   for (const b of O.BUNDLES) VIEWS[b.id] = { name: b.name, folder: "inbox", bundle: b.id };
 
   const finder = globalThis.PolycarpHubSearch.live(S);
-  const st = { view: "inbox", q: "", account: "", threads: [], more: false, opts: [], sel: -1, open: "", openSummary: null, loaded: 0, accounts: new Map(), undo: null };
+  const st = { view: "inbox", q: "", account: "", threads: [], more: false, opts: [], back: [], sel: -1, open: "", openSummary: null, loaded: 0, accounts: new Map(), undo: null };
 
   // ---------- Accounts ----------
 
@@ -62,16 +64,22 @@
     if (d.getFullYear() === now.getFullYear()) return d.toLocaleDateString([], { month: "short", day: "numeric" });
     return d.toLocaleDateString([], { year: "2-digit", month: "numeric", day: "numeric" });
   }
+  // A time ahead, said in full: "Wed, Nov 26, 8:00 AM".
+  const soon = (ms) => new Date(ms).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
   const who = (t) => (t.people && t.people.length ? t.people.map((p) => p.name || p.addr).join(", ") : (t.from && (t.from.name || t.from.addr)) || "Me");
 
   // Drafts list like threads: who they go to, the subject and the start of the text.
   const draftRow = (d) => ({ id: d.id, draft: true, by: d.by, account: d.account, subject: d.subject, people: d.to, lastDate: d.updated, snippet: d.text.slice(0, 160), unread: 0, count: 1 });
 
-  // What the current view lists. It changes nothing itself: refresh applies the newest answer only.
+  const mine = (t) => !st.account || t.account === st.account;
+  // What the current view shows, worked out without touching the page; refresh applies it only if nothing newer began.
   async function load() {
     const v = VIEWS[st.view];
-    if (v.drafts) return { threads: (await S.drafts(st.account || undefined)).map(draftRow), more: false };
-    if (v.search) return { threads: await found(st.q, 500), more: false };
+    const now = Date.now();
+    const one = (threads) => ({ threads, more: false, back: [] });
+    if (v.snoozed) return one((await found("is:snoozed", 500)).filter((t) => L.sleeping(t, now) && mine(t)));
+    if (v.drafts) return one((await S.drafts(st.account || undefined)).map(draftRow));
+    if (v.search) return one(await found(st.q, 500));
     // A refresh keeps every page already shown.
     const q = { folder: v.folder, limit: Math.max(PAGE, st.loaded || 0) };
     if (st.account) q.account = st.account;
@@ -79,8 +87,11 @@
     const more = list.length === q.limit;
     const loaded = list.length;
     if (v.bundle) list = list.filter((t) => O.bundleOf(t, decide) === v.bundle);
-    return { threads: list, more, loaded };
+    // Snoozed mail is out of the inbox; what is back (a snooze over, a reply that never came) leads the inbox.
+    const back = v.fold ? (await found("is:due", 200)).filter((t) => L.back(t, now) && mine(t)) : [];
+    return { threads: back.concat(list.filter((t) => keepIn(v, t, now, back))), more, loaded, back };
   }
+  const keepIn = (v, t, now, back) => !(v.folder === "inbox" && L.sleeping(t, now)) && !back.some((b) => b.id === t.id);
   async function loadMore() {
     const last = st.threads[st.threads.length - 1];
     if (!last) return;
@@ -91,7 +102,8 @@
     st.more = list.length === PAGE;
     st.loaded = (st.loaded || 0) + list.length;
     if (v.bundle) list = list.filter((t) => O.bundleOf(t, decide) === v.bundle);
-    st.threads = st.threads.concat(list);
+    const now = Date.now();
+    st.threads = st.threads.concat(list.filter((t) => keepIn(v, t, now, st.back)));
     render();
   }
 
@@ -101,7 +113,10 @@
     o.setAttribute("role", "option");
     if (t.draft) o.dataset.draft = t.id; else o.dataset.thread = t.id;
     const name = t.draft ? (t.people.length ? "To " + who(t) : "No one yet") : who(t);
-    o.setAttribute("aria-label", [t.draft ? (t.by ? "Draft by an agent" : "Draft") : "", t.unread ? "Unread" : "", name, t.subject || "(no subject)", t.flagged ? "flagged" : "", t.count > 1 ? t.count + " messages" : "", when(t.lastDate)].filter(Boolean).join(", "));
+    const now = Date.now();
+    const note = t.draft ? "" : L.back(t, now) ? L.why(t, now, when)
+      : L.sleeping(t, now) ? "Until " + soon(t.snoozeUntil) : t.remindAt > now && L.yoursLast(t) ? "Back " + soon(t.remindAt) + " if no reply" : "";
+    o.setAttribute("aria-label", [t.draft ? (t.by ? "Draft by an agent" : "Draft") : "", note, t.unread ? "Unread" : "", name, t.subject || "(no subject)", t.flagged ? "flagged" : "", t.count > 1 ? t.count + " messages" : "", when(t.lastDate)].filter(Boolean).join(", "));
     o.append(el("span", "dot"));
     const b = el("b", "", name + (t.count > 1 ? " (" + t.count + ")" : ""));
     o.append(b, el("span", "when", when(t.lastDate)));
@@ -109,6 +124,7 @@
     if (t.snippet) s.append(el("span", "muted", t.snippet));
     if (t.flagged) { const f = el("span", "flag"); f.innerHTML = I.icon("flag"); s.prepend(f); }
     if (t.draft) s.prepend(el("span", "tag", t.by ? "Agent's draft" : "Draft"));
+    if (note) s.prepend(el("span", "tag", note));
     o.append(s);
     return o;
   }
@@ -136,7 +152,8 @@
     const rows = $("rows");
     const keep = st.opts[st.sel] && st.opts[st.sel].id;
     rows.replaceChildren();
-    const gs = O.groups(st.threads, Date.now(), !!v.fold, decide);
+    const gs = O.groups(st.threads.slice(st.back.length), Date.now(), !!v.fold, decide);
+    if (st.back.length) gs.unshift({ name: "Back now", threads: st.back, bundles: [] });
     gs.forEach((g, i) => {
       const grp = el("div");
       grp.setAttribute("role", "group");
@@ -156,7 +173,7 @@
     rows.hidden = none;
     $("tryFake").hidden = st.accounts.size > 0;
     $("emptyText").textContent = st.accounts.size
-      ? (st.view === "inbox" ? "Nothing new. Everything here is read and put away." : v.search ? "No mail matches " + st.q + "." : "Nothing in " + v.name + ".")
+      ? (st.view === "inbox" ? "Nothing new. Everything here is read and put away." : v.search ? "No mail matches " + st.q + "." : v.snoozed ? "Nothing is snoozed." : "Nothing in " + v.name + ".")
       : "Accounts you add show their mail here, in one inbox, with people first.";
     renderAccounts();
   }
@@ -195,9 +212,7 @@
     const n = ++loads;
     const got = await load();
     if (n !== loads) return;
-    st.threads = got.threads;
-    st.more = got.more;
-    if (got.loaded !== undefined) st.loaded = got.loaded;
+    Object.assign(st, got);
     render();
     if (st.open && !compose.isOpen) {
       const got = await S.thread(st.open);
@@ -297,6 +312,8 @@
     if (t.folder === "inbox") act("archive", "Archive", "E", () => archive(t));
     else if (t.folder !== "sent") act("mail", "Move to the inbox", "I", () => moveTo(t, "inbox"));
     act("flag", "Flag", "S", () => flag(t), !!t.flagged);
+    if (t.folder === "inbox") act("clock", "Snooze", "H", () => openLater("snooze", t));
+    if (L.yoursLast(t)) act("rotate", "Remind me if no reply", "W", () => openLater("remind", t));
     act("mail", t.unread ? "Mark read" : "Mark unread", "U", () => unread(t));
     head.append(h, acts);
     wrap.append(back, head);
@@ -354,6 +371,8 @@
     }
     const narrow = matchMedia("(max-width: 760px)").matches;
     if (narrow) $("subject").focus();
+    // Opening what came back is seeing it: it leaves Back now.
+    if (L.back(got.summary, Date.now())) clearLater(got.messages);
     if (got.summary.unread) {
       const a = st.accounts.get(got.summary.account);
       const ids = got.messages.filter((m) => m.unread).map((m) => m.remoteId);
@@ -469,6 +488,16 @@
     await refresh();
   }
   async function archive(t) {
+    // Archiving what came back is done with it; one that only waited for a reply (in Sent) just leaves Back now.
+    if (L.back(t, Date.now())) {
+      const got = await S.thread(t.id);
+      const r = got && (await clearLater(got.messages));
+      if (r && t.folder !== "inbox") {
+        if (st.open === t.id) closeThread();
+        st.undo = () => S.restore(r.before, ["snoozeUntil", "remindAt"]);
+        return toast("Done with it", true);
+      }
+    }
     const ids = await idsIn(t, (m) => m.folder === "inbox");
     if (!ids.length) return;
     if (st.open === t.id) closeThread();
@@ -499,6 +528,69 @@
     st.undo = null;
     try { await fn(); toast("Undone"); } catch (e) { toast("Couldn't undo: " + e.message); }
     await refresh();
+  }
+
+  // ---------- Later: snooze, and back if no one replies ----------
+
+  const clearLater = (messages) => S.update(messages.map((m) => m.id), { snoozeUntil: 0, remindAt: 0 });
+  async function later(t, kind, at) {
+    const got = await S.thread(t.id);
+    if (!got) return;
+    const field = kind === "snooze" ? "snoozeUntil" : "remindAt";
+    const r = await S.update(got.messages.map((m) => m.id), { [field]: at });
+    if (kind === "snooze" && st.open === t.id) closeThread();
+    st.undo = () => S.restore(r.before, [field]);
+    toast(kind === "snooze" ? "Snoozed until " + soon(at) : "Back " + soon(at) + " if no one replies", true);
+  }
+  const pad = (n) => String(n).padStart(2, "0");
+  const localValue = (ms) => { const d = new Date(ms); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()) + "T" + pad(d.getHours()) + ":" + pad(d.getMinutes()); };
+  let laterFor = null;
+  function openLater(kind, t) {
+    if (!t || t.draft) return;
+    if (kind === "snooze" && t.folder !== "inbox") return toast("Only mail in the inbox can be snoozed.");
+    if (kind === "remind" && !L.yoursLast(t)) return toast("A reminder is for a conversation where you wrote last.");
+    const now = Date.now();
+    laterFor = { kind, t };
+    $("laterTitle").textContent = kind === "snooze" ? "Snooze until" : "Remind me if no one replies";
+    $("laterHelp").textContent = kind === "snooze"
+      ? "It leaves the inbox and comes back at the top, under Back now. New mail in it brings it back sooner."
+      : "If no one has answered by then, it comes back to the top of the inbox, under Back now.";
+    const cs = kind === "snooze" ? L.snoozeChoices(now) : L.remindChoices(now);
+    $("laterChoices").replaceChildren(...cs.map((c, i) => {
+      const b = el("button", "btn");
+      b.type = "button";
+      b.setAttribute("aria-keyshortcuts", String(i + 1));
+      b.append(el("kbd", "", String(i + 1)), " " + c.label + " ", el("span", "muted", soon(c.at)));
+      b.addEventListener("click", () => pickLater(c.at));
+      return b;
+    }));
+    $("laterAt").value = "";
+    $("laterAt").min = localValue(now);
+    $("laterAt").removeAttribute("aria-invalid");
+    $("laterErr").textContent = "";
+    $("later").showModal();
+    $("laterChoices").firstChild.focus();
+  }
+  function pickLater(at) {
+    const f = laterFor;
+    laterFor = null;
+    $("later").close();
+    if (f) later(f.t, f.kind, at);
+  }
+  function setLater(e) {
+    e.preventDefault();
+    const at = L.picked($("laterAt").value, Date.now());
+    if (at) return pickLater(at);
+    $("laterErr").textContent = "Pick a day and time after now.";
+    $("laterAt").setAttribute("aria-invalid", "true");
+    $("laterAt").focus();
+  }
+  // Each minute: when something has come back since the list was drawn, draw it again.
+  async function wake() {
+    if (!VIEWS[st.view].fold) return;
+    const now = Date.now();
+    const ids = (list) => list.map((t) => t.id).sort().join();
+    if (ids((await found("is:due", 200)).filter((t) => L.back(t, now) && mine(t))) !== ids(st.back)) refresh();
   }
 
   let toastTimer = 0;
@@ -583,6 +675,7 @@
       { label: "Go to Archive", key: "G A", run: () => go("archive") },
       { label: "Go to Sent", key: "G S", run: () => go("sent") },
       { label: "Go to Drafts", key: "G D", run: () => go("drafts") },
+      { label: "Go to Snoozed", key: "G H", run: () => go("snoozed") },
       { label: "Write a message", key: "C", run: write },
       { label: "Reply", key: "R", run: () => { const t = current(); if (t) reply(t); } },
       ...O.BUNDLES.map((b) => ({ label: "Open " + b.name, key: "", run: () => go(b.id) })),
@@ -593,6 +686,8 @@
       { label: "Archive", key: "E", run: () => { const t = current(); if (t) archive(t); } },
       { label: "Flag", key: "S", run: () => { const t = current(); if (t) flag(t); } },
       { label: "Mark read or unread", key: "U", run: () => { const t = current(); if (t) unread(t); } },
+      { label: "Snooze", key: "H", run: () => openLater("snooze", current()) },
+      { label: "Remind me if no reply", key: "W", run: () => openLater("remind", current()) },
       { label: "Undo", key: "Z", run: undo }
     ];
     if (!st.accounts.has(MADE_UP)) list.push({ label: "Try it with made-up mail", key: "", run: tryMadeUp });
@@ -666,13 +761,13 @@
   let gPending = 0;
   function onKey(e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCmd(); return; }
-    if ($("cmd").open || $("rules").open || e.metaKey || e.ctrlKey || e.altKey) return;
+    if ($("cmd").open || $("rules").open || $("later").open || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
     const k = e.key;
     if (gPending) {
       clearTimeout(gPending);
       gPending = 0;
-      const to = { i: "inbox", a: "archive", s: "sent", d: "drafts" }[k];
+      const to = { i: "inbox", a: "archive", s: "sent", d: "drafts", h: "snoozed" }[k];
       if (to) { e.preventDefault(); go(to); }
       return;
     }
@@ -692,10 +787,12 @@
         }
         case "r": if (t && !t.draft) reply(t); return !!t;
         case "c": write(); return true;
-        case "e": if (t && t.folder === "inbox") archive(t); return !!t;
+        case "e": if (t && (t.folder === "inbox" || L.back(t, Date.now()))) archive(t); return !!t;
         case "i": if (t && t.folder !== "inbox") moveTo(t, "inbox"); return !!t;
         case "s": if (t) flag(t); return !!t;
         case "u": if (t) unread(t); return !!t;
+        case "h": openLater("snooze", t); return !!t;
+        case "w": openLater("remind", t); return !!t;
         case "z": undo(); return true;
         case "g": gPending = setTimeout(() => { gPending = 0; }, 1200); return true;
         case "/": openCmd(); return true;
@@ -743,6 +840,13 @@
     $("rulesText").addEventListener("input", showRuleErrors);
     $("rulesText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveRules(e); });
     $("rulesCancel").addEventListener("click", () => $("rules").close());
+    $("laterForm").addEventListener("submit", setLater);
+    $("laterCancel").addEventListener("click", () => $("later").close());
+    $("later").addEventListener("close", () => { laterFor = null; });
+    $("later").addEventListener("keydown", (e) => {
+      const b = /^[1-9]$/.test(e.key) && e.target.tagName !== "INPUT" && $("laterChoices").children[+e.key - 1];
+      if (b) { e.preventDefault(); b.click(); }
+    });
     let pending = 0;
     S.onChange((ev) => {
       // Only the page whose pull stored the mail acts on it, so two open pages don't both change the account.
@@ -774,7 +878,7 @@
     }
     await pullAll();
     $("rows").focus({ preventScroll: true });
-    setInterval(() => { if (!document.hidden) pullAll(); }, 60000);
+    setInterval(() => { if (!document.hidden) pullAll().then(wake); }, 60000);
   }
   start().catch((e) => toast("The mail store didn't open: " + e.message));
 })();

@@ -44,6 +44,16 @@
     <div class="cbar"><button class="btn primary" id="rulesSave" type="submit">Save rules</button><button class="btn quiet" id="rulesCancel" type="button">Cancel</button></div>
   </form>
 </dialog>
+<dialog class="rules later" id="later" aria-labelledby="laterTitle" aria-describedby="laterHelp">
+  <form method="dialog" id="laterForm" novalidate>
+    <h2 id="laterTitle">Snooze until</h2>
+    <p id="laterHelp"></p>
+    <div class="choices" id="laterChoices"></div>
+    <div class="pick"><label for="laterAt">Or pick a day and time</label><input id="laterAt" type="datetime-local" aria-describedby="laterErr"><button class="btn" id="laterSet" type="submit">Set</button></div>
+    <p class="err" id="laterErr" aria-live="polite"></p>
+    <div class="cbar"><button class="btn quiet" id="laterCancel" type="button">Cancel</button></div>
+  </form>
+</dialog>
 <div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button class="btn quiet" id="toastUndo" type="button">Undo <kbd>Z</kbd></button></div>
 <script src="../shared/core.js"></script>
 <script src="../shared/icons.js"></script>
@@ -56,6 +66,7 @@
 <script src="../hub/organize.js"></script>
 <script src="../hub/search.js"></script>
 <script src="../hub/rules.js"></script>
+<script src="../hub/later.js"></script>
 <script src="../hub/outbox.js"></script>
 <script src="hub-compose.js"></script>
 <script src="hub.js"></script>
