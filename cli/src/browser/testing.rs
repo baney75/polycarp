@@ -22,6 +22,8 @@ const IMAGE: &str = "a made-up disk image";
 pub enum Failure {
     SaysNo,
     CannotRun,
+    /// Ctrl-C came while it ran.
+    Stopped,
 }
 
 pub struct Scene {
@@ -450,6 +452,7 @@ impl Tools for Fake {
                         ..Ran::default()
                     }),
                     Failure::CannotRun => Err(io::ErrorKind::NotFound.into()),
+                    Failure::Stopped => Err(io::ErrorKind::Interrupted.into()),
                 };
             }
         }

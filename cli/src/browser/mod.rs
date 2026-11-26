@@ -57,7 +57,11 @@ impl fmt::Display for Refused {
 
 /// Maps an I/O error to a refusal at `check`, saying what was being done.
 pub fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error) -> Refused + 'a {
-    move |e| Refused::new(check, format!("{doing}: {e}"))
+    move |e| match e.kind() {
+        // Only Ctrl-C interrupts what this command runs.
+        io::ErrorKind::Interrupted => Refused::new(progress::STOPPED, check),
+        _ => Refused::new(check, format!("{doing}: {e}")),
+    }
 }
 
 /// The folders one run uses.
@@ -163,7 +167,7 @@ fn build(
     release: &release::Release,
     progress: &Progress,
 ) -> Result<(PathBuf, Option<&'static str>), Refused> {
-    progress.begin(Step::Verify);
+    progress.begin(Step::Verify)?;
     let changes = change::Changes::read(&place.parts)?;
     let (identity, note) = sign::Identity::find(tools, &place.parts)?;
     let certificate = identity.certificate();
@@ -174,7 +178,7 @@ fn build(
     }
     let app = source::unpack(tools, dmg, work, &release.version)?;
     progress.end(None);
-    progress.begin(Step::Build);
+    progress.begin(Step::Build)?;
     change::apply(tools, &app, &place.parts, &changes)?;
     pages::put_in(tools, &app, place, &changes)?;
     let built = spot::Built {
@@ -188,11 +192,11 @@ fn build(
         .write(&app)
         .map_err(refuse("built-in pages", "marking the build"))?;
     progress.end(None);
-    progress.begin(Step::Sign);
+    progress.begin(Step::Sign)?;
     identity.again(tools, &place.parts)?;
     sign::sign(tools, &app, work, &identity, &changes)?;
     progress.end(None);
-    progress.begin(Step::Check);
+    progress.begin(Step::Check)?;
     start::check(tools, &app, work, &changes)?;
     progress.end(None);
     Ok((app, note))
@@ -358,7 +362,10 @@ pub fn run(
                 host: app.map(|a| a.join("Contents/Resources/bin/polycarp-spaces")),
             };
             let progress = match builds {
-                true => Progress::terminal(),
+                true => {
+                    progress::catch_interrupt();
+                    Progress::terminal()
+                }
                 false => Progress::silent(),
             };
             answer(&System, &place, &asked, &progress)
@@ -374,6 +381,12 @@ fn print(done: Result<String, Refused>) -> i32 {
                 println!("{line}");
             }
             0
+        }
+        Err(refused) if refused.check == progress::STOPPED => {
+            eprintln!(
+                "polycarp browser: stopped. The installed browser was not changed and is whole."
+            );
+            130
         }
         Err(refused) => {
             eprintln!("polycarp browser: {refused}. The installed browser was not changed.");
@@ -428,6 +441,13 @@ fn answer(
 mod tests {
     use super::testing::*;
     use super::*;
+
+    #[test]
+    fn a_stop_says_the_installed_browser_is_whole_and_exits_130() {
+        let stopped = Refused::new(progress::STOPPED, "download");
+        assert_eq!(print(Err(stopped)), 130);
+        assert_eq!(print(Err(Refused::new("digest", "no"))), 1);
+    }
 
     #[test]
     fn a_dry_run_checks_the_release_and_leaves_no_work_behind() {

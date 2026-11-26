@@ -17,6 +17,8 @@ pub struct Call {
     pub limit: Duration,
     /// A throwaway home for what is run, instead of the person's.
     pub home: Option<PathBuf>,
+    /// Tidying up after a step, such as letting go of a disk image: it runs even after Ctrl-C.
+    pub cleanup: bool,
 }
 
 impl Call {
@@ -26,7 +28,13 @@ impl Call {
             args: args.iter().map(|a| a.as_ref().to_owned()).collect(),
             limit: Duration::from_secs(600),
             home: None,
+            cleanup: false,
         }
+    }
+
+    pub fn cleanup(mut self) -> Call {
+        self.cleanup = true;
+        self
     }
 }
 
@@ -57,6 +65,9 @@ pub trait Tools {
 /// Runs a tool, which must succeed. One that can't start, or takes too long, is a refusal at `check`.
 pub fn must(tools: &dyn Tools, check: &'static str, call: &Call) -> Result<Ran, Refused> {
     let ran = tools.run(call).map_err(|e| {
+        if e.kind() == io::ErrorKind::Interrupted {
+            return Refused::new(super::progress::STOPPED, check);
+        }
         let name = call.program.display();
         Refused::new(check, format!("{name} could not run: {e}"))
     })?;
@@ -96,6 +107,15 @@ impl Tools for System {
             if let Some(status) = child.try_wait()? {
                 break status;
             }
+            if stops(
+                call,
+                super::progress::STOP.load(std::sync::atomic::Ordering::SeqCst),
+            ) {
+                // Ctrl-C: what it was doing is left half done in the work folder, never in the app's place.
+                unsafe { libc::kill(-group, libc::SIGKILL) };
+                child.wait()?;
+                return Err(io::ErrorKind::Interrupted.into());
+            }
             if Instant::now() > end {
                 // Its own group, so nothing it started outlives it.
                 unsafe { libc::kill(-group, libc::SIGKILL) };
@@ -114,6 +134,11 @@ impl Tools for System {
     }
 }
 
+/// After Ctrl-C every call stops but one that tidies up.
+fn stops(call: &Call, pressed: bool) -> bool {
+    pressed && !call.cleanup
+}
+
 fn drain(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<String> {
     thread::spawn(move || {
         let mut bytes = Vec::new();
@@ -127,6 +152,14 @@ fn drain(pipe: Option<impl Read + Send + 'static>) -> thread::JoinHandle<String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn after_ctrl_c_only_tidying_up_still_runs() {
+        let detach = Call::new("/usr/bin/hdiutil", &[&"detach"]).cleanup();
+        let attach = Call::new("/usr/bin/hdiutil", &[&"attach"]);
+        assert!(!stops(&detach, true) && stops(&attach, true));
+        assert!(!stops(&attach, false));
+    }
 
     #[test]
     fn a_tool_that_hangs_is_stopped_and_is_an_error() {
