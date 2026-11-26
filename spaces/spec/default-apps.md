@@ -36,6 +36,13 @@ A terminal that can't says so where it is offered.
 Choosing an app here changes what Polycarp opens. Making a browser or a mail app the whole Mac's is a button a person
 presses in Settings, and macOS asks them. The CLI, MCP, agents, updates and timers can't do it.
 
+### R-D10 Words stay words
+What a person types for an agent reaches it as one argument, whole: quotes, newlines, a leading dash, `$()` and
+backticks are characters in it. It is never part of a command line a shell or a terminal reads. On the Mac the words go
+into a file only this account can read, read once and deleted; the terminal is told to run Polycarp's own command with
+that file's name. An agent that can't be given a prompt as one argument opens without it, and the prompt is put on the
+clipboard. No agent is given an option that turns off its permission questions.
+
 ### R-D9 The file
 The choices are the `[defaults]` table of the configuration file (config.md), a role to an id, only for roles you chose:
 

@@ -282,6 +282,8 @@ case "style":
     StyleCommand.run(rest, remote: remoteHost != nil)
 case "defaults":
     DefaultsCommand.run(rest, remote: remoteHost != nil)
+case TerminalJob.verb where remoteHost == nil:
+    RunJobCommand.run(rest)
 
 case "keys":
     KeysCommand.run(rest, remote: remoteHost != nil)
