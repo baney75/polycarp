@@ -70,17 +70,18 @@ test("one click sends a plain form POST with no cookies, sign-in or referrer", a
   assert.equal(init.headers["Content-Type"], "application/x-www-form-urlencoded");
   assert.equal(init.credentials, "omit");
   assert.equal(init.referrerPolicy, "no-referrer");
+  assert.equal(init.redirect, "error", "a redirect can't carry the request to another address");
   assert.equal(init.mode, undefined);
 });
 
-test("an answer that can't be read still counts as sent; a refusal says so; a bad plan sends nothing", async () => {
+test("no answer is never counted as sent and is never tried twice; a refusal says so; a bad plan sends nothing", async () => {
   const calls = [];
-  const corsBlocked = async (url, init) => { calls.push(init.mode); if (!init.mode) throw new TypeError("Failed to fetch"); return { ok: false, status: 0 }; };
-  assert.deepEqual(await U.send({ kind: "post", url: "https://almanac.example/u" }, corsBlocked), { ok: true, status: 0 });
-  assert.deepEqual(calls, [undefined, "no-cors"]);
+  const failing = async (url, init) => { calls.push(init.mode); throw new TypeError("Failed to fetch"); };
+  await assert.rejects(U.send({ kind: "post", url: "https://almanac.example/u" }, failing), /another address/);
+  assert.deepEqual(calls, [undefined], "one request, no second try");
   assert.deepEqual(await U.send({ kind: "post", url: "https://almanac.example/u" }, async () => ({ ok: false, status: 410 })), { ok: false, status: 410 });
   const never = async () => { throw new Error("should not be called"); };
   await assert.rejects(U.send({ kind: "post", url: "https://127.0.0.1/u" }, never), /not a one-click/);
   await assert.rejects(U.send({ kind: "page", url: "https://almanac.example/u" }, never), /not a one-click/);
-  await assert.rejects(U.send({ kind: "post", url: "https://almanac.example/u" }, async () => { throw new Error("offline"); }), /offline/);
+  await assert.rejects(U.send({ kind: "post", url: "https://almanac.example/u" }, async () => { throw new Error("offline"); }), /no answer came back/);
 });

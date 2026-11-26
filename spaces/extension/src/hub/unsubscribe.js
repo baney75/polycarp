@@ -17,8 +17,10 @@
     return out;
   }
 
-  // A host Polycarp will POST to: a name with a dot, never an address written as numbers, never this machine or a
-  // home or office network's own names. (An IPv6 address reads back as "[...]" with no dot, so it is refused too.)
+  // A host Polycarp will POST to: a name with a dot, never an address written as numbers, never a name this machine or
+  // a home or office network uses. (An IPv6 address reads back as "[...]" with no dot, so it is refused too.) This reads
+  // names only: a public name can still point at a private address, which a page can't see, so the dialog shows the
+  // address before anything is sent.
   function publicHost(h) {
     if (!h || /^[\d.]+$/.test(h) || !h.includes(".")) return false;
     return !/(^|\.)(localhost|local|internal|intranet|lan|home|corp|home\.arpa|test|invalid)$/.test(h.replace(/\.$/, ""));
@@ -72,17 +74,17 @@
     return null;
   }
 
-  // Sends the one-click request: a form POST with no cookies, no sign-in and no referrer. Says what the list answered,
-  // or, when the answer can't be read, only that it went.
+  // Sends the one-click request, once: a form POST with no cookies, no sign-in and no referrer. A redirect is refused,
+  // so the address the dialog showed is the only one that gets it. The extension may read any site's answer, so the
+  // answer says what the list did; no answer throws, and nothing is counted as sent.
   async function send(p, fetchImpl) {
     if (!p || p.kind !== "post" || !https(p.url)) throw new Error("not a one-click request");
     const f = fetchImpl || globalThis.fetch;
     const init = { method: "POST", body: BODY, headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store", redirect: "follow" };
+      credentials: "omit", referrerPolicy: "no-referrer", cache: "no-store", redirect: "error" };
     let r;
     try { r = await f(p.url, init); } catch (e) {
-      await f(p.url, Object.assign({}, init, { mode: "no-cors" }));
-      return { ok: true, status: 0 };
+      throw new Error("no answer came back, or it tried to send the request on to another address");
     }
     return { ok: r.ok, status: r.status };
   }

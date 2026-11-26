@@ -535,9 +535,10 @@
 
   // ---------- Leaving a list ----------
 
-  // The newest message from the list says how to leave it. One-click requests go once per list; the page remembers.
+  // The newest message from the list says how to leave it. One-click requests go once per list and account; the page
+  // remembers. Each account's address is on the list separately, so leaving with one says nothing about another.
   const listOf = (messages) => { const m = messages.filter((x) => x.folder !== "sent").at(-1); const p = m && U.plan(m); return p && { m, p }; };
-  const leftKey = (m) => "unsub:" + (m.headers.listId || m.from.addr).toLowerCase();
+  const leftKey = (m) => "unsub:" + m.account + ":" + (m.headers.listId || m.from.addr).toLowerCase();
   const hostOf = (u) => new URL(u).hostname;
   function leaveBar(t, messages) {
     const got = listOf(messages);

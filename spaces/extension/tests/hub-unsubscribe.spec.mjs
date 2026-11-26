@@ -49,9 +49,9 @@ try {
     const id = document.querySelector('#rows .sel').dataset.thread;
     const g = await globalThis.PolycarpHubStore.thread(id);
     const m = g.messages.at(-1);
-    return { id, host: m.from.addr.split('@')[1], list: m.headers.listId.toLowerCase() };
+    return { id, acct: m.account, host: m.from.addr.split('@')[1], list: m.headers.listId.toLowerCase() };
   });
-  const key = 'unsub:' + news.list;
+  const key = 'unsub:' + news.acct + ':' + news.list;
   check(await p.textContent('#pane .leave button') === 'Unsubscribe', 'a list conversation offers Unsubscribe', null);
 
   // The request is shown first; Cancel sends nothing.
@@ -99,7 +99,7 @@ try {
   await p.click('#leaveGo');
   await p.waitForSelector('form.compose');
   check(await p.inputValue('form.compose [name=to]') === 'leave@books.example' && await p.inputValue('form.compose [name=subject]') === 'leave me', 'Write it opens a draft to the list, for you to send', null);
-  check((await meta(p, 'unsub:book club <club.books.example>')) === undefined, 'nothing is marked sent until you send it', null);
+  check((await meta(p, 'unsub:' + news.acct + ':book club <club.books.example>')) === undefined, 'nothing is marked sent until you send it', null);
 
   // A hostile address gets no button, and the command bar says why.
   await p.keyboard.press('Escape');
