@@ -48,6 +48,6 @@ final class SidebarRemovedTests: XCTestCase {
         XCTAssertTrue(launcher.contains("\"New Claude Session\"") && launcher.contains("\"New Terminal\""))
         let app = try code(root.appendingPathComponent("Sources/BaneySpaces/AppDelegate.swift"))
         XCTAssertTrue(app.contains("a.newClaude = { [weak self] in self?.session.newClaude(in: self?.terminalFolder) }"))
-        XCTAssertTrue(app.contains("a.newTerminal = { [weak self] in self?.session.engine.newTerminal(in: self?.terminalFolder) }"), "New Terminal opens in the folder you were in")
+        XCTAssertTrue(app.contains("a.newTerminal = { [weak self] in RoleOpener.person(RoleRequest(role: .terminal, new: true, folder: self?.terminalFolder)) }"), "New Terminal opens in the folder you were in")
     }
 }

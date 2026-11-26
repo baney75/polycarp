@@ -59,6 +59,14 @@ when the file does, with no restart, and `polycarp-spaces keys`, the launcher an
 Settings › Keys records a new one: it writes or removes the job's own lines and no other, refuses a chord somebody has,
 and while it records no key of Polycarp's acts.
 
+### R-D14 The launcher
+A job's name ("browser", "email", "open terminal") is a result that opens its app (R-D11), after an app whose name
+starts with what was typed and before the rest, and not when that app is listed already. "Open terminal here" opens a
+new window of the terminal in the folder you were working in. "Set default browser" and the like open Settings at
+Default apps. `> fix the build`, or `> agent fix the build`, is one result that sends the words to your agent (R-D10),
+only on Return. A "?" question goes to the web page of your agent when it has one and none was picked. Web addresses
+the launcher and `open url` open go to your browser.
+
 ### R-D13 Settings
 Settings › Default apps has a row for every job: its app, who decided, and the choices, with the system's own first and any
 other app last. What is installed is read off the main thread, a row keeps its height

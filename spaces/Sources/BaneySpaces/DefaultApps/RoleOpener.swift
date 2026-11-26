@@ -46,10 +46,18 @@ enum RoleOpener {
         return reply
     }
 
-    /// From a key: there is nobody to answer, so what went wrong is said on screen.
-    static func key(_ role: AppRole, new: Bool) {
-        let reply = open(RoleRequest(role: role, new: new))
-        if !reply.ok { fail(reply.error ?? "Couldn’t open \(role.title.lowercased())") }
+    /// From a key or the launcher: there is nobody to answer, so what went wrong is said on screen.
+    static func key(_ role: AppRole, new: Bool) { person(RoleRequest(role: role, new: new)) }
+
+    static func person(_ r: RoleRequest) {
+        let reply = open(r)
+        if !reply.ok { fail(reply.error ?? "Couldn’t open \(r.role.title.lowercased())") }
+    }
+
+    /// A program picked by its own name, whatever your agent is.
+    static func start(_ id: String, at path: String, in folder: String) {
+        guard let hooks else { return }
+        run(id, path, RoleRequest(role: .agent, folder: folder), hooks)
     }
 
     // MARK: Programs

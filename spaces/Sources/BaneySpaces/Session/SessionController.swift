@@ -315,9 +315,11 @@ final class SessionController {
                             run: { [weak self] in self?.focus(item) })
     }
 
-    /// The main browser's bundle ID: the app macOS opens web links in. Read once a minute, not on every key press.
+    /// The main browser's bundle ID: yours (Settings › Default apps), else the app macOS opens web links in, read once a
+    /// minute, not on every key press.
     private static var browserRead: (id: String?, at: TimeInterval) = (nil, -.infinity)
     static func mainBrowser(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String? {
+        if case .app(let yours)? = DefaultAppsStore.shared.now.resolved[.browser]?.app?.app { return yours }
         if now - browserRead.at < 60 { return browserRead.id }
         let id = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!).flatMap { Bundle(url: $0)?.bundleIdentifier }
         browserRead = (id, now)
@@ -405,7 +407,8 @@ final class SessionController {
             guard let s = r.target, let url = URL(string: s), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme) else {
                 return .init(ok: false, error: "only http and https URLs")
             }
-            NSWorkspace.shared.open(url)
+            // Yours when you chose one; else macOS decides, with the apps that claim the link.
+            if DefaultAppsStore.shared.now.resolved[.browser]?.source == .you { Launcher.openInBrowser(url) } else { NSWorkspace.shared.open(url) }
             return .init(ok: true)
         case .send:
             guard let q = r.target, let item = engine.find(q) else { return .init(ok: false, error: "nothing matches") }

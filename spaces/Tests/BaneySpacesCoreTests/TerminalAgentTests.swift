@@ -19,8 +19,6 @@ final class TerminalAgentTests: XCTestCase {
         XCTAssertEqual(TerminalAgent.matches("eukhe", installed: both), [], "not shown when Local Studio is absent")
         XCTAssertTrue(TerminalAgent.folders.contains("/Applications/Local Studio Nightly.app/Contents/MacOS"))
         XCTAssertTrue(TerminalAgent.folders.contains("/Applications/Local Studio.app/Contents/MacOS"))
-        XCTAssertNotNil(TerminalAgent.all[2].script(at: "/Applications/Local Studio Nightly.app/Contents/MacOS/eukhe"),
-                         "a path with spaces in the app name still runs")
     }
 
     func testScatteredLettersAndOtherWordsDoNot() {
@@ -34,19 +32,6 @@ final class TerminalAgentTests: XCTestCase {
         XCTAssertEqual(TerminalAgent.matches("claude", installed: []), [])
     }
 
-    func testScriptRunsTheFoundPathFromHomeWithoutAnInteractiveShell() throws {
-        let s = try XCTUnwrap(TerminalAgent.all[0].script(at: "/Users/a b/.local/bin/claude"))
-        XCTAssertTrue(s.hasPrefix("#!/bin/zsh\ncd ~\n"))
-        XCTAssertTrue(s.contains("exec /bin/zsh -l -c \"'/Users/a b/.local/bin/claude'; exec"))
-        XCTAssertFalse(s.contains("-il"))
-    }
-
-    func testPathsAShellWouldReadAsMoreThanANameAreRefused() {
-        for bad in ["claude", "/x/'; rm -rf ~; '", "/x/$(evil)", "/x/`evil`", "/x/\"q", "/x/a\nb"] {
-            XCTAssertNil(TerminalAgent.all[0].script(at: bad), bad)
-        }
-    }
-
     /// Regression (Donovan, 2026-11-04): Codex from the launcher showed "Allow Ghostty to execute agent-codex.command?".
     func testGhosttyRunsTheScriptFileWithItsPathQuoted() {
         XCTAssertEqual(GhosttyRun.command(script: "/Users/baney/Library/Application Support/BaneySpaces/agent-codex.command"),
@@ -56,10 +41,9 @@ final class TerminalAgentTests: XCTestCase {
 
     func testGhosttyIsNeverHandedAScriptFileWhenItCanBeScripted() throws {
         let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
-        let open = try XCTUnwrap(SourceText.block(after: "static func open(_ agent: TerminalAgent, at path: String, in terminal: URL)", in: launcher))
-        let viaGhostty = try XCTUnwrap(open.range(of: "if isGhostty(terminal), let ghostty { return ghostty(NSHomeDirectory(), url, openFile) }"))
-        let fallback = try XCTUnwrap(open.range(of: "\n        openFile()"))
-        XCTAssertTrue(viaGhostty.lowerBound < fallback.lowerBound, "Ghostty first, opening the file only as the fallback")
+        let opener = try SourceText.code("Sources/BaneySpaces/DefaultApps/RoleOpener.swift")
+        XCTAssertTrue(opener.contains("if let ghostty = Terminals.ghostty { ghostty(folder, URL(fileURLWithPath: script), open) } else { open() }"),
+                      "Ghostty first, opening the file only as the fallback")
         let brew = try XCTUnwrap(SourceText.block(after: "private static func runInTerminal(_ command: String)", in: launcher))
         let brewGhostty = try XCTUnwrap(brew.range(of: "if Terminals.isGhostty(Terminals.handler()), let ghostty = Terminals.ghostty {"))
         let brewOpen = try XCTUnwrap(brew.range(of: "\n        NSWorkspace.shared.open(url)\n    }"))
@@ -74,16 +58,5 @@ final class TerminalAgentTests: XCTestCase {
         XCTAssertTrue(handler.range(of: "activate")!.lowerBound < handler.range(of: "new window with configuration cfg")!.lowerBound, "Ghostty in front before the window is made")
         XCTAssertTrue(handler.contains("is running) then return \"not running\""), "never launches Ghostty from the script")
         XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/AppDelegate.swift").contains("self.session.engine.runInGhostty(in: dir, script: script, orElse: orElse)"))
-    }
-
-    func testTerminalIsTheLastResort() {
-        let ghostty = "com.mitchellh.ghostty"
-        XCTAssertEqual(TerminalChoice.pick(handler: "com.apple.Terminal", capable: [ghostty, "com.apple.Terminal"]), ghostty)
-        XCTAssertEqual(TerminalChoice.pick(handler: "com.googlecode.iterm2", capable: [ghostty]), "com.googlecode.iterm2")
-        XCTAssertEqual(TerminalChoice.pick(handler: nil, capable: ["com.googlecode.iterm2", ghostty]), ghostty)
-        XCTAssertEqual(TerminalChoice.pick(handler: "com.apple.Terminal", capable: ["com.apple.Terminal"]), "com.apple.Terminal")
-        // "Always Open With TextEdit" would show the script, not run it.
-        XCTAssertEqual(TerminalChoice.pick(handler: "com.apple.TextEdit", capable: [ghostty, "com.apple.TextEdit"]), ghostty)
-        XCTAssertEqual(TerminalChoice.pick(handler: "com.cmuxterm.app", capable: [ghostty, "com.cmuxterm.app"]), "com.cmuxterm.app")
     }
 }

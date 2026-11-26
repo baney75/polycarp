@@ -320,6 +320,11 @@ enum Render {
         // Bangs: typing "!", then a question for the default agent.
         launcher.query = "!y"
         guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-bangs.png", launcherShot) else { return 1 }
+        // The default apps: a job by its name, and a prompt for the agent.
+        launcher.query = "browser"
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-role.png", launcherShot) else { return 1 }
+        launcher.query = "> fix the build"
+        guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-ask.png", launcherShot) else { return 1 }
         launcher.query = "sunset photos"
         guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-web.png", launcherShot) else { return 1 }
 

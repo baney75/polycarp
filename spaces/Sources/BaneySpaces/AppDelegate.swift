@@ -252,7 +252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.session.engine.refreshAll()
         }
         a.newClaude = { [weak self] in self?.session.newClaude(in: self?.terminalFolder) }
-        a.newTerminal = { [weak self] in self?.session.engine.newTerminal(in: self?.terminalFolder) }
+        a.newTerminal = { [weak self] in RoleOpener.person(RoleRequest(role: .terminal, new: true, folder: self?.terminalFolder)) }
+        a.askAgent = { [weak self] in RoleOpener.person(RoleRequest(role: .agent, prompt: $0, folder: self?.terminalFolder)) }
+        a.folder = { [weak self] in self?.terminalFolder }
         Terminals.ghostty = { [weak self] dir, script, orElse in
             guard let self else { return orElse() }
             self.session.engine.runInGhostty(in: dir, script: script, orElse: orElse)
@@ -260,6 +262,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.bringBack = { [weak self] in self?.bringBack() }
         a.checkForUpdates = { [weak self] in self?.checkForUpdates() }
         a.showSetup = { [weak self] in self?.showSetup() }
+        a.showDefaultApps = { [weak self] in
+            self?.showSettings()
+            self?.setup.model.tab = .defaults
+        }
         return LauncherController(actions: a)
     }()
     private var missionControlTicks = 0
