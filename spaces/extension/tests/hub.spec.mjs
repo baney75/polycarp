@@ -62,7 +62,7 @@ try {
   check(target.label.includes(subject), 'Return opens the selected conversation', { label: target.label, subject });
   await p.waitForFunction((id) => !document.getElementById(id)?.classList.contains('unread'), target.id);
   check(true, 'opening a conversation marks it read', null);
-  if (process.env.SHOTS) for (const scheme of ['light', 'dark']) { await p.emulateMedia({ colorScheme: scheme }); await p.screenshot({ path: path.join(process.env.SHOTS, `mail-1280-${scheme}.png`) }); }
+  if (process.env.SHOTS) for (const scheme of ['light', 'dark']) { await p.emulateMedia({ colorScheme: scheme }); await p.waitForTimeout(400); await p.screenshot({ path: path.join(process.env.SHOTS, `mail-1280-${scheme}.png`) }); }
   await p.emulateMedia({ colorScheme: 'light' });
 
   // Archive with E, undo with Z.
@@ -174,12 +174,12 @@ try {
   await p.setViewportSize({ width: 390, height: 844 });
   const narrow = await p.evaluate(() => ({ scroll: document.documentElement.scrollWidth, main: getComputedStyle(document.getElementById('pane')).display }));
   check(narrow.scroll <= 390 && narrow.main === 'none', 'at 390 px the list fills the page with no sideways scroll', narrow);
-  if (process.env.SHOTS) for (const scheme of ['light', 'dark']) { await p.emulateMedia({ colorScheme: scheme }); await p.screenshot({ path: path.join(process.env.SHOTS, `mail-list-390-${scheme}.png`) }); }
+  if (process.env.SHOTS) for (const scheme of ['light', 'dark']) { await p.emulateMedia({ colorScheme: scheme }); await p.waitForTimeout(400); await p.screenshot({ path: path.join(process.env.SHOTS, `mail-list-390-${scheme}.png`) }); }
   await p.click('#rows .row');
   await p.waitForSelector('#subject');
   const open = await p.evaluate(() => ({ list: getComputedStyle(document.querySelector('.list')).display, focus: document.activeElement.id, scroll: document.documentElement.scrollWidth }));
   check(open.list === 'none' && open.focus === 'subject' && open.scroll <= 390, 'at 390 px a conversation fills the page and takes focus', open);
-  if (process.env.SHOTS) for (const scheme of ['light', 'dark']) { await p.emulateMedia({ colorScheme: scheme }); await p.screenshot({ path: path.join(process.env.SHOTS, `mail-thread-390-${scheme}.png`) }); }
+  if (process.env.SHOTS) for (const scheme of ['light', 'dark']) { await p.emulateMedia({ colorScheme: scheme }); await p.waitForTimeout(400); await p.screenshot({ path: path.join(process.env.SHOTS, `mail-thread-390-${scheme}.png`) }); }
   await p.click('#pane .back');
   await p.waitForFunction(() => getComputedStyle(document.querySelector('.list')).display !== 'none');
   check(true, 'Back returns to the list', null);

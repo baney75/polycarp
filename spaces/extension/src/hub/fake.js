@@ -36,7 +36,8 @@
     let n = 0;
     const id = () => "<m" + o.seed + "." + (++n) + "@mail.example>";
     while (out.length < o.size) {
-      const date = o.now - Math.floor(r() * 60 * 864e5);
+      // Replies follow an hour apart (up to three), so each conversation starts at least four hours back.
+      const date = o.now - 4 * 3600e3 - Math.floor(r() * 60 * 864e5);
       const kind = r();
       if (kind < 0.45) {
         const who = { name: pick(FIRST) + " " + pick(LAST), addr: "" };
