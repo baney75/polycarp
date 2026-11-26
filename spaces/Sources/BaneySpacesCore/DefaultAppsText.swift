@@ -27,10 +27,4 @@ public enum DefaultAppsText {
 
     /// One in the list: its name, and what it can't do.
     public static func item(_ c: DefaultCandidate) -> String { c.note.map { "\(c.name) (\($0))" } ?? c.name }
-
-    /// Whether picking it needs the question "here, or everywhere?": only where macOS keeps a default and it is another.
-    public static func asksWhere(_ role: AppRole, _ app: DefaultApp, system: DefaultCandidate?) -> Bool {
-        guard role.canSetEverywhere, case .app = app else { return false }
-        return system?.app != app
-    }
 }

@@ -59,8 +59,7 @@ when the file does, with no restart, and `polycarp-spaces keys`, the launcher an
 
 ### R-D13 Settings
 Settings › Default apps has a row for every job: its app, who decided, and the choices, with the system's own first and any
-other app last. A browser or a mail app that isn't macOS's yet asks whether it is for Polycarp only or for the whole Mac;
-when macOS is told no, nothing changes, here too. What is installed is read off the main thread, a row keeps its height
+other app last. What is installed is read off the main thread, a row keeps its height
 while that is read, and opening the group costs the main thread less than a frame (16 ms) beyond an empty one.
 
 ### R-D15 Video

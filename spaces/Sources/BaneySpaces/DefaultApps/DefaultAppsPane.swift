@@ -7,8 +7,6 @@ import SwiftUI
 struct DefaultAppsPane: View {
     @ObservedObject private var store = DefaultAppsStore.shared
     @ObservedObject private var appearance = Appearance.shared
-    /// Picked, and waiting for "here, or everywhere?".
-    @State private var asking: (role: AppRole, app: DefaultApp, name: String)?
     @State private var problem: [AppRole: String] = [:]
 
     var body: some View {
@@ -22,29 +20,15 @@ struct DefaultAppsPane: View {
         }
         SettingsGroup {
             ForEach(store.now.warnings, id: \.self) { SettingsNote($0, tone: .urgent) }
-            LearnMore("A choice here is what Polycarp's keys, launcher and commands use. Picking a browser or a mail app asks whether other apps should use it too; macOS asks you again before it changes that. Choices are lines under [defaults] in \(Self.file), and editing the file works as well. An app you remove keeps its place until it is back.")
+            LearnMore("A choice here is what Polycarp's keys, launcher and commands use. Choices are lines under [defaults] in \(Self.file), and editing the file works as well. An app you remove keeps its place until it is back.")
         }
         .onAppear { store.showIcons() }
         // macOS's own defaults change in System Settings, without a word.
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in store.refresh() }
-        .confirmationDialog(question, isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } })) {
-            if let a = asking {
-                Button("Everywhere on This Mac") { everywhere(a.role, a.app) }
-                Button("Polycarp Only") { choose(a.role, a.app) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Everywhere changes macOS's own default, for links in every app. macOS asks you too before it does.")
-        }
     }
 
     private static let terminal = NSImage(systemSymbolName: "terminal", accessibilityDescription: nil)
     private static let file = (DefaultAppsFile.path() as NSString).abbreviatingWithTildeInPath
-
-    private var question: String {
-        guard let a = asking else { return "" }
-        return a.role == .browser ? "Use \(a.name) as the browser everywhere?" : "Use \(a.name) for mail everywhere?"
-    }
 
     // MARK: A row
 
@@ -129,7 +113,7 @@ struct DefaultAppsPane: View {
     }
 
     private func take(_ role: AppRole, _ app: DefaultApp, _ name: String) {
-        if DefaultAppsText.asksWhere(role, app, system: store.now.system[role]) { asking = (role, app, name) } else { choose(role, app) }
+        choose(role, app)
     }
 
     private func choose(_ role: AppRole, _ app: DefaultApp?) {
@@ -150,19 +134,6 @@ struct DefaultAppsPane: View {
                 return
             }
             take(role, app, LaunchServicesApps.name(url))
-        }
-    }
-
-    /// macOS first: when the person says no to it, the old choice stays, here too.
-    private func everywhere(_ role: AppRole, _ app: DefaultApp) {
-        guard case .app(let bundle) = app else { return }
-        SystemDefault.set(role, to: bundle) { refused in
-            if let refused {
-                problem[role] = "Nothing changed. \(refused)"
-                store.refresh()
-            } else {
-                choose(role, app)
-            }
         }
     }
 }
