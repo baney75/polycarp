@@ -42,3 +42,7 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
 - **R-B12 Tab groups.** A group's name and a workspace's number sends the whole group there: into the browser's window on that
   workspace when one is known, else into a window of its own, which is taken there as it opens. The group belongs to the
   workspace its window is on and Polycarp keeps no other record of it.
+- **R-B13 The bar.** The `page` module, in no default, shows a workspace's front page: the tab in front of the browser window last
+  used there, or of the only one known there. The sound mark is the front page's when it plays, else the first tab's that does.
+  Downloads are one percentage when every size is known, else their count. Clicking a part goes to that tab or shows the
+  download. It shows nothing of a source that is off.

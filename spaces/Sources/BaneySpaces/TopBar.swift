@@ -36,6 +36,10 @@ final class TopBar {
     private var statusDirty = false
     /// Polycarp's own menu (the status item's), opened from the mark.
     var ownMenu: () -> NSMenu? = { nil }
+    /// What the browsers have for the `page` module on a workspace, with its site's icon, and what its parts do.
+    var page: (Int) -> TopBarModel.Page? = { _ in nil }
+    var goTo: (BrowserWindows.Front) -> Void = { _ in }
+    private var pageWaits = false
     private var menuOwner: NSKeyValueObservation?
     /// The minute the menus were last read on the clock's tick.
     private var menuMinute: Date?
@@ -85,6 +89,7 @@ final class TopBar {
         agentsPanel.onShow = { [weak self] in self?.model.opened(.agents, on: $0) }
         calendarPanel.onKey = { [weak self] in self?.calendar.key($0) ?? false }
         calendarPanel.onShow = { [weak self] in self?.model.opened(.clock, on: $0) }
+        model.onPage = { [weak self] in self?.goTo($0) }
         noticeCount = notices.$shelf.map(\.count).removeDuplicates().sink { [weak self] in self?.model.notices = $0 }
     }
 
@@ -156,6 +161,25 @@ final class TopBar {
         guard !panels.isEmpty else { return }
         SystemMenuBar.hide(true)
         readWorkspaces()
+        pageChanged()
+    }
+
+    /// A browser's pages, or the windows on a workspace, changed: the `page` module follows, at most five times a second.
+    func pageChanged() {
+        guard wants(.page), !pageWaits else { return }
+        pageWaits = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.pageWaits = false
+            self?.readPages()
+        }
+    }
+
+    private func readPages() {
+        var pages: [CGDirectDisplayID: TopBarModel.Page] = [:]
+        if wants(.page) {
+            for screen in NSScreen.screens { if let id = screen.displayID { pages[id] = page(spaces.workspace(onScreen: screen)) } }
+        }
+        if model.pages != pages { model.pages = pages }
     }
 
     /// Reads surfaces.json and the screens, and puts a bar on each screen where the macOS bar is hidden. Polycarp
@@ -193,6 +217,7 @@ final class TopBar {
         readBattery()
         readMenus()
         readStatus()
+        readPages()
         notices.set(on: wants(.notifications))
         if !wants(.notifications) { noticePanel.hide() }
         if !wants(.clock), !wants(.date) { calendarPanel.hide() }
@@ -241,6 +266,7 @@ final class TopBar {
         if !model.status.isEmpty { model.status = [] }
         menuPid = 0
         show(BarReader.Menus())
+        if !model.pages.isEmpty { model.pages = [:] }
         noticePanel.hide()
         calendarPanel.hide()
         agentsPanel.hide()
@@ -403,7 +429,13 @@ final class TopBarModel: ObservableObject {
     @Published var agents = BarAgents()
     /// How many notifications are new, as the bell shows it (`NoticeShelf.count`).
     @Published var notices = ""
+    @Published var pages: [CGDirectDisplayID: Page] = [:]
 
+    /// The `page` module's: what there is to show, and the front page's site's icon.
+    struct Page: Equatable {
+        var now: BrowserPage
+        var icon: NSImage?
+    }
     struct Charge: Equatable {
         var percent: Int
         var charging: Bool
@@ -425,6 +457,8 @@ final class TopBarModel: ObservableObject {
     var onAgent: (String) -> Void = { _ in }
     /// Opens the calendar there, or closes it.
     var onCalendar: (NSScreen, CGFloat) -> Void = { _, _ in }
+    /// Goes to a tab, or shows a download in Finder.
+    var onPage: (BrowserWindows.Front) -> Void = { _ in }
 }
 
 /// One screen's bar. `sides` is the width beside the notch on each side, or nil on a screen without one.
@@ -588,6 +622,7 @@ struct TopBarView: View {
         case .verse: return model.verse != nil
         case .appMenus: return !model.menus.isEmpty
         case .status: return !model.status.isEmpty
+        case .page: return model.pages[display] != nil
         case .custom, .split: return false
         default: return true
         }
@@ -652,6 +687,8 @@ struct TopBarView: View {
                       under: { model.onAgents(screen, $0) }) {
                 AgentsFace(agents: model.agents, style: s)
             }
+        case .page:
+            if let p = model.pages[display] { PageModule(page: p, style: s) { model.onPage($0) } }
         case .notifications:
             BarButton(inset: model.notices.isEmpty ? 0 : CGFloat(BarGeometry.textInset), held: isOpen(.notifications),
                       label: model.notices.isEmpty ? "Notifications" : "Notifications, \(model.notices) new", help: "Notifications",

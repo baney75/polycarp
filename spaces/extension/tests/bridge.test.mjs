@@ -142,6 +142,42 @@ test('a download is shown in its folder only while downloads are sent', async ()
   assert.deepEqual(x.did, [['show', 6]]);
 });
 
+test('a download on its way is told again until it is done, and a private or paused one never', async () => {
+  const x = browser({ perms: ['nativeMessaging', 'downloads'], set: { downloads: true } });
+  const told = () => x.sent('browser.change', 'downloads').flatMap((m) => m.rows).map((r) => [r.id, r.received]);
+  let asked = 0;
+  const search = x.chrome.downloads.search;
+  x.chrome.downloads.search = async (q) => {
+    if (!q.state) return search(q);
+    if (++asked === 3) x.downloads[0].state = 'complete';
+    x.downloads[0].bytesReceived += 10;
+    return x.downloads.filter((d) => d.state === 'in_progress');
+  };
+  await x.open(['downloads']);
+  x.downloads.push({ id: 1, filename: '/a/one.zip', incognito: false, state: 'in_progress', bytesReceived: 5, totalBytes: 100 },
+    { id: 2, filename: '/a/secret.zip', incognito: true, state: 'in_progress' }, { id: 3, filename: '/a/held.zip', incognito: false, state: 'in_progress', paused: true });
+  for (const d of x.downloads.slice(1)) x.chrome.downloads.onCreated.fire(d);
+  await x.settle();
+  assert.equal(asked, 0, 'nothing is on its way');
+  for (let i = 0; i < 3; i++) x.chrome.downloads.onChanged.fire({ id: 1 });
+  await x.settle(); await x.settle();
+  assert.deepEqual(told().filter((r) => r[0] === 1), [[1, 5], [1, 15], [1, 25]]);
+  assert.equal(asked, 3, 'one round at a time, and none once it is done');
+  assert.ok(!told().some((r) => r[0] === 2));
+  x.downloads[0].state = 'in_progress';
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+  await x.settle();
+  x.chrome.downloads.onChanged.fire({ id: 1 });
+  await x.settle();
+  assert.equal(asked, 3, 'downloads are off');
+  const y = browser({ perms: ['nativeMessaging', 'downloads'], set: { downloads: true }, downloads: [{ id: 1, filename: '/a/one.zip', incognito: false, state: 'in_progress', bytesReceived: 5 }] });
+  let rounds = 0;
+  const find = y.chrome.downloads.search;
+  y.chrome.downloads.search = async (q) => { if (q.state && ++rounds > 1) return []; return find(q); };
+  await y.open(['downloads']);
+  assert.equal(y.sent('browser.change', 'downloads').length, 1, 'one already on its way when the app asks');
+});
+
 test('an app from before the line, or none, is asked once a start', async () => {
   const none = browser({ fails: 'Specified native messaging host not found.' });
   await none.b.start();

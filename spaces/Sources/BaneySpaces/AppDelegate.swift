@@ -19,6 +19,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var viewer = ViewerController(spaces: spaces)
     /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
     private lazy var topBar = TopBar(spaces: spaces)
+    /// The browser window last in front on each workspace, for the bar's `page` module.
+    private var pageWindows: [Int: UInt32] = [:]
     private lazy var switcher: WorkspaceSwitcher = {
         let s = WorkspaceSwitcher(spaces: spaces)
         s.pages = { [weak self] pid, windows in
@@ -562,6 +564,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.tiling.run(command)
         }
         tiling.settingsChanged()
+        topBar.page = { [weak self] in self?.page(on: $0) }
+        topBar.goTo = { [weak self] in self?.openBrowser(BrowserHit($0)) }
         // It reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
         // A new theme redraws the menu bar indicator as well as the panels.
@@ -618,6 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         session.onSearch = { [weak self] in self?.launcher.toggle() }
         BrowserHub.shared.onChange = { [weak self] in
             self?.switcher.titlesChanged()
+            self?.topBar.pageChanged()
             if self?.launcherBuilt == true { self?.launcher.rowsChanged() }
         }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
@@ -962,6 +967,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             spaces.openWindowHere(pid, by: { DispatchQueue.main.sync { hub.open(what, in: peer, window: "new") } }, orElse: orElse)
         }
         return true
+    }
+
+    /// What the bar's `page` module shows for a workspace.
+    private func page(on n: Int) -> TopBarModel.Page? {
+        let hub = BrowserHub.shared
+        guard started, hub.isHere else { return nil }
+        let here = spaces.entries(on: n)
+        var known: [UInt32: BrowserWindows.Front] = [:]
+        for pid in Set(here.map(\.pid)) {
+            guard let app = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier, !hub.peers(of: app).isEmpty else { continue }
+            let all = Workspaces.range.flatMap { spaces.entries(on: $0) }.filter { $0.pid == pid }
+            known.merge(hub.fronts(of: app, all.map { (id: $0.id, title: $0.title) }, items: session.engine.items)) { $1 }
+        }
+        pageWindows[n] = BrowserPage.window(here: here.map(\.id), last: spaces.model.lastFocused[n], before: pageWindows[n], known: known)
+        let front = pageWindows[n].flatMap { known[$0] }
+        return BrowserPage(front: front, tabs: hub.book.rows(.tabs), downloads: hub.book.rows(.downloads)).map {
+            TopBarModel.Page(now: $0, icon: front.flatMap { hub.icon($0.tab, $0.peer) })
+        }
     }
 
     /// A tab group to a workspace: into the browser's window there, else a window of its own, taken there once it opens.

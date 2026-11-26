@@ -239,3 +239,44 @@ struct ClockFace: View {
         .accessibilityLabel(BarText.clock(now, format: format))
     }
 }
+
+/// The page in front of the browser here, by its site's icon and its title; a speaker while a tab plays; and the downloads on
+/// their way. Each is a button.
+struct PageModule: View {
+    let page: TopBarModel.Page
+    let style: ComputedStyle
+    let go: (BrowserWindows.Front) -> Void
+
+    private var inset: CGFloat { CGFloat(BarGeometry.textInset) }
+
+    var body: some View {
+        HStack(spacing: style.gap.map { CGFloat($0) } ?? 0) {
+            if let f = page.now.front {
+                BarButton(inset: inset, label: "Page: " + f.tab.title, help: f.tab.site, action: { go(f) }) {
+                    HStack(spacing: 6) {
+                        if let icon = page.icon {
+                            Image(nsImage: icon).resizable().interpolation(.high).frame(width: 14, height: 14)
+                        } else {
+                            BarSymbol(name: "globe")
+                        }
+                        BarWords.text(BrowserPage.title(f), style).truncationMode(.tail)
+                    }
+                }
+            }
+            if let p = page.now.playing {
+                BarButton(label: "Playing: " + p.tab.title, help: "Playing: " + p.tab.title, action: { go(p) }) {
+                    BarSymbol(name: "speaker.wave.2")
+                }
+            }
+            if let d = page.now.downloads {
+                BarButton(inset: d.short.isEmpty ? 0 : inset, label: d.label, help: d.label, action: { go(d.one) }) {
+                    HStack(spacing: 4) {
+                        BarSymbol(name: "arrow.down.circle")
+                        if !d.short.isEmpty { BarWords.text(d.short, style).monospacedDigit() }
+                    }
+                }
+            }
+        }
+        .foregroundStyle(style.ink(Chrome.wash(0.85)))
+    }
+}

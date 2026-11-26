@@ -100,6 +100,8 @@ final class BrowserHub {
 
     /// Searches with a browser's own engine, in a new tab there: the main browser if it is here, else the first that is.
     func searcher(main: String?) -> BrowserPeer? { links.keys.sorted { ($0.bundleID != main ? 1 : 0, $0) < ($1.bundleID != main ? 1 : 0, $1) }.first }
+    /// Whether any browser is on the line.
+    var isHere: Bool { !links.isEmpty }
     func peers(of bundleID: String) -> [BrowserPeer] { links.keys.filter { $0.bundleID == bundleID }.sorted() }
 
     /// Opens `what` (an address, a search or nothing) in a browser, in one of its windows, a new one or the one in front.

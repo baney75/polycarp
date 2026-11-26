@@ -19,6 +19,12 @@ public struct BrowserHit: Equatable, Sendable {
     /// A tab's id is the one the session engine gives the same tab. The others say where the row is held and nothing of
     /// the page: an id gets into traces.
     public let id: String
+
+    init(row: BrowserRow, peer: BrowserPeer, score: Int, id: String) { self.row = row; self.peer = peer; self.score = score; self.id = id }
+    /// A row the bar shows, to go to.
+    public init(_ f: BrowserWindows.Front) {
+        self.init(row: f.tab, peer: f.peer, score: 0, id: f.tab.source == .tabs ? "tab:\(f.peer.bundleID):\(f.tab.window):\(f.tab.key)" : "")
+    }
 }
 
 /// What the browsers running the Polycarp extension have told the app: their tabs, bookmarks, recent history and downloads,
