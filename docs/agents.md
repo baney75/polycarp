@@ -14,7 +14,7 @@ Behind it are the same tools Polycarp already has:
 | `files_*` | files | Everything `polycarp files mcp` does |
 | `edits_page` | files | Read the page you shared from the browser's Page edits |
 | `browser_tabs` | browser:read | Your open tabs' titles and addresses, without the query or fragment, while "Let agents see my tabs" is on in Settings |
-| `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set |
+| `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set. `app_items` never lists a browser tab: tabs are `browser_tabs`'s |
 | `app_setting_set`, `app_focus`, `workspace_agent_set`, `workspace_agent_move`, `workspace_switch`, `launcher_open` | act | Change a setting, bring a window forward, run the agent workspace, switch workspaces, open the launcher |
 
 An assistant sees only the tools its scopes allow. App tools talk to the running app over the same socket `polycarp-spaces` uses, and every change they make is logged in the app with the client's name and id. No tool opens a terminal, types into one, or changes how the app updates.

@@ -82,6 +82,6 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   the app answers only while "Let agents see my tabs" is on in Settings, Agents; it is off until the person turns it on, and
   only that switch changes it. It never gives a page's text, history, bookmarks, downloads, groups or a private window,
   never clicks, opens or closes, and another machine never gets it (`Remote.allows`). The gateway passes on those four
-  fields only, whatever the app sends.
+  fields only, whatever the app sends, and leaves tabs out of `app_items` and a tab's title out of `app_focus`.
 - **R-B19 A list in pieces.** A change that comes while a list comes in pieces holds: a row it closed or changed stays so
   when a later piece, read before it, still has the old one.
