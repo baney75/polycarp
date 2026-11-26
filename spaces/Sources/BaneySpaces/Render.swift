@@ -274,7 +274,7 @@ enum Render {
         for (count, name) in [(30, "switcher-all-windows.png"), (7, "switcher-few-windows.png")] {
             bar.windows = Array(bar.windows.prefix(count))
             bar.selected = 1
-            guard save(SwitcherView(model: bar), name, Styles.shared.book.switcher.panelSize(bar.grid)) else { return 1 }
+            guard save(SwitcherView(model: bar), name, bar.grid.size) else { return 1 }
         }
 
         // The launcher: the opening menu, then a search.

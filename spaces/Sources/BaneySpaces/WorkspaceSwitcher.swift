@@ -295,7 +295,7 @@ final class WorkspaceSwitcher {
 
     /// Window cards are sized from `WindowGrid` and workspace tiles from `SwitcherLayout`; the other rows are measured.
     private func contentSize(_ host: NSHostingView<SwitcherView>) -> CGSize {
-        if model.mode == .windows { return Styles.shared.book.switcher.panelSize(model.grid) }
+        if model.mode == .windows { return model.grid.size }
         if model.mode == .workspaces, model.windowBar == nil {
             return Styles.shared.book.switcher.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)
         }
@@ -457,7 +457,7 @@ final class SwitcherModel: ObservableObject {
     /// The display the panel opens on, for how many cards fit on a row and how many rows.
     @Published var maxWidth = SwitcherLayout.narrowScreen
     @Published var maxHeight = 700.0
-    var grid: WindowGrid { .fit(count: windows.count, maxWidth: maxWidth, maxHeight: maxHeight) }
+    var grid: WindowGrid { Styles.shared.book.switcher.grid(count: windows.count, maxWidth: maxWidth, maxHeight: maxHeight) }
     var count: Int { switch mode { case .windows: windows.count; case .apps: apps.count; case .workspaces: tiles.count } }
 }
 
@@ -500,7 +500,7 @@ struct SwitcherView: View {
     /// workspaces shows twice, each copy in its workspace's color with the number on it.
     private func appRow<D: Dress>(_ d: D.Type) -> some View {
         let sheet = sheet
-        let columns = Array(repeating: GridItem(.fixed(104), spacing: gap), count: min(max(model.apps.count, 1), 8))
+        let columns = Array(repeating: GridItem(.fixed(104), spacing: gap), count: sheet.appColumns(count: model.apps.count, maxWidth: model.maxWidth))
         return VStack(spacing: 10) {
             LazyVGrid(columns: columns, spacing: gap) {
                 ForEach(Array(model.apps.enumerated()), id: \.element.id) { i, app in
@@ -574,9 +574,9 @@ struct SwitcherView: View {
     private func windowRows<D: Dress>(_ d: D.Type) -> some View {
         let grid = model.grid
         let card = CGSize(width: grid.cardWidth, height: grid.cardHeight)
-        return VStack(alignment: .leading, spacing: WindowGrid.spacing) {
+        return VStack(alignment: .leading, spacing: grid.gap) {
             ForEach(SwitcherLayout.rows(tileCount: model.windows.count, columns: grid.columns), id: \.lowerBound) { row in
-                HStack(spacing: WindowGrid.spacing) {
+                HStack(spacing: grid.gap) {
                     ForEach(row, id: \.self) { i in
                         let w = model.windows[i]
                         windowCard(d, w, icon: w.icon, title: w.title.isEmpty ? w.app : w.title, on: i == model.selected,
@@ -589,7 +589,7 @@ struct SwitcherView: View {
                 label("No windows", c, 12, .medium, Chrome.wash(0.6)).frame(width: card.width, height: card.height)
             }
         }
-        .frame(width: grid.size.width - WindowGrid.padding, height: grid.size.height - WindowGrid.padding, alignment: .topLeading)
+        .frame(width: grid.size.width - grid.across, height: grid.size.height - grid.down, alignment: .topLeading)
     }
 
     /// A window's icon, title and workspace badge: the title under the other two on two lines, or all on one line.

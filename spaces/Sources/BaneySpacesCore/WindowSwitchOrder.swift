@@ -152,28 +152,38 @@ public struct WindowGrid: Equatable, Sendable {
     static let easyColumns = 6
     static let cards: [(width: Double, height: Double, stacked: Bool)] = [(200, 100, true), (200, 44, false), (160, 40, false)]
 
+    /// Between cards, and the panel's padding across and down (both sides together): the theme's, or style.css's.
+    public var gap = spacing, across = padding, down = padding
+
+    /// The whole panel.
     public var size: CGSize {
-        func length(_ n: Int, _ card: Double) -> Double { Double(n) * (card + Self.spacing) - Self.spacing + Self.padding }
-        return CGSize(width: length(columns, cardWidth), height: length(rows, cardHeight))
+        func length(_ n: Int, _ card: Double, _ pad: Double) -> Double { Double(n) * (card + gap) - gap + pad }
+        return CGSize(width: length(columns, cardWidth, across), height: length(rows, cardHeight, down))
     }
 
-    public static func fit(count: Int, maxWidth: Double, maxHeight: Double) -> WindowGrid {
+    /// `taller` is what one line of the title grows by with style.css's text; a stacked card has two.
+    public static func fit(count: Int, maxWidth: Double, maxHeight: Double, gap: Double = spacing,
+                           across: Double = padding, down: Double = padding, taller: Double = 0) -> WindowGrid {
         let n = max(count, 1)
-        let width = maxWidth - margin - padding, height = maxHeight - margin - padding
+        let width = maxWidth - margin - across, height = maxHeight - margin - down
         var tightest = (columns: 1, width: width, height: height)
         for card in cards {
-            let most = max(Int((width + spacing) / (card.width + spacing)), 1)
+            let tall = card.height + taller * (card.stacked ? 2 : 1)
+            let most = max(Int((width + gap) / (card.width + gap)), 1)
             for wide in min(easyColumns, most)...most {
                 let rows = (n + wide - 1) / wide
                 let g = WindowGrid(columns: (n + rows - 1) / rows, rows: rows, cardWidth: min(card.width, width),
-                                   cardHeight: card.height, isStacked: card.stacked)
+                                   cardHeight: tall, isStacked: card.stacked, gap: gap, across: across, down: down)
                 if g.size.height <= maxHeight - margin { return g }
             }
-            tightest = (most, min(card.width, width), card.height)
+            tightest = (most, min(card.width, width), tall)
         }
-        // More windows than the smallest card has room for: the rows get thinner, never off the screen.
+        // More windows than the smallest card has room for: the rows, and a wide gap between them, get thinner,
+        // never off the screen.
         let rows = (n + tightest.columns - 1) / tightest.columns
+        let between = min(gap, max(0, (height - Double(rows)) / Double(max(rows - 1, 1))).rounded(.down))
         return WindowGrid(columns: tightest.columns, rows: rows, cardWidth: tightest.width,
-                          cardHeight: max(1, min(tightest.height, (height + spacing) / Double(rows) - spacing)), isStacked: false)
+                          cardHeight: max(1, min(tightest.height, ((height + between) / Double(rows) - between).rounded(.down))), isStacked: false,
+                          gap: between, across: across, down: down)
     }
 }

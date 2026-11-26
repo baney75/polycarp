@@ -299,7 +299,7 @@ final class SwitcherWiringTests: XCTestCase {
         let cards = try XCTUnwrap(SourceText.block(after: "func switcherWindows()", in: spaces))
         XCTAssertTrue(cards.contains("Windows.stacking(of: windows).filter { saved.frames[$0.id] == nil"), "a parked window is never in front")
         let s = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
-        XCTAssertTrue(s.contains("if model.mode == .windows { return Styles.shared.book.switcher.panelSize(model.grid) }"), "the panel is framed from WindowGrid")
+        XCTAssertTrue(s.contains("if model.mode == .windows { return model.grid.size }"), "the panel is framed from WindowGrid")
         let rows = try XCTUnwrap(SourceText.block(after: "private func windowRows<D: Dress>(_ d: D.Type) -> some View", in: s))
         XCTAssertTrue(rows.contains("windowCard(") && !rows.contains("LazyVGrid"))
         let keys = try SourceText.code("Sources/BaneySpaces/MissionControlKeys.swift")

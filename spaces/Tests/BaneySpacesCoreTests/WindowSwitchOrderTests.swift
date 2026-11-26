@@ -154,6 +154,17 @@ final class WindowGridTests: XCTestCase {
         }
     }
 
+    func testEveryCountFitsEveryScreenWithStyleCssGapsPaddingAndText() {
+        for (w, h) in screens {
+            for n in [1, 5, 30, 150] {
+                let g = WindowGrid.fit(count: n, maxWidth: w, maxHeight: h, gap: 30, across: 80, down: 80, taller: 12)
+                XCTAssertLessThanOrEqual(g.size.width, w - WindowGrid.margin, "\(n) windows on \(w)")
+                XCTAssertLessThanOrEqual(g.size.height, h - WindowGrid.margin, "\(n) windows on \(w)")
+                XCTAssertGreaterThanOrEqual(g.columns * g.rows, n)
+            }
+        }
+    }
+
     func testFewWindowsGetTheBigCardAndManyASmallerOne() {
         func shape(_ n: Int, _ s: (Double, Double)) -> [Double] {
             let g = WindowGrid.fit(count: n, maxWidth: s.0, maxHeight: s.1)

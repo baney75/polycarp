@@ -63,15 +63,17 @@ enum StyleProof {
                 return AnyView(LauncherView(model: model).frame(width: LauncherView.size(Styles.shared.book.launcher.panel, within: 1512).width, height: 512))
             }]
         case .switcher:
-            // Apps, one app's windows and workspaces: two tiles each, the first selected.
+            // Apps, one app's windows, every window and workspaces: two tiles each, the first selected.
             let icon = NSWorkspace.shared.icon(forFile: "/System/Applications/Mail.app")
-            let apps = SwitcherModel(), windows = SwitcherModel(), workspaces = SwitcherModel()
+            let apps = SwitcherModel(), windows = SwitcherModel(), cards = SwitcherModel(), workspaces = SwitcherModel()
+            cards.mode = .windows
+            cards.windows = (1...2).map { .init(id: WindowID($0), title: "Inbox \($0)", workspace: $0, app: "Mail", icon: icon) }
             apps.mode = .apps
             windows.mode = .apps
             apps.apps = (1...2).map { .init(pid: pid_t($0), name: "Mail", icon: icon, workspace: $0, windows: 1, isSplit: false, titles: ["Inbox"]) }
             windows.windowBar = .init(pid: 1, name: "Mail", icon: icon, windows: (1...2).map { .init(id: $0, title: "Inbox \($0)", workspace: 1) }, selected: 0)
             workspaces.tiles = [.init(n: 1, icons: [icon], count: 11, isCurrent: true), .init(n: 2, icons: [icon], count: 1, isCurrent: false)]
-            return [apps, windows, workspaces].map { model in { AnyView(SwitcherView(model: model)) } }
+            return [apps, windows, cards, workspaces].map { model in { AnyView(SwitcherView(model: model)) } }
         }
     }
 

@@ -713,11 +713,18 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertEqual(s.panelSize(tileCount: 4, maxWidth: 1024).height, 128 + 5 * 1.2 + 10 * 1.2 + 12, accuracy: 0.001)
         XCTAssertEqual(s.columns(tileCount: 8, maxWidth: 1024), 8)
         XCTAssertEqual(StyleBook(sheet("switcher { gap: 40px; }"), dark: true, roles: [:]).switcher.columns(tileCount: 8, maxWidth: 1024), 7, "a wider gap wraps sooner")
-        let grid = WindowGrid.fit(count: 7, maxWidth: 1512, maxHeight: 900)
-        XCTAssertEqual(s.panelSize(grid).width, grid.size.width - 28 + 16, accuracy: 0.001)
-        XCTAssertEqual(s.panelSize(grid).height, grid.size.height - 28 + 12, accuracy: 0.001)
+        // Window cards: 20 between, 16 and 12 of padding, and a title 8 points larger on each of two lines.
+        let grid = s.grid(count: 7, maxWidth: 1512, maxHeight: 900)
+        XCTAssertEqual([grid.gap, grid.across, grid.down], [20, 16, 12])
+        XCTAssertTrue(grid.isStacked)
+        XCTAssertEqual(grid.cardHeight, 100 + 2 * 8 * 1.2, accuracy: 0.001)
+        XCTAssertEqual(grid.size.width, Double(grid.columns) * (grid.cardWidth + 20) - 20 + 16, accuracy: 0.001)
+        XCTAssertEqual(grid.size.height, Double(grid.rows) * (grid.cardHeight + 20) - 20 + 12, accuracy: 0.001)
         let none = StyleBook(sheet("bar { color: red; }"), dark: true, roles: [:]).switcher
-        XCTAssertEqual(none.panelSize(grid), grid.size, "the theme's padding")
+        XCTAssertEqual(none.grid(count: 7, maxWidth: 1512, maxHeight: 900), WindowGrid.fit(count: 7, maxWidth: 1512, maxHeight: 900), "the theme's cards")
+        // App tiles: eight fit on a small screen, until a wide gap wraps the eighth.
+        XCTAssertEqual([3, 8, 12].map { none.appColumns(count: $0, maxWidth: 1024) }, [3, 8, 8])
+        XCTAssertEqual(StyleBook(sheet("switcher { gap: 40px; }"), dark: true, roles: [:]).switcher.appColumns(count: 8, maxWidth: 1024), 7)
         for n in 1...9 {
             XCTAssertEqual(none.panelSize(tileCount: n, maxWidth: 1024), SwitcherLayout.panelSize(tileCount: n, maxWidth: 1024))
             XCTAssertEqual(none.columns(tileCount: n, maxWidth: 1024), SwitcherLayout.workspaceColumns(tileCount: n, maxWidth: 1024))

@@ -96,6 +96,8 @@ public final class SwitcherStyles {
     public let gap: Double
     /// A workspace tile's height: what the sheet's larger text adds, in either state, so no tile moves with the selection.
     public let tileHeight: Double
+    /// What one line of a window card's title grows by with the sheet's text.
+    public let titleGrowth: Double
     private let items: [Item]
 
     init(_ l: StyleLookup) {
@@ -109,6 +111,7 @@ public final class SwitcherStyles {
             max(0, (items.compactMap { $0[keyPath: part].fontSize }.max() ?? 0) - own) * 1.2
         }
         tileHeight = SwitcherLayout.tileHeight + more(\.number, over: 34) + more(\.label, over: 10)
+        titleGrowth = more(\.label, over: 12)
         self.items = items
     }
 
@@ -120,14 +123,20 @@ public final class SwitcherStyles {
                                  across: padding.left + padding.right, down: padding.top + padding.bottom)
     }
 
-    /// The panel around these window cards: the grid holds the theme's padding, and the sheet's may be more or less.
-    public func panelSize(_ grid: WindowGrid) -> CGSize {
-        CGSize(width: grid.size.width - WindowGrid.padding + padding.left + padding.right,
-               height: grid.size.height - WindowGrid.padding + padding.top + padding.bottom)
+    /// The window cards with the sheet's gap, padding and text; its `size` is the panel's.
+    public func grid(count: Int, maxWidth: Double, maxHeight: Double) -> WindowGrid {
+        .fit(count: count, maxWidth: maxWidth, maxHeight: maxHeight, gap: panel.gap ?? WindowGrid.spacing,
+             across: padding.left + padding.right, down: padding.top + padding.bottom, taller: titleGrowth)
     }
 
     public func columns(tileCount: Int, maxWidth: Double) -> Int {
         SwitcherLayout.workspaceColumns(tileCount: tileCount, maxWidth: maxWidth, spacing: gap, padding: padding.left + padding.right)
+    }
+
+    /// App tiles 104 wide in as many columns as fit, eight at most.
+    public func appColumns(count: Int, maxWidth: Double) -> Int {
+        min(8, SwitcherLayout.workspaceColumns(tileCount: count, maxWidth: maxWidth, tileWidth: 104, spacing: panel.gap ?? 8,
+                                               padding: padding.left + padding.right))
     }
 }
 
