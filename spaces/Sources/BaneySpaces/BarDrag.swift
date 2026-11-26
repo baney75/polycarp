@@ -54,7 +54,7 @@ struct BarMeasure: Equatable {
             switch key {
             case let .row(r): drawn[r] = (Double(f.minX), Double(f.maxX))
             case let .item(r, i): items[r, default: []].append(.init(index: i, minX: Double(f.minX), maxX: Double(f.maxX)))
-            case .bar: break
+            case .bar, .done: break
             }
         }
         let counts = Dictionary(uniqueKeysWithValues: BarRow.allCases.map { ($0, BarArrange.list(bar, $0).count) })
@@ -65,6 +65,8 @@ struct BarMeasure: Equatable {
 enum BarMeasureKey: Hashable {
     /// The bar inside its padding.
     case bar
+    /// Arrange mode's Done pill.
+    case done
     case row(BarRow)
     case item(BarRow, Int)
 }
@@ -93,8 +95,15 @@ final class BarDragger {
     private let panel: (CGDirectDisplayID) -> NSWindow?
     private let drop: (BarSlot, BarSlot) -> Void
     private var mouse: Any?
-    /// Holds the keyboard while a module moves, so Escape cancels the move and never reaches the app in front.
+    /// Undo Move, for ⌘Z in arrange mode.
+    var onUndo: () -> Void = {}
+    /// Holds the keyboard while a module moves or in arrange mode, so Escape and ⌘Z reach Polycarp and never the app
+    /// in front.
     private var keyPanel: ArrangeKeys?
+    private var idle: Timer?
+    private var clicksElsewhere: Any?
+    /// Arrange mode ends after this long with no drag (R-BA1).
+    static let idleLimit: TimeInterval = 60
 
     init(model: TopBarModel, display: @escaping (NSWindow?) -> CGDirectDisplayID?, panel: @escaping (CGDirectDisplayID) -> NSWindow?,
          drop: @escaping (BarSlot, BarSlot) -> Void) {
@@ -110,6 +119,7 @@ final class BarDragger {
     }
 
     func stop() {
+        endArranging("bar gone")
         cancel()
         if let mouse { NSEvent.removeMonitor(mouse) }
         mouse = nil
@@ -126,17 +136,18 @@ final class BarDragger {
     private func handle(_ e: NSEvent) -> Bool {
         switch e.type {
         case .leftMouseDown:
-            guard e.modifierFlags.contains(.command), let id = display(e.window), let m = model.measure[id],
+            let id = display(e.window)
+            if model.arranging {
+                // A press in another Polycarp window ends arrange mode; on the bar, a click runs no module.
+                guard let id else { endArranging("click outside the bar"); return false }
+                let x = Double(e.locationInWindow.x)
+                if let done = model.measure[id]?.frames[.done], x >= done.minX, x <= done.maxX { endArranging("Done"); return true }
+                guard let m = model.measure[id], let hit = m.module(at: x) else { return true }
+                return start(id, m, hit, x)
+            }
+            guard e.modifierFlags.contains(.command), let id, let m = model.measure[id],
                   let hit = m.module(at: Double(e.locationInWindow.x)) else { return false }
-            let list = BarArrange.list(model.bar, hit.slot.row)
-            guard list.indices.contains(hit.slot.index) else { return false }
-            let x = Double(e.locationInWindow.x)
-            let module = list[hit.slot.index]
-            model.drag = BarDrag(display: id, from: hit.slot, module: module, rows: m.rows(model.bar),
-                                 grab: x - Double(hit.frame.minX), width: Double(hit.frame.width), x: x,
-                                 refused: Set(BarRow.allCases.filter { m.hides[$0]?.contains(module) == true }))
-            holdKeys(near: panel(id))
-            return true
+            return start(id, m, hit, Double(e.locationInWindow.x))
         case .leftMouseDragged:
             guard var d = model.drag, let p = panel(d.display) else { return model.drag != nil }
             let at = NSEvent.mouseLocation
@@ -149,6 +160,7 @@ final class BarDragger {
             guard let d = model.drag else { return false }
             model.drag = nil
             holdKeys(near: nil)
+            defer { restartIdle() }
             // The lists changed under the drag (a `surfaces set`, an earlier move's write coming back): the place it was
             // taken from may hold another module now, so nothing moves.
             let list = BarArrange.list(model.bar, d.from.row)
@@ -163,7 +175,65 @@ final class BarDragger {
         }
     }
 
+    private func start(_ id: CGDirectDisplayID, _ m: BarMeasure, _ hit: (slot: BarSlot, frame: CGRect), _ x: Double) -> Bool {
+        let list = BarArrange.list(model.bar, hit.slot.row)
+        guard list.indices.contains(hit.slot.index) else { return model.arranging }
+        let module = list[hit.slot.index]
+        model.drag = BarDrag(display: id, from: hit.slot, module: module, rows: m.rows(model.bar),
+                             grab: x - Double(hit.frame.minX), width: Double(hit.frame.width), x: x,
+                             refused: Set(BarRow.allCases.filter { m.hides[$0]?.contains(module) == true }))
+        holdKeys(near: panel(id))
+        idle?.invalidate()
+        return true
+    }
+
+    /// Arrange mode (R-BA1): every module outlined, a plain drag moves one, a click runs none, Done at the middle.
+    func arrange(near panel: NSWindow?) {
+        guard !model.arranging else { return }
+        holdKeys(near: nil)
+        model.arranging = true
+        let k = ArrangeKeys()
+        // Escape lets go of a module under way, else ends the mode.
+        k.onEscape = { [weak self] in
+            guard let self else { return }
+            if self.model.drag != nil { self.cancel(); self.restartIdle() } else { self.endArranging("Escape") }
+        }
+        k.onUndo = { [weak self] in self?.onUndo() }
+        k.onResign = { [weak self] in self?.endArranging("click outside the bar") }
+        if let f = panel?.frame { k.setFrameOrigin(NSPoint(x: f.minX, y: f.maxY - 1)) }
+        k.makeKeyAndOrderFront(nil)
+        keyPanel = k
+        // A press in another app ends it, whether or not that app takes the keyboard.
+        clicksElsewhere = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            self?.endArranging("click outside the bar")
+        }
+        restartIdle()
+        Trace.log("top bar: arrange mode on")
+    }
+
+    func endArranging(_ why: String) {
+        guard model.arranging else { return }
+        keyPanel?.onResign = {}
+        model.arranging = false
+        idle?.invalidate(); idle = nil
+        if let c = clicksElsewhere { NSEvent.removeMonitor(c) }
+        clicksElsewhere = nil
+        cancel()
+        holdKeys(near: nil)
+        Trace.log("top bar: arrange mode off (\(why))")
+    }
+
+    private func restartIdle() {
+        idle?.invalidate()
+        guard model.arranging else { return }
+        let t = Timer(timeInterval: Self.idleLimit, repeats: false) { [weak self] _ in self?.endArranging("60 seconds with no drag") }
+        RunLoop.main.add(t, forMode: .common)
+        idle = t
+    }
+
+    /// A key panel for a ⌘-drag; in arrange mode the mode's own panel already holds the keyboard.
     private func holdKeys(near panel: NSWindow?) {
+        guard !model.arranging else { return }
         keyPanel?.orderOut(nil)
         keyPanel = nil
         guard let panel else { return }
@@ -199,11 +269,16 @@ final class ArrangeKeys: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onEscape() }
     override func keyDown(with event: NSEvent) { if event.keyCode == 53 { onEscape() } }
+    /// Escape and ⌘Z call back; every other ⌘ shortcut stops here (`BarArrange.panelKey`).
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-              event.charactersIgnoringModifiers?.lowercased() == "z" else { return super.performKeyEquivalent(with: event) }
-        onUndo()
-        return true
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        switch BarArrange.panelKey(keyCode: event.keyCode, command: flags.contains(.command),
+                                   otherModifiers: flags != .command, characters: event.charactersIgnoringModifiers) {
+        case .escape: onEscape(); return true
+        case .undo: onUndo(); return true
+        case .swallow: return true
+        case .pass: return super.performKeyEquivalent(with: event)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) { onResign() }
@@ -221,4 +296,46 @@ final class BlockMenuItem: NSMenuItem {
     @available(*, unavailable) required init(coder: NSCoder) { fatalError("not from a nib") }
 
     @objc private func fire() { run() }
+}
+
+/// The island split `|`, drawn as a small grip while arranging or moving so it can be taken like a module.
+struct BarSplitHandle: View {
+    @Environment(\.barFace) private var face
+    var body: some View {
+        Capsule().fill(Chrome.wash(0.55)).frame(width: 3, height: max(8, face * 0.55))
+            .frame(width: 10, height: face)
+            .contentShape(Rectangle())
+    }
+}
+
+/// The VoiceOver moves on a module (R-BA6): only the ones it can make, where the system can list them. `shown` and
+/// `refused` are what this bar draws now, so each step is the same move a drop would make.
+struct BarMoveActions: ViewModifier {
+    let slot: BarSlot
+    let bar: Surfaces.Bar
+    let shown: (Surfaces.BarModule) -> Bool
+    let refused: (BarRow) -> Bool
+    let run: (BarSlot, BarSlot) -> Void
+
+    private func target(_ step: BarArrange.Step) -> BarSlot? {
+        BarArrange.slot(for: step, from: slot, in: bar, shown: shown, refused: refused)
+    }
+
+    private func go(_ step: BarArrange.Step) { if let to = target(step) { run(slot, to) } }
+
+    func body(content: Content) -> some View {
+        if #available(macOS 14, *) {
+            let steps = BarArrange.Step.allCases.filter { target($0) != nil }
+            content.accessibilityActions {
+                ForEach(steps, id: \.self) { step in Button(step.rawValue) { go(step) } }
+            }
+        } else {
+            content
+                .accessibilityAction(named: BarArrange.Step.left.rawValue) { go(.left) }
+                .accessibilityAction(named: BarArrange.Step.right.rawValue) { go(.right) }
+                .accessibilityAction(named: BarArrange.Step.toLeft.rawValue) { go(.toLeft) }
+                .accessibilityAction(named: BarArrange.Step.toCenter.rawValue) { go(.toCenter) }
+                .accessibilityAction(named: BarArrange.Step.toRight.rawValue) { go(.toRight) }
+        }
+    }
 }

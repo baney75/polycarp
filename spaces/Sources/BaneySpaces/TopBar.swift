@@ -149,6 +149,9 @@ final class TopBar {
         }
         network.start(queue: .global(qos: .utility))
         dragger.start()
+        dragger.onUndo = { [weak self] in self?.undoMove() }
+        model.onDone = { [weak self] in self?.dragger.endArranging("Done") }
+        model.onStep = { [weak self] from, to in self?.move(from, to: to) }
         rightClicks = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] e in
             self?.rightClick(e) == true ? nil : e
         }
@@ -263,6 +266,7 @@ final class TopBar {
     }
 
     private func removeAll() {
+        dragger.endArranging("bar gone")
         dragger.cancel()
         SystemMenuBar.hide(false)
         for p in panels.values { p.orderOut(nil) }
@@ -324,12 +328,21 @@ final class TopBar {
         }
     }
 
-    /// A right-click on the bar's empty space: Undo Move, when there is a move to undo.
+    /// A right-click on the bar's empty space or the mark: Arrange Bar Items…, and Undo Move when there is a move to undo.
     private func rightClick(_ e: NSEvent) -> Bool {
-        guard let id = panels.first(where: { $0.value === e.window })?.key,
-              model.measure[id]?.module(at: Double(e.locationInWindow.x)) == nil, undo != nil else { return false }
+        guard let (id, panel) = panels.first(where: { $0.value === e.window }) else { return false }
+        let hit = model.measure[id]?.module(at: Double(e.locationInWindow.x))
+        if let hit {
+            let list = BarArrange.list(model.bar, hit.slot.row)
+            guard list.indices.contains(hit.slot.index), list[hit.slot.index] == .mark else { return false }
+        }
         let menu = NSMenu()
-        menu.addItem(BlockMenuItem("Undo Move") { [weak self] in self?.undoMove() })
+        if model.arranging {
+            menu.addItem(BlockMenuItem("Done Arranging") { [weak self] in self?.dragger.endArranging("Done") })
+        } else {
+            menu.addItem(BlockMenuItem("Arrange Bar Items…") { [weak self, weak panel] in self?.dragger.arrange(near: panel) })
+        }
+        if undo != nil { menu.addItem(BlockMenuItem("Undo Move") { [weak self] in self?.undoMove() }) }
         menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
         return true
     }
@@ -493,6 +506,12 @@ final class TopBarModel: ObservableObject {
     @Published var pages: [CGDirectDisplayID: Page] = [:]
     /// The module being moved by hand, on one bar (`BarDragger`).
     @Published var drag: BarDrag?
+    /// Arrange mode: modules outlined, a plain drag moves one, a click runs none (R-BA1).
+    @Published var arranging = false
+    /// A VoiceOver move of the module at a slot to a gap (R-BA6).
+    var onStep: (BarSlot, BarSlot) -> Void = { _, _ in }
+    /// Ends arrange mode, from its Done pill.
+    var onDone: () -> Void = {}
     /// Where each bar last laid out its rows and modules; read at a press, never drawn from.
     var measure: [CGDirectDisplayID: BarMeasure] = [:]
 
@@ -561,7 +580,7 @@ struct TopBarView: View {
                         Spacer(minLength: 0)
                         // The clock beside the camera, the icons at the edge.
                         BarSideRow {
-                            row(.center)
+                            HStack(spacing: 6) { row(.center); done }
                             row(.right, room: Double(right) * (1 - BarLayout.middleShare))
                         }
                         .animation(slide, value: model.drag?.target)
@@ -574,7 +593,7 @@ struct TopBarView: View {
                     // into the next: the middle what it needs up to its share, the sides what is left either side of it.
                     BarFlatRow {
                         row(.left)
-                        row(.center)
+                        HStack(spacing: 6) { row(.center); done }
                         row(.right, room: Double(g.size.width) * (1 - BarLayout.middleShare) / 2)
                     }
                     .animation(slide, value: model.drag?.target)
@@ -647,20 +666,26 @@ struct TopBarView: View {
             let gap = r.gap.map { CGFloat($0) } ?? spacing
             let groups = placed(BarArrange.list(shown, place), place, region)
             Group {
-                if groups.isEmpty, dragging {
-                    // An empty row while a module moves: somewhere to drop it.
+                if groups.isEmpty, model.arranging || dragging {
+                    // An empty row while arranging or moving: somewhere to drop a module.
                     BarShape.face.strokeBorder(Chrome.wash(0.45), style: StrokeStyle(lineWidth: Chrome.width(.overviewChip), dash: [3, 3]))
                         .frame(width: CGFloat(BarGeometry.slot) + 12).padding(.vertical, 4)
                 } else if model.bar.style == .islands {
                     // A fixed space between islands; the region's gap still spaces the modules inside each.
                     HStack(spacing: 6) {
-                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in island(group, place, region, gap: r.gap, room: room) }
+                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                            if let split = group.split { splitHandle(split, place) } else { island(group.items, place, region, gap: r.gap, room: room) }
+                        }
                     }
                 } else {
                     HStack(spacing: CGFloat(BarGeometry.group) + gap) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                            HStack(spacing: gap) {
-                                ForEach(group) { item($0, place, region, room: room) }
+                            if let split = group.split {
+                                splitHandle(split, place)
+                            } else {
+                                HStack(spacing: gap) {
+                                    ForEach(group.items) { item($0, place, region, room: room) }
+                                }
                             }
                         }
                     }
@@ -706,13 +731,50 @@ struct TopBarView: View {
 
     private var slide: Animation? { Chrome.reduceMotion ? nil : Chrome.spring(0.22, damping: 0.86) }
 
-    /// A row's modules in the groups `|` splits them into, without those that draw nothing or the groups left empty.
-    private func placed(_ modules: [Surfaces.BarModule], _ place: BarRow, _ region: StyleBook.Region) -> [[Placed]] {
-        var out: [[Placed]] = [[]]
-        for (i, m) in modules.enumerated() {
-            if m == .split { out.append([]) } else if BarLayout.drawn(m), draws(m, region) { out[out.count - 1].append(Placed(index: i, module: m)) }
+    /// A row's modules in the groups `|` splits them into (`BarArrange.runs`), each `|` a grip of its own in arrange mode.
+    private func placed(_ modules: [Surfaces.BarModule], _ place: BarRow, _ region: StyleBook.Region) -> [(items: [Placed], split: Int?)] {
+        BarArrange.runs(modules, arranging: model.arranging) { BarLayout.drawn($0) && draws($0, region) }
+            .map { r in (r.items.map { Placed(index: $0, module: modules[$0]) }, r.split) }
+    }
+
+    /// Where one island ends and the next begins, drawn so it can be moved like any module (R-BA2).
+    private func splitHandle(_ index: Int, _ place: BarRow) -> some View {
+        // The bar draws the lists as they will be after the drop, so the grip being moved sits where it lands.
+        let d = model.drag.flatMap { $0.display == display && $0.module == .split ? $0 : nil }
+        let moving = d.map { d in (d.target.map { BarArrange.landing(from: d.from, to: $0) } ?? d.from) == BarSlot(place, index) } ?? false
+        return BarSplitHandle()
+            .opacity(moving ? (d?.target == nil ? 0.3 : 0) : 1)
+            .overlay(alignment: .leading) {
+                if moving, d?.target != nil { Capsule().fill(Chrome.accent).frame(width: 2).padding(.vertical, 5) }
+            }
+            .barMeasured(.item(place, index))
+            .accessibilityLabel("Island split")
+            .modifier(moveActions(BarSlot(place, index), .split))
+    }
+
+    /// The VoiceOver moves for the module at `slot`: past the modules this bar draws (a split parts islands, so it
+    /// counts), and never into a row that takes no drop of it.
+    private func moveActions(_ slot: BarSlot, _ module: Surfaces.BarModule) -> BarMoveActions {
+        let m = model.measure[display]
+        let region = StyleBook.Region(rawValue: slot.row.rawValue) ?? .left
+        return BarMoveActions(slot: slot, bar: model.bar,
+                              shown: { $0 == .split || (BarLayout.drawn($0) && draws($0, region)) },
+                              refused: { r in m?.closed.contains(r) == true || m?.hides[r]?.contains(module) == true },
+                              run: model.onStep)
+    }
+
+    /// Arrange mode's Done pill, after the middle's modules.
+    @ViewBuilder private var done: some View {
+        if model.arranging {
+            Text("Done").font(Chrome.mono(BarWords.size - 1, .semibold)).foregroundStyle(Chrome.onAccent)
+                .padding(.horizontal, 10).padding(.vertical, 3)
+                .background(Capsule().fill(Chrome.accent))
+                .barMeasured(.done)
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Done arranging")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { model.onDone() }
         }
-        return out.filter { !$0.isEmpty }
     }
 
     /// One module in its row, measured for a press. The one being moved leaves a gap where it will land, marked by a
@@ -720,16 +782,22 @@ struct TopBarView: View {
     @ViewBuilder private func item(_ p: Placed, _ place: BarRow, _ region: StyleBook.Region, room: Double) -> some View {
         let moving = model.drag.map { $0.display == display && $0.module == p.module } ?? false
         styled(p.module, region, room: room)
+            .overlay {
+                if model.arranging { BarShape.face.strokeBorder(Chrome.wash(0.35), lineWidth: Chrome.width(.overviewChip)).padding(.vertical, 3) }
+            }
             .opacity(moving ? (model.drag?.target == nil ? 0.3 : 0) : 1)
             .overlay(alignment: .leading) {
                 if moving, model.drag?.target != nil { Capsule().fill(Chrome.accent).frame(width: 2).padding(.vertical, 5) }
             }
             .barMeasured(.item(place, p.index))
+            .modifier(moveActions(BarSlot(place, p.index), p.module))
     }
 
     /// The module being moved, lifted under the pointer.
     private func lifted(_ d: BarDrag, pad: EdgeInsets, height: CGFloat) -> some View {
-        styled(d.module, StyleBook.Region(rawValue: d.from.row.rawValue) ?? .left, room: 400)
+        Group {
+            if d.module == .split { BarSplitHandle() } else { styled(d.module, StyleBook.Region(rawValue: d.from.row.rawValue) ?? .left, room: 400) }
+        }
             .fixedSize()
             .background { BarShape.face.fill(Chrome.panel(0.94)).shadow(color: Chrome.shadow(0.3), radius: 5, x: 0, y: 2) }
             .scaleEffect(Chrome.reduceMotion ? 1 : 1.06)

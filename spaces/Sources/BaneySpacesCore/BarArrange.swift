@@ -66,11 +66,33 @@ public enum BarArrange {
         let module = source.remove(at: from.index)
         set(&out, from.row, source)
         var target = list(out, to.row)
-        // In the same row the gaps after the module close up by one once it is out.
-        let at = from.row == to.row && to.index > from.index ? to.index - 1 : to.index
-        target.insert(module, at: at)
+        target.insert(module, at: landing(from: from, to: to).index)
         set(&out, to.row, target)
         return out
+    }
+
+    /// Where the module from `from` sits in the lists after `move` puts it in the gap `to`: in the same row the gaps
+    /// after it close up by one once it is out.
+    public static func landing(from: BarSlot, to: BarSlot) -> BarSlot {
+        BarSlot(to.row, from.row == to.row && to.index > from.index ? to.index - 1 : to.index)
+    }
+
+    /// A row's modules in the groups `|` parts them into: each group the indices of the modules `draws` keeps, empty
+    /// groups left out. In arrange mode each `|` is a run of its own (`split`, its index), drawn as a grip so it can
+    /// be moved. Only then: a grip that came in with a ⌘-drag would move the modules after the press measured them.
+    public struct Run: Equatable, Sendable {
+        public var items: [Int] = []
+        public var split: Int?
+        public init(items: [Int] = [], split: Int? = nil) { self.items = items; self.split = split }
+    }
+
+    public static func runs(_ modules: [Surfaces.BarModule], arranging: Bool,
+                            draws: (Surfaces.BarModule) -> Bool) -> [Run] {
+        var out = [Run()]
+        for (i, m) in modules.enumerated() {
+            if m == .split { out += [Run(split: i), Run()] } else if draws(m) { out[out.count - 1].items.append(i) }
+        }
+        return out.filter { !$0.items.isEmpty || (arranging && $0.split != nil) }
     }
 
     /// The gap a drop at `x` lands in: the row whose stretch holds `x` (each from its `minX` up to, not including, its
@@ -125,10 +147,12 @@ public enum BarArrange {
 
     /// Where `step` takes the module at `from`, or nil when it can't go that way. Left and right pass the modules that
     /// `shown` says draw nothing, so each step moves the module past one you can see, and at a row's edge it goes into
-    /// the next row. A move to another section puts it at the end nearest where it was: the far end of a row to its
-    /// left, the near end of a row to its right.
+    /// the next row that takes it. A move to another section puts it at the end nearest where it was: the far end of a
+    /// row to its left, the near end of a row to its right. A row `refused` gives true for (hidden by the style sheet, or
+    /// hiding this module) takes no step, as it takes no drop.
     public static func slot(for step: Step, from: BarSlot, in bar: Surfaces.Bar,
-                            shown: (Surfaces.BarModule) -> Bool = { _ in true }) -> BarSlot? {
+                            shown: (Surfaces.BarModule) -> Bool = { _ in true },
+                            refused: (BarRow) -> Bool = { _ in false }) -> BarSlot? {
         let row = list(bar, from.row)
         guard row.indices.contains(from.index) else { return nil }
         let rows = BarRow.allCases
@@ -136,18 +160,29 @@ public enum BarArrange {
         switch step {
         case .left:
             if let j = row.indices.last(where: { $0 < from.index && shown(row[$0]) }) { return BarSlot(from.row, j) }
-            guard r > 0 else { return nil }
-            return BarSlot(rows[r - 1], list(bar, rows[r - 1]).count)
+            guard let t = rows[..<r].last(where: { !refused($0) }) else { return nil }
+            return BarSlot(t, list(bar, t).count)
         case .right:
             if let j = row.indices.first(where: { $0 > from.index && shown(row[$0]) }) { return BarSlot(from.row, j + 1) }
-            guard r < rows.count - 1 else { return nil }
-            return BarSlot(rows[r + 1], 0)
+            guard let t = rows[(r + 1)...].first(where: { !refused($0) }) else { return nil }
+            return BarSlot(t, 0)
         case .toLeft, .toCenter, .toRight:
             let target: BarRow = step == .toLeft ? .left : step == .toCenter ? .center : .right
-            guard target != from.row else { return nil }
+            guard target != from.row, !refused(target) else { return nil }
             let t = rows.firstIndex(of: target)!
             return BarSlot(target, t < r ? list(bar, target).count : 0)
         }
+    }
+
+    /// What the bar's key panel does with a key-down. AppKit offers every key-down to `performKeyEquivalent` first, so
+    /// Escape is handled there too; any other ⌘ shortcut stops at the panel, so ⌘Q or ⌘W never reaches Polycarp's
+    /// own menu; any other key goes on as usual.
+    public enum PanelKey: Equatable, Sendable { case escape, undo, swallow, pass }
+
+    public static func panelKey(keyCode: UInt16, command: Bool, otherModifiers: Bool, characters: String?) -> PanelKey {
+        if keyCode == 53 { return .escape }
+        guard command else { return .pass }
+        return !otherModifiers && characters?.lowercased() == "z" ? .undo : .swallow
     }
 
     /// The three lists as the one value `bar.modules` takes.

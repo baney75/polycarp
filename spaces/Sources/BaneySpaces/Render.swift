@@ -245,6 +245,11 @@ enum Render {
                 }
             }
             topBar.drag = nil
+            // Arrange mode (R-BA1): every module outlined, the island splits as grips, Done after the middle.
+            topBar.arranging = true
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-arrange.png", CGSize(width: 1512, height: 26)) else { return 1 }
+            guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-arrange-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
+            topBar.arranging = false
         }
 
         // The bar's `page` module: a page with its icon, one playing elsewhere and a download.
