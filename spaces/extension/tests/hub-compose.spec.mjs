@@ -159,6 +159,22 @@ try {
   check((await sentWith(p, 'Left early')) === 1 && !left.some((d) => d.subject === 'Left early'), 'then it goes, once, and leaves Drafts', left);
   p.off('dialog', onDialog);
 
+  // A slow inbox load that ends after a switch to Drafts doesn't draw the inbox under the Drafts name.
+  await p.evaluate(() => {
+    const S = globalThis.PolycarpHubStore;
+    globalThis.__threads = S.threads;
+    S.threads = async (q) => { const r = await globalThis.__threads(q); if (q.folder === 'inbox') await new Promise((ok) => setTimeout(ok, 800)); return r; };
+  });
+  await p.evaluate(async () => { const S = globalThis.PolycarpHubStore; const t = (await globalThis.__threads({ folder: 'inbox', limit: 1 }))[0]; const g = await S.thread(t.id); await S.update(g.messages.map((m) => m.id), { flagged: !t.flagged }); });
+  await new Promise((r) => setTimeout(r, 300));
+  await p.focus('#rows');
+  await p.keyboard.press('g');
+  await p.keyboard.press('d');
+  await new Promise((r) => setTimeout(r, 1500));
+  const switched = await p.evaluate(() => ({ where: document.getElementById('where').textContent, threads: document.querySelectorAll('#rows [data-thread]').length }));
+  check(switched.where === 'Drafts' && switched.threads === 0, 'a slower load begun before a switch is dropped', switched);
+  await p.evaluate(() => { globalThis.PolycarpHubStore.threads = globalThis.__threads; });
+
   // Narrow: new mail fills the page without sideways scroll.
   await p.keyboard.press('Escape');
   await p.setViewportSize({ width: 390, height: 844 });
