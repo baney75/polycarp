@@ -20,6 +20,7 @@ notify = { version = "8.2", default-features = false, features = ["macos_fsevent
 # The agent gateway: token hashes and PKCE (SHA-256) and the operating system's random numbers.
 sha2 = "0.10"
 getrandom = "0.2"
+toml_edit = "0.23"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
