@@ -426,6 +426,14 @@ mod tests {
             assert!(names(&gw, &caller(&["files"])).contains(&t.to_string()));
         }
         assert!(names(&gw, &caller(&["files"])).contains(&"edits_page".to_string()));
+        // A read-only client sees which app does each job; choosing one needs act.
+        for t in ["defaults_get", "defaults_candidates"] {
+            assert!(seen.contains(&t.to_string()), "{t}");
+        }
+        for t in ["defaults_set", "defaults_reset"] {
+            assert!(!seen.contains(&t.to_string()), "{t} changes a choice");
+            assert!(act.contains(&t.to_string()), "{t}");
+        }
         for t in ["edit_set", "edit_remove", "filter_set"] {
             assert!(!seen.contains(&t.to_string()), "{t}");
             assert!(
