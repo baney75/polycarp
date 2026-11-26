@@ -19,7 +19,11 @@ const PAGE: &str = "Search or type an address";
 pub fn empty_profile(tools: &dyn Tools, app: &Path, work: &Path) -> Result<PathBuf, Refused> {
     let name = app.file_stem().unwrap_or_default().to_string_lossy();
     // A name that never resolves: the cookie store opens, and nothing is fetched.
-    let (ran, home) = start(tools, app, &name, work, "http://a.invalid/")?;
+    let started = start(tools, app, &name, work, "http://a.invalid/");
+    // A helper of its can outlive it, and would then count as the person's browser being open. The caller checked it was
+    // closed, so whatever runs from inside it now is this start's.
+    running::stop_inside(app);
+    let (ran, home) = started?;
     let first = home.join("profile/Default");
     if first.join("History").is_file() && first.join("Cookies").is_file() {
         return Ok(first);

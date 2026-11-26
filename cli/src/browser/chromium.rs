@@ -50,10 +50,7 @@ pub fn import(
     from: &Browser,
     profile: &Profile,
 ) -> Result<Brought, Refused> {
-    let Some(app) = place.spot.installed().map(|_| place.spot.app()) else {
-        let why = "Polycarp Browser is not installed; run `polycarp browser install` first";
-        return Err(Refused::new(CHECK, why));
-    };
+    let app = installed(place)?;
     let mut brought = Brought::default();
     let dir = import::into_profile(place, from, &profile.name, |part| {
         let work = place.work(tools)?;
@@ -69,6 +66,20 @@ pub fn import(
     Ok(brought)
 }
 
+/// The app, which lays out the new profile.
+pub fn installed(place: &Place) -> Result<std::path::PathBuf, Refused> {
+    match place.spot.installed() {
+        Some(_) => Ok(place.spot.app()),
+        None => Err(Refused::new(
+            CHECK,
+            "Polycarp Browser is not installed; run `polycarp browser install` first",
+        )),
+    }
+}
+
+/// A database's file and what SQLite may keep beside it.
+const BESIDE: [&str; 3] = ["", "-wal", "-journal"];
+
 fn fill(empty: &Path, from: &Path, part: &Path, work: &Path, to: &mut Brought) -> io::Result<()> {
     fs::write(part.join("Preferences"), pages::first_prefs())?;
     if let Some(bookmarks) = bookmarks(from) {
@@ -77,11 +88,19 @@ fn fill(empty: &Path, from: &Path, part: &Path, work: &Path, to: &mut Brought) -
     }
     if let Some(copy) = copied(&from.join("History"), work)? {
         let file = part.join("History");
-        fs::copy(empty.join("History"), &file)?;
+        // With its log: a start that ended early may not have folded it in.
+        for end in BESIDE {
+            let made = empty.join(format!("History{end}"));
+            if made.is_file() {
+                fs::copy(made, part.join(format!("History{end}")))?;
+            }
+        }
         // Its own errors could quote a row, so none is kept.
         to.history = history(&file, &copy).ok();
         if to.history.is_none() {
-            fs::remove_file(&file)?;
+            for end in BESIDE {
+                let _ = fs::remove_file(part.join(format!("History{end}")));
+            }
         }
     }
     to.extensions = extensions(from);
@@ -98,7 +117,7 @@ pub fn copied(file: &Path, work: &Path) -> io::Result<Option<std::path::PathBuf>
         return Ok(None);
     }
     let copy = work.join(format!("source {name}"));
-    for end in ["", "-wal", "-journal"] {
+    for end in BESIDE {
         let from = file.with_file_name(format!("{name}{end}"));
         if is_file(&from) {
             fs::copy(from, work.join(format!("source {name}{end}")))?;
@@ -155,7 +174,17 @@ fn history(file: &Path, source: &Path) -> rusqlite::Result<usize> {
     let mut db = open(file, source)?;
     let (urls, visits) = (shared(&db, "urls", &URLS)?, shared(&db, "visits", &VISITS)?);
     let t = db.transaction()?;
-    t.execute_batch("DELETE FROM main.visits; DELETE FROM main.urls;")?;
+    // All of what the start's own visit left, so nothing points at a page by a number the import then gives another.
+    let tables: Vec<String> = t
+        .prepare("SELECT name FROM main.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name <> 'meta'")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for table in tables {
+        t.execute(
+            &format!("DELETE FROM main.\"{}\"", table.replace('"', "\"\"")),
+            [],
+        )?;
+    }
     let web = "url LIKE 'http://%' OR url LIKE 'https://%'";
     let count = t.execute(
         &format!("INSERT INTO main.urls ({urls}) SELECT {urls} FROM source.urls WHERE {web}"),
@@ -176,7 +205,13 @@ fn history(file: &Path, source: &Path) -> rusqlite::Result<usize> {
 fn extensions(from: &Path) -> Vec<(String, String)> {
     let mut all = Vec::new();
     for file in ["Secure Preferences", "Preferences"] {
-        let text = fs::read(from.join(file)).unwrap_or_default();
+        let file = from.join(file);
+        // Not what a link leads to.
+        let plain = fs::symlink_metadata(&file).is_ok_and(|m| m.is_file());
+        let text = plain
+            .then(|| fs::read(&file).ok())
+            .flatten()
+            .unwrap_or_default();
         let prefs: Value = serde_json::from_slice(&text).unwrap_or_default();
         for (id, about) in prefs["extensions"]["settings"]
             .as_object()
@@ -247,7 +282,11 @@ mod tests {
         CREATE TABLE visits(id INTEGER PRIMARY KEY, url INTEGER NOT NULL, visit_time INTEGER NOT NULL,
         from_visit INTEGER, transition INTEGER DEFAULT 0 NOT NULL, visit_duration INTEGER DEFAULT 0 NOT NULL);
         INSERT INTO urls VALUES (1, 'http://a.invalid/', '', 1, 0, 1, 0);
-        INSERT INTO visits VALUES (1, 1, 1, 0, 0, 0);";
+        INSERT INTO visits VALUES (1, 1, 1, 0, 0, 0);
+        CREATE TABLE segments(id INTEGER PRIMARY KEY, name VARCHAR, url_id INTEGER NON NULL);
+        INSERT INTO segments VALUES (1, 'a.invalid', 1);
+        CREATE TABLE meta(key LONGVARCHAR NOT NULL UNIQUE PRIMARY KEY, value LONGVARCHAR);
+        INSERT INTO meta VALUES ('version', '70');";
     const THEIRS: &str = "CREATE TABLE urls(id INTEGER PRIMARY KEY, url LONGVARCHAR, title LONGVARCHAR,
         visit_count INTEGER, typed_count INTEGER, last_visit_time INTEGER, hidden INTEGER, odd TEXT);
         CREATE TABLE visits(id INTEGER PRIMARY KEY, url INTEGER, visit_time INTEGER, from_visit INTEGER,
@@ -257,7 +296,17 @@ mod tests {
         INSERT INTO visits VALUES (70, 7, 99, 0, 1, 'device'), (80, 8, 98, 0, 1, 'device');";
 
     /// A browser whose first start writes an empty history, as the real one does.
-    struct Starts<'a>(&'a Fake, bool);
+    struct Starts<'a>(&'a Fake, bool, Leave);
+
+    /// What a start that ended badly leaves.
+    #[derive(PartialEq)]
+    enum Leave {
+        Nothing,
+        /// Its history still in the log.
+        Log,
+        /// A helper that runs on.
+        Helper,
+    }
 
     impl Tools for Starts<'_> {
         fn run(&self, call: &Call) -> io::Result<Ran> {
@@ -267,7 +316,19 @@ mod tests {
             });
             let first = data.expect("only the browser is started").join("Default");
             let db = Connection::open(first.join("History")).unwrap();
+            if self.2 == Leave::Log {
+                db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+                    .unwrap();
+            }
             db.execute_batch(OURS).unwrap();
+            if self.2 == Leave::Log {
+                // Never closed, as when it is stopped: what it wrote stays in the log.
+                std::mem::forget(db);
+            }
+            if self.2 == Leave::Helper {
+                let app = call.program.ancestors().nth(3).unwrap();
+                std::mem::forget(self.0.start_inside(app));
+            }
             if self.1 {
                 fs::write(first.join("Cookies"), "").unwrap();
             }
@@ -311,7 +372,7 @@ mod tests {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
         let before = t.listing(&place.home);
-        let brought = import(&Starts(&t, true), &place, chrome, &profile).unwrap();
+        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
         assert_eq!(t.listing(&place.home), before, "the original was changed");
         assert_eq!(brought.dir, "Default");
         assert_eq!(brought.history, Some(1));
@@ -327,6 +388,9 @@ mod tests {
             ["https://made-up.example/ Made up 3"]
         );
         assert_eq!(all("SELECT id || ' ' || url FROM visits"), ["70 7"]);
+        // Nothing of the start's own visit, and its version kept.
+        assert!(all("SELECT name FROM segments").is_empty());
+        assert_eq!(all("SELECT value FROM meta"), ["70"]);
         let bookmarks = fs::read_to_string(data.join("Bookmarks")).unwrap();
         for (word, there) in [
             ("Bar", true),
@@ -345,7 +409,7 @@ mod tests {
     fn only_web_store_extensions_that_are_on_are_named() {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        let text = import(&Starts(&t, true), &place, chrome, &profile).unwrap();
+        let text = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
         let text = text.text(chrome, &profile);
         let store = "https://chromewebstore.google.com/detail/";
         let (a, d) = ("a".repeat(32), "d".repeat(32));
@@ -365,7 +429,7 @@ mod tests {
         let (place, chrome, profile) = made_up(&t);
         fs::write(profile.folder.join("History"), "not a database").unwrap();
         fs::write(profile.folder.join("Bookmarks"), "{}").unwrap();
-        let brought = import(&Starts(&t, true), &place, chrome, &profile).unwrap();
+        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
         assert!(!place.data.join("Default/History").exists());
         assert!(!place.data.join("Default/Bookmarks").exists());
         let text = brought.text(chrome, &profile);
@@ -384,7 +448,7 @@ mod tests {
         .unwrap();
         // Held, so the row stays in the log.
         assert!(profile.folder.join("History-wal").exists());
-        let brought = import(&Starts(&t, true), &place, chrome, &profile).unwrap();
+        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
         assert_eq!(brought.history, Some(2));
         drop(db);
     }
@@ -393,26 +457,47 @@ mod tests {
     fn what_a_link_leads_to_is_not_read() {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        for name in ["History", "Bookmarks"] {
+        for name in ["History", "Bookmarks", "Secure Preferences"] {
             let elsewhere = t.work().join(name);
             fs::rename(profile.folder.join(name), &elsewhere).unwrap();
             std::os::unix::fs::symlink(elsewhere, profile.folder.join(name)).unwrap();
         }
-        let brought = import(&Starts(&t, true), &place, chrome, &profile).unwrap();
+        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
         assert_eq!(brought.history, None);
         assert!(!place.data.join("Default/Bookmarks").exists());
+        assert!(brought.extensions.is_empty());
     }
 
     #[test]
     fn it_needs_the_browser_installed_and_able_to_start() {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        let e = import(&Starts(&t, false), &place, chrome, &profile).unwrap_err();
+        let e = import(&Starts(&t, false, Leave::Nothing), &place, chrome, &profile).unwrap_err();
         assert_eq!(e.check, "headless start");
         assert!(pages::untouched(&place.data));
         assert!(!place.data.join(".import").exists());
         fs::remove_dir_all(place.spot.app()).unwrap();
-        let e = import(&Starts(&t, true), &place, chrome, &profile).unwrap_err();
+        let e = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap_err();
         assert!(e.why.contains("install"), "{e}");
+        // Nor is it offered.
+        let asked = super::super::Asked {
+            verb: "import".into(),
+            what: Some("chrome".into()),
+            ..Default::default()
+        };
+        let e = import::answer(&t, &place, &asked).unwrap_err();
+        assert!(e.why.contains("install"), "{e}");
+    }
+
+    #[test]
+    fn a_start_that_ended_badly_still_makes_the_profile() {
+        let t = Fake::new();
+        let (place, chrome, profile) = made_up(&t);
+        let brought = import(&Starts(&t, true, Leave::Log), &place, chrome, &profile).unwrap();
+        assert_eq!(brought.history, Some(1));
+        let t = Fake::new();
+        let (place, chrome, profile) = made_up(&t);
+        import(&Starts(&t, true, Leave::Helper), &place, chrome, &profile).unwrap();
+        assert!(!place.spot.running());
     }
 }

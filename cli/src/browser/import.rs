@@ -171,9 +171,12 @@ pub fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String,
         let words = BROWSERS.map(|b| b.word).join(", ");
         return Err(Refused::new(CHECK, format!("{word} is not one of {words}")));
     };
+    let whole = from.word == "helium";
+    if !whole {
+        chromium::installed(place)?;
+    }
     let profiles = from.profiles(&place.home);
     let profile = pick(&profiles, asked.profile.as_deref())?;
-    let whole = from.word == "helium";
     if asked.flags.is_empty() {
         let (what, also) = match whole {
             true => ("profile", KEYCHAIN),
