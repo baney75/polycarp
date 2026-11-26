@@ -147,7 +147,7 @@ public struct StyleProblem: Equatable, Hashable, Sendable, CustomStringConvertib
 // MARK: What a selector can name
 
 public enum StyleSurface: String, CaseIterable, Sendable {
-    case bar, launcher, tiling, switcher, overview
+    case bar, launcher, tiling, switcher, overview, notifications
     /// Surfaces an older build had. A rule that names one reads with a warning and is ignored.
     static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
 }
@@ -171,6 +171,10 @@ public enum StyleTarget: String, CaseIterable, Sendable {
          switcherIcon = "switcher icon", switcherHint = "switcher hint"
     case overview, overviewTile = "overview tile", overviewNumber = "overview number", overviewLabel = "overview label",
          overviewWindow = "overview window", overviewTitle = "overview title", overviewIcon = "overview icon", overviewHint = "overview hint"
+    case notifications, notificationsHeading = "notifications heading", notificationsSection = "notifications section",
+         notificationsIcon = "notifications icon", notificationsRow = "notifications row", notificationsTitle = "notifications title",
+         notificationsText = "notifications text", notificationsTime = "notifications time", notificationsButton = "notifications button",
+         notificationsFooter = "notifications footer"
 
     /// The first word of its name.
     public var surface: StyleSurface { Self.names[self]!.surface }
@@ -206,6 +210,7 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .switcherItem, .switcherNumber, .switcherLabel, .switcherIcon: [.selected]
         case .overviewTile: [.current, .hover]
         case .overviewNumber, .overviewLabel: [.current]
+        case .notificationsRow, .notificationsTitle, .notificationsText, .notificationsButton: [.hover]
         default: []
         }
     }
@@ -220,6 +225,8 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .switcherNumber, .switcherLabel, .switcherIcon: .switcherItem
         case .overviewNumber, .overviewLabel, .overviewWindow: .overviewTile
         case .overviewTitle, .overviewIcon: .overviewWindow
+        case .notificationsTitle, .notificationsText, .notificationsTime: .notificationsRow
+        case .notificationsIcon: .notificationsSection
         // A surface inherits from nothing, its other parts from it.
         default: parts.isEmpty ? nil : StyleTarget.of(surface, part: nil)
         }
@@ -257,6 +264,16 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .overviewTitle: "The window's title under its app's name."
         case .overviewIcon: "The app's icon in a card."
         case .overviewHint: "The line of keys along the bottom."
+        case .notifications: "The list the bell in the bar opens. gap is the space between notifications."
+        case .notificationsHeading: "The word at the top."
+        case .notificationsSection: "An app's name over its notifications."
+        case .notificationsIcon: "The app's icon beside its name."
+        case .notificationsRow: "One notification; :hover the one under the pointer."
+        case .notificationsTitle: "A notification's first line; :hover while its row is."
+        case .notificationsText: "The lines under it, and what the empty list says; :hover while its row is."
+        case .notificationsTime: "When it came."
+        case .notificationsButton: "Clear all, Notification Center, Settings and the small symbols; :hover under the pointer."
+        case .notificationsFooter: "The strip along the bottom. border takes the place of the line over it."
         }
     }
 
@@ -354,7 +371,9 @@ public struct StyleProperty: Sendable {
     static let texts: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace,
                                        .launcher, .launcherSection, .launcherRow, .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherFooter,
                                        .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint,
-                                       .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle, .overviewHint]
+                                       .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle, .overviewHint,
+                                       .notifications, .notificationsHeading, .notificationsSection, .notificationsRow, .notificationsTitle,
+                                       .notificationsText, .notificationsTime, .notificationsButton, .notificationsFooter]
     /// Text with letters in it.
     static let letters = texts.filter { ![.switcherNumber, .overviewNumber].contains($0) }
     /// A font too, but the system's text field draws it.
@@ -362,11 +381,12 @@ public struct StyleProperty: Sendable {
     /// Everything with a fill of its own.
     static let boxes: [StyleTarget] = [.bar, .barRegion, .barIsland, .barModule, .barWorkspace,
                                        .launcher, .launcherField, .launcherSection, .launcherRow, .launcherBadge, .launcherFooter,
-                                       .switcher, .switcherItem, .overview, .overviewTile, .overviewWindow, .overviewHint]
+                                       .switcher, .switcherItem, .overview, .overviewTile, .overviewWindow, .overviewHint,
+                                       .notifications, .notificationsSection, .notificationsRow, .notificationsButton, .notificationsFooter]
     /// The whole screen, so it has no edge to draw.
     static let edged = boxes.filter { $0 != .overview }
     /// The fills whose size is their own: nothing to pad.
-    static let padded = edged.filter { ![.switcherItem, .overviewWindow].contains($0) }
+    static let padded = edged.filter { ![.switcherItem, .overviewWindow, .notificationsButton].contains($0) }
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, fonts + [.launcherIcon], inherited: true, "Text and symbol color.", example: "var(--foreground)"),
@@ -387,20 +407,21 @@ public struct StyleProperty: Sendable {
                       "The bar's height (on a screen with a notch the bar fills the strip beside it), or a row's: its icon shrinks to fit, and a subtitle with no room goes.",
                       example: "28px"),
         StyleProperty("padding", .padding, padded, "Space inside the edge.", example: "0 8px"),
-        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow, .switcher],
+        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow, .switcher, .notifications],
                       "Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows or tiles (a panel) or between an icon and its text (a row).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), edged + [.launcherIcon, .tiling, .switcherIcon, .overviewIcon], "Corner radius.", example: "6px"),
+        StyleProperty("border-radius", .length(0...40), edged + [.launcherIcon, .tiling, .switcherIcon, .overviewIcon, .notificationsIcon], "Corner radius.", example: "6px"),
         StyleProperty("border", .line, edged + [.tiling], "A line all around.", example: "1px solid var(--border)"),
         StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .launcher, .launcherField, .launcherSection, .launcherRow,
-                                              .switcher, .switcherItem, .overviewTile, .overviewWindow],
+                                              .switcher, .switcherItem, .overviewTile, .overviewWindow, .notificationsSection, .notificationsRow],
                       "A line along the bottom edge only.", example: "1px solid var(--border)"),
         StyleProperty("box-shadow", .shadow, [.barIsland], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
         StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)),
                       [.barRegion, .barIsland, .barModule, .barWorkspace, .launcherSection, .launcherSubtitle, .launcherBadge, .launcherIcon, .launcherFooter,
-                       .switcherLabel, .switcherIcon, .switcherHint, .overviewLabel, .overviewTitle, .overviewIcon, .overviewHint],
+                       .switcherLabel, .switcherIcon, .switcherHint, .overviewLabel, .overviewTitle, .overviewIcon, .overviewHint,
+                       .notificationsIcon, .notificationsTime],
                       "`none` hides it; `flex` (the default) shows it.", example: "flex"),
-        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow, .switcherItem, .overviewTile],
+        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow, .switcherItem, .overviewTile, .notificationsRow, .notificationsButton],
                       "How long a change of state (hover, current, selected) fades its colors and lines.", example: "150ms"),
     ]
 

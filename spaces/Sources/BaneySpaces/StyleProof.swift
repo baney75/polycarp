@@ -25,7 +25,8 @@ enum StyleProof {
         p.name == "transition-duration" || (p.name == "font-variant-numeric" && !digits.contains(t))
     }
     private static let digits: Set<StyleTarget> = [.launcher, .launcherRow, .launcherTitle, .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint,
-                                              .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle]
+                                              .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle,
+                                              .notifications, .notificationsSection, .notificationsRow, .notificationsTitle, .notificationsText, .notificationsTime]
 
     static func run() -> Int32 {
         var failed: [String] = [], tried = 0
@@ -37,12 +38,17 @@ enum StyleProof {
                     let fill = p.name == "border-radius" && StyleProperty.byName["background"]!.applies(to: target) ? faint + "; " : ""
                     let before = draw(scenes, "\(selector) { \(fill) }")
                     let shows = loud[p.name, default: [p.example]].contains { draw(scenes, "\(selector) { \(fill)\(p.name): \($0); }") != before }
-                    if !shows { failed.append("\(selector) { \(p.name) }") }
+                    if !shows { failed.append("changes nothing: \(selector) { \(p.name) }") }
                 }
             }
         }
-        failed.forEach { print("style proof: changes nothing: \($0)") }
-        print("style proof: \(tried) pairs drawn, \(failed.count) change nothing")
+        // The calendar under the clock has the notification list's buttons, but not their rules.
+        let calendar: [() -> AnyView] = [{ AnyView(BarCalendar(model: CalendarModel(now: Date(timeIntervalSince1970: 1_795_000_000))) {}) }]
+        if draw(calendar, "notifications .button { color: #ff00ff; font-size: 19px; }") != draw(calendar, "") {
+            failed.append("notifications .button changes the calendar's buttons")
+        }
+        failed.forEach { print("style proof: \($0)") }
+        print("style proof: \(tried) pairs drawn, \(failed.count) failed")
         return failed.isEmpty ? 0 : 1
     }
 
@@ -84,6 +90,17 @@ enum StyleProof {
                 return (n, [Spaces.Entry(id: WindowID(n), pid: 0, app: "Mail", title: "Inbox 1171")])
             })
             return [{ AnyView(ViewerView(model: model, stillBackdrop: true).frame(width: 900, height: 560)) }]
+        case .notifications:
+            // Two from one app, one app quiet, with every part.
+            let watcher = NoticeWatcher()
+            var shelf = NoticeShelf()
+            for n in 1...2 {
+                let node = NoticeNode(subrole: "AXNotificationCenterBanner", label: "Mail 11, Invoice 117\(n)", stacking: "bundleIdentifier=com.apple.mail", children: [
+                    NoticeNode(identifier: "title", text: "Invoice 117\(n)"), NoticeNode(identifier: "body", text: "Paid on the 11th, number 1171.")])
+                shelf.take(NoticeReader.read([node]), at: Calendar.current.startOfDay(for: Date()).addingTimeInterval(11 * 3600 + 11 * 60))
+            }
+            watcher.sample(shelf, quiet: ["com.apple.Music": "Music"])
+            return [{ AnyView(NoticeList(watcher: watcher, room: 620) {}) }]
         }
     }
 
