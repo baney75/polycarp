@@ -334,7 +334,8 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.gaps.right` | `0` | Points more at the right edge, 0 to 400, for something that stays there. |
 | `tiling.loneWidth` | `"smart"` | How wide a workspace's only window gets: `smart` (a 16:10 shape on a wide display, all of any other), `fill`, or `points:<width>`. |
 | `tiling.newWindow` | `"after"` | Which side of the window you are in a new one goes on: `after` (right or below) or `before`. |
-| `tiling.float` | `["com.apple.calculator","com.apple.Stickies"]` | Apps whose windows are never tiled, by bundle id. |
+| `tiling.float` | `[]` | Apps whose windows are never tiled, by bundle id, besides the small utilities that float unless a rule tiles them. |
+| `tiling.rules` | `[]` | Window rules, one a line: an app's bundle id, then `float`, `tile`, `pin` or a workspace 1-9, then words of the title if only some windows. The first float or tile rule that matches wins, and the first pin or workspace rule says where a new window goes. |
 | `tiling.floatModifier` | `"shift"` | The key held while a tiled window is let go that leaves it floating: `shift`, `control`, `option`, `command` or `none`. |
 | `tiling.keys.toggle` | `"ctrl+opt+T"` | Tile this workspace, or stop. |
 | `tiling.keys.focus-left` | `"ctrl+opt+Left"` | Focus the window to the left. |

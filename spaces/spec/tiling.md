@@ -70,6 +70,16 @@ A workspace's only window is as wide as the setting says until the person gives 
 workspace, in the middle, never past the area and never under the window's minimum; evening out or another setting ends it.
 A kept width is by app and workspace, the app's latest elsewhere. It changes the layout only as a pulled edge does.
 
+### R-T19 Window rules
+`tiling.rules` lines read `<bundle id> <float|tile|pin|1-9> [title words]`; a line that doesn't read turns the file away.
+Bundle ids match in any case and title words as a case-insensitive part of the title. The first float or tile rule that
+matches decides, then `tiling.float`, then the built-in utilities; a person's ⌃⌥F wins over all of them. The decision is
+made once a window has a title when its app has a rule with title words, at once otherwise, and kept until the rules
+change. Pin and workspace rules apply once, to a new window no agent claimed, after claims, whether or not tiling is on;
+one with title words waits up to 2 s for an untitled window's title. Never to or from the agent workspace, nor to a window
+of an app with a window there or one that waits on you. Only the titles of apps a rule has words for are read, and they
+never reach a trace line or a saved file.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without

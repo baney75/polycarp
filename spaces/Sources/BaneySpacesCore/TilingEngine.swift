@@ -10,6 +10,8 @@ public struct TilingWindow: Equatable, Sendable {
     public var pid: Int32
     /// Its app's bundle id, for the float rules.
     public var bundle: String
+    /// Its title, for a rule with title words; held in memory only, never written down or traced.
+    public var title: String
     public var workspace: Int
     public var frame: CGRect
     /// It can't be resized.
@@ -19,8 +21,9 @@ public struct TilingWindow: Equatable, Sendable {
     /// Over the workspace, not in it: it floats whatever its app's rule or the person said.
     public var over: TilingOver?
 
-    public init(id: WindowID, pid: Int32, bundle: String = "", workspace: Int, frame: CGRect, fixed: Bool = false, away: Bool = false, over: TilingOver? = nil) {
-        self.id = id; self.pid = pid; self.bundle = bundle; self.workspace = workspace; self.frame = frame
+    public init(id: WindowID, pid: Int32, bundle: String = "", title: String = "", workspace: Int, frame: CGRect, fixed: Bool = false,
+                away: Bool = false, over: TilingOver? = nil) {
+        self.id = id; self.pid = pid; self.bundle = bundle; self.title = title; self.workspace = workspace; self.frame = frame
         self.fixed = fixed; self.away = away; self.over = over
     }
 }
@@ -86,6 +89,9 @@ public struct TilingOptions: Equatable, Sendable {
     public var side = TilingSide.after
     /// Apps whose windows float, by bundle id.
     public var floatApps: Set<String> = []
+    /// Window rules (`tiling.rules`).
+    public var rules: [TileRule] = []
+    public var ruled: TileRules { TileRules(rules, float: floatApps) }
     /// The workspace agents work on never tiles.
     public var agentWorkspace: Int?
 
@@ -162,6 +168,8 @@ public struct TilingEngine: Equatable, Sendable {
     var before: [WindowID: CGRect] = [:]
     /// Windows a person floated (true) or tiled against a rule (false).
     var choice: [WindowID: Bool] = [:]
+    /// What the rules said of each window the first time it was seen, so a title that changes never moves it in or out.
+    var ruling: [WindowID: Bool] = [:]
     var minimums: [WindowID: CGSize] = [:]
     /// The size a window rounded its last one up to: no minimum, and only in force for a tile that size.
     var rounded: [WindowID: CGSize] = [:]
@@ -198,6 +206,7 @@ public struct TilingEngine: Equatable, Sendable {
     public mutating func apply(_ new: TilingOptions) {
         let old = options
         options = new
+        if old.ruled != new.ruled { ruling = [:] }
         if old.style != new.style {
             for key in slots.keys where slots[key]!.layout.style == old.style {
                 slots[key]!.layout.setStyle(new.style, area: slots[key]!.area)
@@ -210,7 +219,17 @@ public struct TilingEngine: Equatable, Sendable {
     /// Whether a window ever takes a tile.
     func floats(_ w: TilingWindow) -> Bool {
         if w.fixed || w.over != nil { return true }
-        return choice[w.id] ?? options.floatApps.contains(w.bundle)
+        return choice[w.id] ?? ruling[w.id] ?? options.ruled.floats(bundle: w.bundle, title: w.title)
+    }
+
+    /// Notes what the rules say of windows seen for the first time.
+    mutating func rule(_ windows: some Sequence<TilingWindow>) {
+        for w in windows where ruling[w.id] == nil {
+            // A new window may not have its title yet: one whose app has a rule with title words waits for it.
+            let words = options.rules.contains { $0.title != nil && $0.bundle.caseInsensitiveCompare(w.bundle) == .orderedSame }
+            if words, w.title.isEmpty { continue }
+            ruling[w.id] = options.ruled.floats(bundle: w.bundle, title: w.title)
+        }
     }
 
     /// Brings every layout in sight in line with the windows there are and says which frames to write: none when nothing
@@ -226,6 +245,7 @@ public struct TilingEngine: Equatable, Sendable {
             windows[shot.windows[i].id] = shot.windows[i]
         }
         forget(windows)
+        rule(windows.values)
         if let f = shot.focused, windows[f] != nil, recent.first != f { recent = [f] + recent.filter { $0 != f } }
         var moves: [TilingMove] = []
         // A display on its way out can have no area left for a moment: its layouts wait for a real one.
@@ -559,6 +579,7 @@ public struct TilingEngine: Equatable, Sendable {
         }
         func carry<T>(_ d: inout [WindowID: T]) { if d[new] == nil, let v = d[old] { d[new] = v } }
         choice[new] = choice[old]
+        carry(&ruling)
         // A window owed nothing is where the person has it, its other tabs too.
         if before[old] == nil { before[new] = nil }
         if let s = stowed.removeValue(forKey: old) { stowed[new] = s }
@@ -569,7 +590,7 @@ public struct TilingEngine: Equatable, Sendable {
     /// Drops what is known of windows that closed, and their places on workspaces they left.
     private mutating func forget(_ now: [WindowID: TilingWindow]) {
         func alive<T>(_ d: inout [WindowID: T]) { if d.keys.contains(where: { now[$0] == nil }) { d = d.filter { now[$0.key] != nil } } }
-        alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&roundings); alive(&asked); alive(&landing); alive(&stowed)
+        alive(&before); alive(&choice); alive(&ruling); alive(&minimums); alive(&rounded); alive(&lessons); alive(&roundings); alive(&asked); alive(&landing); alive(&stowed)
         recent.removeAll { now[$0] == nil }
         claimed.formIntersection(now.keys)
         for key in slots.keys {

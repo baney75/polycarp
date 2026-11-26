@@ -14,6 +14,7 @@ extension TilingOptions {
         }
         side = TilingSide(rawValue: s.newWindow) ?? .after
         floatApps = Set(s.float)
+        rules = s.rules.compactMap { try? TileRule.read($0).get() }
         self.agentWorkspace = agentWorkspace
     }
 

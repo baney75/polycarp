@@ -6,6 +6,8 @@ public struct TilingFacts: Equatable, Sendable {
     public var id: WindowID
     public var pid: Int32
     public var bundle: String
+    /// Its title, for a rule with title words; held in memory only.
+    public var title = ""
     public var workspace: Int
     /// Where the window server has it; nil when it no longer lists it.
     public var frame: CGRect?
@@ -67,7 +69,7 @@ public enum TilingRead {
     /// waits as it is.
     public static func shot(_ facts: [TilingFacts], shown: [Int: TilingShot.Place], focused: WindowID?) -> TilingShot {
         let windows = facts.map { f in
-            TilingWindow(id: f.id, pid: f.pid, bundle: f.bundle, workspace: f.workspace, frame: f.frame ?? .zero,
+            TilingWindow(id: f.id, pid: f.pid, bundle: f.bundle, title: f.title, workspace: f.workspace, frame: f.frame ?? .zero,
                          fixed: f.answer.map { !$0.resizable } ?? false, away: !f.here, over: f.over)
         }
         let seen = shown.filter { n, _ in

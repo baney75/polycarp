@@ -132,6 +132,8 @@ struct WindowsPane: View {
                 .labelsHidden()
             }
         }
+
+        TilingRulesGroup()
     }
 
     private var toggleKey: String { t.keys["toggle"].map { "\($0.symbols) tiles " } ?? "Pick " }
