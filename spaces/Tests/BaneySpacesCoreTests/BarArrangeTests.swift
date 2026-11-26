@@ -93,6 +93,25 @@ final class BarArrangeTests: XCTestCase {
         XCTAssertEqual(BarArrange.slot(at: 920, rows: flat), BarSlot(.right, 2))
     }
 
+    func testADropBesideAHiddenNeighbourIsStillItsOwnPlace() {
+        // workspaces, battery (draws nothing on a desktop Mac), clock: workspaces 40-100, clock 200-260.
+        let rows = [BarRowGeometry(row: .left, minX: 0, maxX: 300, items: [.init(index: 0, minX: 40, maxX: 100), .init(index: 2, minX: 200, maxX: 260)], count: 3)]
+        let b = bar(["workspaces", "battery", "clock"], [], [])
+        let slot = BarArrange.slot(at: 80, rows: rows, moving: BarSlot(.left, 0))
+        XCTAssertEqual(slot, BarSlot(.left, 0))
+        XCTAssertEqual(BarArrange.move(b, from: BarSlot(.left, 0), to: slot!), b)
+        // Past the clock's middle it is a real move, and the battery keeps its place.
+        XCTAssertEqual(ids(BarArrange.move(b, from: BarSlot(.left, 0), to: BarArrange.slot(at: 280, rows: rows, moving: BarSlot(.left, 0))!))[0],
+                       ["battery", "clock", "workspaces"])
+    }
+
+    func testRowsThatShareAnEdgeGiveItToTheRowOnTheRight() {
+        let rows = [BarRowGeometry(row: .center, minX: 850, maxX: 1000, items: [], count: 0),
+                    BarRowGeometry(row: .right, minX: 1000, maxX: 1512, items: [], count: 2)]
+        XCTAssertEqual(BarArrange.slot(at: 1000, rows: rows), BarSlot(.right, 2))
+        XCTAssertEqual(BarArrange.slot(at: 1512, rows: rows), BarSlot(.right, 2))
+    }
+
     func testTheNotchTakesNoDrop() {
         // A notched bar 1512 wide: the left beside the camera to 660, the center and right from 850.
         let notch = [

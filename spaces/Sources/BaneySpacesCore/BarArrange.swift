@@ -36,7 +36,7 @@ public struct BarRowGeometry: Equatable, Sendable {
     }
 }
 
-/// Moving the bar's modules by hand (docs/surfaces.md, "Moving modules"; spec/bar.md R-BA1 to R-BA6). Pure: the app
+/// Moving the bar's modules by hand (spec/bar.md, "Moving modules (macOS)", R-BA1 to R-BA6). Pure: the app
 /// measures the rows, asks for a slot, and writes the moved lists with `write`.
 public enum BarArrange {
     public static func list(_ bar: Surfaces.Bar, _ row: BarRow) -> [Surfaces.BarModule] {
@@ -73,12 +73,21 @@ public enum BarArrange {
         return out
     }
 
-    /// The gap a drop at `x` lands in: the row whose stretch holds `x`, before the first drawn module whose middle is
-    /// past `x`, else the row's end. Nil where no row is (under the notch, R-BA3).
-    public static func slot(at x: Double, rows: [BarRowGeometry]) -> BarSlot? {
-        guard let row = rows.first(where: { x >= $0.minX && x <= $0.maxX }) else { return nil }
-        let after = row.items.sorted { $0.minX < $1.minX }.first { ($0.minX + $0.maxX) / 2 > x }
-        return BarSlot(row.row, after?.index ?? row.count)
+    /// The gap a drop at `x` lands in: the row whose stretch holds `x` (each from its `minX` up to, not including, its
+    /// `maxX`; the last row takes its `maxX` too), before the first drawn module whose middle is past `x`, else the row's
+    /// end. Nil where no row is (under the notch, R-BA3). With `moving`, any gap that looks the same as its own place
+    /// (between the drawn modules either side of it, past ones that draw nothing) is its own place, so `move` writes
+    /// nothing (R-BA5).
+    public static func slot(at x: Double, rows: [BarRowGeometry], moving: BarSlot? = nil) -> BarSlot? {
+        guard let i = rows.firstIndex(where: { x >= $0.minX && (x < $0.maxX || ($0 == rows.last && x == $0.maxX)) }) else { return nil }
+        let row = rows[i]
+        let items = row.items.sorted { $0.minX < $1.minX }
+        let after = items.first { ($0.minX + $0.maxX) / 2 > x }
+        let slot = BarSlot(row.row, after?.index ?? row.count)
+        guard let moving, moving.row == row.row else { return slot }
+        let before = items.last { $0.index < moving.index }.map { $0.index + 1 } ?? 0
+        let next = items.first { $0.index > moving.index }?.index ?? row.count
+        return (before...next).contains(slot.index) ? moving : slot
     }
 
     /// The moves VoiceOver offers on each module (R-BA6).

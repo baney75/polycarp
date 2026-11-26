@@ -86,7 +86,8 @@ The person moves the bar's modules with the mouse; Windows draws a fixed set and
   and Escape, Done, a click outside the bar or 60 seconds with no drag ends it.
 - **R-BA2 Slots.** A module goes before or after any module in any of the three rows, or into an empty row. The island
   split `|` moves like any module. A slot is the gap counted in the row's list before the move (0 first, `count` the end);
-  the gap just before or after the module is its own place.
+  the gap just before or after the module is its own place, and so is any gap that looks the same (between the drawn
+  modules either side of it, past ones that draw nothing).
 - **R-BA3 The notch.** On a notched display the center row stays where it is drawn, and no slot under the notch is
   offered: a drop there changes nothing.
 - **R-BA4 One write, nothing lost.** A drop writes `bar.modules` (all three lists) to surfaces.json in one write, and
