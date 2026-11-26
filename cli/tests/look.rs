@@ -101,6 +101,16 @@ impl Sandbox {
             .map(|e| e["path"].as_str().unwrap_or_default().to_string())
             .collect()
     }
+    fn current(&self) -> Vec<String> {
+        let d = self.ok(&["look", "list"]);
+        let on = d["looks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|l| l["current"] == true);
+        on.map(|l| l["name"].as_str().unwrap().to_string())
+            .collect()
+    }
 }
 
 impl Drop for Sandbox {
@@ -511,6 +521,62 @@ fn a_file_over_the_limit_is_refused() {
 // Keeping and sharing one's own ------------------------------------------------------------------------------------
 
 #[test]
+fn without_spaces_a_look_holds_the_theme() {
+    let sb = Sandbox::new();
+    sb.ok(&["theme", "create", "base", "--extends", "evening"]);
+    sb.ok(&["theme", "set", "base"]);
+    sb.ok(&["theme", "change", "light.accent", "#1f3d7a"]);
+    sb.ok(&["theme", "create", "mine", "--extends", "base"]);
+    sb.ok(&["theme", "set", "mine", "--mode", "dark"]);
+    let d = sb.ok(&["look", "save", "evening-mine", "--title", "Evening, mine"]);
+    assert!(d["notes"].to_string().contains("theme alone"), "{d}");
+    let saved: Value =
+        serde_json::from_str(&sb.text("cfg/looks/evening-mine.polycarp-look").unwrap()).unwrap();
+    let doc = &saved["theme"]["document"];
+    // Whole in itself: what it extended is in it.
+    assert_eq!(
+        (&doc["extends"], &doc["light"]["accent"]),
+        (&Value::Null, &json!("#1f3d7a"))
+    );
+    assert_eq!(
+        (&saved["mode"], &saved["style"], &saved["paper"]),
+        (&json!("dark"), &Value::Null, &Value::Null)
+    );
+    assert_eq!(sb.current(), ["evening-mine"]);
+    let row = &sb.ok(&["look", "list"])["looks"][1];
+    assert_eq!(
+        (&row["name"], &row["problems"]),
+        (&json!("evening-mine"), &json!([]))
+    );
+    let d = sb.ok(&["look", "show", "evening-mine"]);
+    assert_eq!(d["changes"], json!([]));
+    assert_eq!(d["leaves_alone"], json!(["style", "surfaces", "paper"]));
+    assert!(d["colors"]["dark"]["accent"]
+        .as_str()
+        .unwrap()
+        .starts_with('#'));
+    let d = sb.ok(&["look", "show", "polycarp"]);
+    assert!(
+        d["changes"].to_string().contains("mode: auto (now dark)"),
+        "{d}"
+    );
+    assert!(sb.ok(&["look", "list"])["looks"][0]["name"] == "polycarp");
+}
+
+#[test]
+fn save_writes_over_nothing_unasked() {
+    let sb = Sandbox::new();
+    assert_eq!(sb.no(&["look", "save", "polycarp"]), "builtin_read_only");
+    assert_eq!(sb.no(&["look", "save", "../x"]), "invalid_look");
+    sb.ok(&["look", "save", "one", "--title", "The one"]);
+    assert_eq!(sb.no(&["look", "save", "one"]), "exists");
+    assert_eq!(
+        sb.ok(&["look", "save", "one", "--force"])["title"],
+        "The one"
+    );
+}
+
+#[test]
 fn export_writes_over_nothing_unasked() {
     let sb = Sandbox::new();
     let one = ["look", "import", "-", "--name", "one"];
@@ -721,6 +787,67 @@ esac
     sb
 }
 
+/// A whole look of the person's: their own theme, sheet, bar and paper, and things a look leaves alone.
+#[cfg(unix)]
+fn dress(sb: &Sandbox) {
+    sb.ok(&["theme", "create", "mine", "--extends", "evening"]);
+    sb.ok(&["theme", "set", "mine", "--mode", "dark"]);
+    sb.ok(&["theme", "accent", "#7aa2f7"]);
+    let put = |f: &str, v: &str| fs::write(sb.at(f), v).unwrap();
+    put(
+        "cfg/style.css",
+        "/* \"mine\" */\nbar { border-radius: 6px; }\n",
+    );
+    put("live/bar.height", "32");
+    put("live/bar.style", "\"solid\"");
+    put("live/bar.modules.left", "[\"mark\",\"custom:me\"]");
+    put("live/search.engine", "\"kagi\"");
+    fs::write(sb.at("pic.png"), PNG).unwrap();
+    put("live/paper.all", &sb.at("pic.png").display().to_string());
+    put("live/paper.idle", "olive");
+}
+
+#[cfg(unix)]
+#[test]
+fn save_reads_everything_and_leaves_out_what_is_the_persons_own() {
+    let sb = with_spaces();
+    dress(&sb);
+    let d = sb.ok(&["look", "save", "mine"]);
+    assert!(d["notes"].to_string().contains("custom:me"), "{d}");
+    assert!(d.get("current").is_none(), "{d}");
+    let l: Value = serde_json::from_str(&sb.text("cfg/looks/mine.polycarp-look").unwrap()).unwrap();
+    assert_eq!(l["style"], json!(sb.text("cfg/style.css").unwrap()));
+    assert_eq!(
+        l["surfaces"],
+        json!({"bar": {"height": 32, "style": "solid", "modules": {"left": ["mark"]}}})
+    );
+    assert_eq!(
+        l["paper"],
+        json!({"all": {"picture": sha(PNG)}, "idle": "olive"})
+    );
+    assert_eq!(
+        l["pictures"],
+        json!({sha(PNG): {"type": "image/png", "base64": base64(PNG)}})
+    );
+    assert_eq!(l["accent"]["dark"], "#7aa2f7");
+    assert!(
+        !l.to_string().contains("kagi") && !l.to_string().contains(&sb.root.display().to_string())
+    );
+    assert_eq!(sb.current(), ["mine"]);
+    let d = sb.ok(&["look", "show", "polycarp"]);
+    let changes = d["changes"].to_string();
+    for c in [
+        "theme: Polycarp (now ",
+        "mode: auto (now dark)",
+        "style sheet: none (now one of 2 lines)",
+        "bar.height: its default (now 32)",
+        "paper: none (now a png picture",
+        "paper on the idle screen: none (now olive)",
+    ] {
+        assert!(changes.contains(c), "{c} in {changes}");
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn polycarps_own_checks_run_before_a_look_is_kept() {
@@ -750,10 +877,46 @@ fn polycarps_own_checks_run_before_a_look_is_kept() {
     assert_eq!(sb.refused(&with("surfaces", s)), ["surfaces"]);
     let s = json!({"bar": {"style": "newer"}});
     assert_eq!(sb.refused(&with("surfaces", s)), ["surfaces.bar.hourNames"]);
+    fs::write(sb.at("cfg/style.css"), "bar { color: url(x); }").unwrap();
+    assert_eq!(sb.no(&["look", "save", "mine"]), "invalid_look");
+    assert!(!sb.at("cfg/looks/mine.polycarp-look").exists());
     let left: Vec<_> = fs::read_dir(sb.at("cfg/looks"))
         .unwrap()
         .flatten()
         .map(|e| e.file_name())
         .collect();
     assert!(left.is_empty(), "work files are gone: {left:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_look_is_in_force_only_when_every_part_of_it_is() {
+    let sb = with_spaces();
+    dress(&sb);
+    sb.ok(&["look", "save", "mine"]);
+    for (file, other) in [
+        ("cfg/style.css", "bar { border-radius: 2px; }\n"),
+        ("live/bar.height", "40"),
+        ("live/paper.idle", "water"),
+    ] {
+        let was = sb.text(file).unwrap();
+        assert_eq!(sb.current(), ["mine"], "before {file}");
+        fs::write(sb.at(file), other).unwrap();
+        assert!(sb.current().is_empty(), "{file} differs");
+        fs::write(sb.at(file), was).unwrap();
+    }
+    sb.ok(&["theme", "set", "mine", "--mode", "light"]);
+    assert!(sb.current().is_empty(), "the mode differs");
+    // What a look holds can still be shown when the present can't be read.
+    fs::write(sb.at("fail"), "style show").unwrap();
+    let v = sb.json(&["look", "show", "mine"]);
+    assert_eq!(v["ok"], true, "{v}");
+    assert_eq!(
+        (&v["data"]["changes"], &v["data"]["current"]),
+        (&Value::Null, &json!(false))
+    );
+    assert!(
+        v["data"]["warnings"].to_string().contains("can't be read"),
+        "{v}"
+    );
 }

@@ -1,12 +1,14 @@
 # Looks
 
 A look is how all of Polycarp looks, as one thing: the theme with its mode and accents, your `style.css`, how the
-bar and the other surfaces are drawn, and the paper, in one file a friend can send you.
+bar and the other surfaces are drawn, and the paper. Save how everything looks now, or send yours to a friend as one
+file.
 
 ```sh
+polycarp look save evening-desk --title "Evening desk"
 polycarp look export evening-desk ~/Desktop/evening-desk.polycarp-look
 polycarp look import friend.polycarp-look   # checked and saved; nothing on screen changes
-polycarp look show friend               # what it holds and leaves alone
+polycarp look show friend               # what applying it would change, in plain words
 ```
 
 Every command takes `--json` and answers as `polycarp theme` does (the same envelope and exit codes).
@@ -15,8 +17,9 @@ Every command takes `--json` and answers as `polycarp theme` does (the same enve
 
 | Command | What it does |
 | --- | --- |
-| `list` | The shipped look and yours |
-| `show <name\|file\|->` | What a look holds and what it leaves alone |
+| `list` | The shipped look and yours, with a `*` on the one in force |
+| `show <name\|file\|->` | What a look holds, what it would change and what it leaves alone |
+| `save <name> [--title T] [--force]` | Keeps how everything looks now. `--force` replaces one of yours |
 | `export <name> <file\|-> [--force]` | Writes one file to share. `-` prints it |
 | `import <file\|-> [--name N] [--force]` | Checks someone's look and saves it |
 
@@ -24,7 +27,7 @@ Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can't be repl
 
 Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`).
 
-Without Polycarp Spaces (Linux, Windows) the theme part is checked, and the output says the rest waits for it.
+Without Polycarp Spaces (Linux, Windows) the theme part still works, and the output says the rest waits for it.
 
 ## The file
 

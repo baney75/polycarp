@@ -57,7 +57,7 @@ polycarp doctor
 | --- | --- |
 | `polycarp spaces [args]` | Runs the workspace command with your arguments |
 | `polycarp theme <command>` | Chooses and checks the theme |
-| `polycarp look <command>` | Checks, keeps and shares looks: how all of Polycarp looks, in one file. See [Looks](https://github.com/baney75/polycarp/blob/main/docs/looks.md) |
+| `polycarp look <command>` | Saves and shares how all of Polycarp looks, as one thing. See [Looks](https://github.com/baney75/polycarp/blob/main/docs/looks.md) |
 | `polycarp mcp` | Serves the theme commands to an agent |
 | `polycarp files <command>` | Searches, opens and sends your files across your own devices, over Tailscale only. See [Files](https://github.com/baney75/polycarp/blob/main/docs/files.md) |
 | `polycarp agent <command>` | One MCP gateway for Grok Bot, Claude Code, Codex and web assistants, local, over your tailnet or through a tunnel. See [Agents](https://github.com/baney75/polycarp/blob/main/docs/agents.md) |

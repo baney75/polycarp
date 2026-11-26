@@ -20,8 +20,9 @@ use std::path::{Path, PathBuf};
 pub const USAGE: &str = "\
 usage: polycarp look <command> [--json]
 
-  list                                  the shipped look and yours
-  show <name|file|->                    what a look holds
+  list                                  the shipped look and yours, and which is in force
+  show <name|file|->                    what a look holds, and what it would change
+  save <name> [--title T] [--force]     keep how everything looks now under a name
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -38,6 +39,10 @@ pub fn run(args: &[OsString]) -> i32 {
         "show" => theme::cmd(rest, &[], &[], |c, p| {
             exactly(p, 1, "one look name or file")?;
             op_show(c, &p.pos[0])
+        }),
+        "save" => theme::cmd(rest, &["title"], &["force"], |c, p| {
+            exactly(p, 1, "one look name")?;
+            op_save(c, &p.pos[0], p.val("title"), p.flag("force"))
         }),
         "export" => theme::cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 2, "a look name, and a file or -")?;
@@ -145,7 +150,7 @@ fn refuse_taken(c: &Ctx, name: &str, force: bool) -> Result<(), ApiErr> {
 }
 
 /// What `list` and `show` say of the look `find` read for `arg`.
-fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
+fn about(c: &Ctx, look: &Look, arg: &str, current: bool) -> Json {
     let (source, file) = place(c, arg);
     let t = &look.theme;
     let (theme, colors) = t.swatches(c).unzip();
@@ -155,6 +160,7 @@ fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
         "description": look.description,
         "source": source,
         "file": file.map(|f| f.display().to_string()),
+        "current": current,
         "theme": theme,
         "mode": t.mode,
         "accent": {"light": t.accent_light, "dark": t.accent_dark},
@@ -164,13 +170,23 @@ fn about(c: &Ctx, look: &Look, arg: &str) -> Json {
 }
 
 pub(crate) fn op_list(c: &Ctx) -> Res {
+    // A list is still a list when what is in force can't be read; nothing is marked then.
+    let (now, warnings) = match state::now(c) {
+        Ok(n) => (Some(n), Vec::new()),
+        Err(e) => (
+            None,
+            vec![format!("what is in force can't be read: {}", e.message())],
+        ),
+    };
     let mut rows = Vec::new();
     let mut text = String::new();
     for name in std::iter::once(format::SHIPPED.to_string()).chain(store::names(c)) {
         match find(c, &name) {
             Ok((look, _)) => {
-                text.push_str(&format!("  {:<20} {}\n", look.name, look.title));
-                rows.push(about(c, &look, &name));
+                let current = now.as_ref().is_some_and(|n| n.same_as(&look));
+                let mark = if current { '*' } else { ' ' };
+                text.push_str(&format!("{mark} {:<20} {}\n", look.name, look.title));
+                rows.push(about(c, &look, &name, current));
             }
             Err(e) => {
                 let problems = e.problem_list();
@@ -180,7 +196,7 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
                 }
                 rows.push(json!({
                     "name": name, "title": theme::title_case(&name), "description": null, "source": "saved",
-                    "file": store::path(c, &name).display().to_string(), "colors": null,
+                    "file": store::path(c, &name).display().to_string(), "current": false, "colors": null,
                     "problems": problems,
                 }));
             }
@@ -189,23 +205,50 @@ pub(crate) fn op_list(c: &Ctx) -> Res {
     let data = json!({
         "looks": rows, "folder": store::dir(c).display().to_string(),
     });
-    Ok(Out::new(data, text))
+    Ok(warnings
+        .into_iter()
+        .fold(Out::new(data, text), Out::caution))
 }
 
 pub(crate) fn op_show(c: &Ctx, arg: &str) -> Res {
-    let (look, notes) = find(c, arg)?;
+    let (look, mut notes) = find(c, arg)?;
+    // What a look holds needs only the look; what it would change needs the present, which may not be readable.
+    let (now, warnings) = match state::now(c) {
+        Ok(n) => (Some(n), Vec::new()),
+        Err(e) => (
+            None,
+            vec![format!("what is in force can't be read: {}", e.message())],
+        ),
+    };
+    let changes = now.as_ref().map(|n| n.changes(c, &look));
     let mut text = format!("{} ({})\n", look.title, look.name);
     if let Some(d) = &look.description {
         text.push_str(&format!("{d}\n"));
     }
     let alone = leaves_alone(&look);
-    let mut data = about(c, &look, arg);
+    let current = match (&now, &changes) {
+        (Some(n), Some(ch)) => ch.is_empty() && n.same_as(&look),
+        _ => false,
+    };
+    let mut data = about(c, &look, arg, current);
     text.push_str(&holds(&data));
+    match &changes {
+        None => text.push_str("what applying it would change can't be said now\n"),
+        Some(ch) if ch.is_empty() => text.push_str("this is how everything looks now\n"),
+        Some(ch) => text.push_str(&format!(
+            "applying it would change:\n  {}\n",
+            ch.join("\n  ")
+        )),
+    }
     if !alone.is_empty() {
         text.push_str(&format!("it leaves alone: {}\n", alone.join(", ")));
     }
+    notes.extend(now.as_ref().and_then(left_for_spaces));
+    data["changes"] = json!(changes);
     data["leaves_alone"] = json!(alone);
-    Ok(Out::new(data, text).noting(notes))
+    Ok(warnings
+        .into_iter()
+        .fold(Out::new(data, text).noting(notes), Out::caution))
 }
 
 /// A look's theme, mode and accents, and where it was read, as lines.
@@ -239,6 +282,53 @@ fn leaves_alone(look: &Look) -> Vec<&'static str> {
     has.iter().filter(|(h, _)| !h).map(|(_, n)| *n).collect()
 }
 
+fn left_for_spaces(now: &state::Now) -> Option<String> {
+    now.live.is_none().then(|| {
+        "Polycarp Spaces isn't installed here, so this is about the theme; the style sheet, surfaces and paper wait for it".into()
+    })
+}
+
+pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> Res {
+    own_name(name)?;
+    let _held = theme::hold(c)?;
+    refuse_taken(c, name, force)?;
+    let now = state::now(c)?;
+    let mut notes = now.notes.clone();
+    // Saving over a look keeps what it is called unless a new title comes with it.
+    let was = store::read_look(&store::path(c, name)).ok().map(|(l, _)| l);
+    let title = match (title, &was) {
+        (Some(t), _) => t.to_string(),
+        (None, Some(w)) => w.title.clone(),
+        (None, None) => theme::title_case(name),
+    };
+    let mut look = Look {
+        name: name.into(),
+        title,
+        description: was.and_then(|w| w.description),
+        theme: now.theme.clone(),
+        style: None,
+        surfaces: None,
+        paper: None,
+        pictures: Default::default(),
+    };
+    match &now.live {
+        Some(live) => {
+            look.style = Some(live.style.clone());
+            let s = live.look_surfaces(&mut notes);
+            look.surfaces =
+                Some(s.map_err(|p| store::refused("a setting can't go in a look", &[p]))?);
+            look.paper = Some(live.paper.clone());
+            look.pictures = live.pictures.clone();
+            state::check(c, &look)?;
+        }
+        None => notes
+            .push("Polycarp Spaces isn't installed here, so the look holds the theme alone".into()),
+    }
+    // Checked as `find` checks it, so what is saved can be read back.
+    look.theme.check(c)?;
+    keep(c, &look, "saved", notes)
+}
+
 /// Writes a look to the looks folder, read back first as anyone else would read it.
 fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let text = look.to_text();
@@ -247,7 +337,11 @@ fn keep(c: &Ctx, look: &Look, did: &str, notes: Vec<String>) -> Res {
     let p = store::path(c, &look.name);
     let replaced = exists(c, &look.name);
     store::write_plain(&p, text.as_bytes())?;
-    let mut data = about(c, look, &look.name);
+    let mut data = about(c, look, &look.name, false);
+    // Which look is in force is `list`'s and `show`'s to say.
+    if let Some(o) = data.as_object_mut() {
+        o.remove("current");
+    }
     data["replaced"] = json!(replaced);
     let line = format!("{did} the look {} in {}\n", look.name, p.display());
     Ok(Out::new(data, line).noting(notes))

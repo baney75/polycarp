@@ -140,6 +140,19 @@ impl ThemeLook {
         )
     }
 
+    /// The same look, whatever its theme is called.
+    pub(crate) fn same_as(&self, other: &ThemeLook) -> bool {
+        (&self.mode, &self.accent_light, &self.accent_dark)
+            == (&other.mode, &other.accent_light, &other.accent_dark)
+            && same_doc(&self.theme, &other.theme)
+    }
+
+    /// The theme's own title, or its name.
+    pub(crate) fn theme_title(&self, c: &Ctx) -> String {
+        self.swatches(c)
+            .map_or_else(|| "a theme".into(), |(t, _)| t)
+    }
+
     pub(crate) fn check(&self, c: &Ctx) -> Result<(), ApiErr> {
         self.full(&c.cfg)
             .map(|_| ())
@@ -164,6 +177,21 @@ impl ThemeLook {
     }
 }
 
+fn same_doc(a: &ThemeDoc, b: &ThemeDoc) -> bool {
+    let plain = |t: &Table| {
+        let mut t = t.clone();
+        for k in ["name", "title", "description"] {
+            t.remove(k);
+        }
+        t
+    };
+    match (a, b) {
+        (ThemeDoc::Builtin(a), ThemeDoc::Builtin(b)) => a == b,
+        (ThemeDoc::Document(a), ThemeDoc::Document(b)) => plain(a) == plain(b),
+        _ => false,
+    }
+}
+
 /// Where the theme's files are; looks are kept beside them.
 impl Ctx {
     pub(crate) fn dir(&self) -> &Path {
@@ -176,6 +204,51 @@ pub(crate) struct Held(#[allow(dead_code)] Lock);
 
 pub(crate) fn hold(c: &Ctx) -> Result<Held, ApiErr> {
     Lock::acquire(&c.cfg).map(Held)
+}
+
+/// A theme's file with everything it extends merged in, so it needs no other theme.
+fn flatten(cfg: &Cfg, name: &str) -> Result<Table, String> {
+    let mut chain = vec![load_raw(cfg, name)?];
+    while let Some(ext) = chain.last().and_then(ext_of) {
+        if chain.len() > MAX_DEPTH {
+            return Err(format!("extends: more than {MAX_DEPTH} themes deep"));
+        }
+        chain.push(load_raw(cfg, &ext)?);
+    }
+    let mut merged = Table::new();
+    for t in chain.iter().rev() {
+        merge(&mut merged, t);
+    }
+    merged.remove("extends");
+    Ok(merged)
+}
+
+fn doc_of(cfg: &Cfg, name: &str) -> Result<ThemeDoc, String> {
+    Ok(match is_builtin(name) {
+        true => ThemeDoc::Builtin(name.to_string()),
+        false => ThemeDoc::Document(flatten(cfg, name)?),
+    })
+}
+
+/// The theme in force as a look holds it. A theme that is off is still the one chosen.
+pub(crate) fn capture(c: &Ctx) -> Result<(ThemeLook, Vec<String>), ApiErr> {
+    let eff = effective(&c.cfg);
+    require_healthy(&eff)?;
+    let st = eff.state;
+    let notes = match st.enabled {
+        true => Vec::new(),
+        false => vec![
+            "the theme is off; the look holds the one chosen, and applying it turns the theme on"
+                .into(),
+        ],
+    };
+    let look = ThemeLook {
+        theme: doc_of(&c.cfg, &st.theme).map_err(|e| bad_theme("the theme can't be read", &[e]))?,
+        mode: st.mode,
+        accent_light: st.accent_light,
+        accent_dark: st.accent_dark,
+    };
+    Ok((look, notes))
 }
 
 /// What `polycarp look` adds to a refusal.
