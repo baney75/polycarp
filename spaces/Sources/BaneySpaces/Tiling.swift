@@ -144,7 +144,9 @@ final class Tiling {
         guard flush == nil else { return }
         flush = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
             guard let self else { return timer.invalidate() }
-            let done = self.actions.due(now: Self.uptime)
+            // A close whose workspace left sight before any write wasn't missed: nothing writes there out of sight.
+            let shown = self.spaces.shownWorkspaces
+            let done = self.actions.due(now: Self.uptime).filter { $0.last != nil || shown.contains($0.workspace) }
             if self.actions.open.isEmpty { timer.invalidate(); self.flush = nil }
             guard !done.isEmpty else { return }
             let epoch = Int(Date().timeIntervalSince1970)

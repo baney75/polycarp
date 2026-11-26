@@ -1305,7 +1305,7 @@ final class Spaces {
     /// An app that quit loses its place in the order: its process id may come back as another app.
     func appQuit(_ pid: pid_t) {
         let at = ProcessInfo.processInfo.systemUptime
-        onWindowsLeft(Set(windows.filter { $0.value.pid == pid && model.workspace(of: $0.key) != nil }.keys), "quit", at)
+        if active { onWindowsLeft(Set(windows.filter { $0.value.pid == pid && model.workspace(of: $0.key) != nil }.keys), "quit", at) }
         activations.forget("\(pid)")
     }
 

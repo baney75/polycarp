@@ -16,6 +16,9 @@ public struct TileActions: Equatable, Sendable {
         /// When the last counted write returned.
         public var last: Double?
         public var writes: [WindowID: Int]
+        /// Set once a newer action begins on its workspace after this one had a write: looks that began at or after
+        /// it answer the newer one, not this.
+        public var until: Double?
 
         public init(_ kind: Kind, how: String, at: Double, workspace: Int, last: Double? = nil, writes: [WindowID: Int] = [:]) {
             (self.kind, self.how, self.at, self.workspace, self.last, self.writes) = (kind, how, at, workspace, last, writes)
@@ -30,17 +33,20 @@ public struct TileActions: Equatable, Sendable {
     public init() {}
 
     public mutating func begin(_ kind: Kind, how: String, at: Double, workspace: Int) {
+        for i in open.indices where open[i].workspace == workspace && open[i].last != nil && open[i].until == nil { open[i].until = at }
         open.append(Action(kind, how: how, at: at, workspace: workspace))
     }
 
-    /// Frames a look that began at `looked` asked for, back at `at`, each with its window's workspace. Each counts
-    /// toward one action only: the latest open one on its workspace whose cause came before that look began. A write
-    /// from a look before the cause answers something else, so a close no look answered still says `fill=-`.
+    /// Frames a look that began at `looked` asked for, back at `at`, each with its window's workspace. A write counts
+    /// toward every open action on its workspace whose cause came before that look began, so two closes one look
+    /// answers both fill; an action already answered stops at the next action's cause (`until`). A write from a look
+    /// before the cause answers something else, so a close no look answered still says `fill=-`.
     public mutating func wrote(_ ids: [(id: WindowID, workspace: Int)], looked: Double, at: Double) {
         for w in ids {
-            guard let i = open.indices.last(where: { open[$0].workspace == w.workspace && open[$0].at <= looked }) else { continue }
-            open[i].writes[w.id, default: 0] += 1
-            open[i].last = at
+            for i in open.indices where open[i].workspace == w.workspace && open[i].at <= looked && open[i].until.map({ looked < $0 }) ?? true {
+                open[i].writes[w.id, default: 0] += 1
+                open[i].last = at
+            }
         }
     }
 

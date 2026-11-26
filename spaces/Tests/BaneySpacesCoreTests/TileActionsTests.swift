@@ -75,6 +75,26 @@ final class TileActionsTests: XCTestCase {
         XCTAssertEqual(t.due(now: 0.9).map(line), ["1 move fill=15 writes=1 windows=1 how=key", "1 move fill=20 writes=1 windows=1 how=key"])
     }
 
+    /// Review of #871 round 2, first-F1: ⌘W twice, 40 ms apart, before any look; the one look that fills both answers
+    /// both.
+    func testTwoClosesOneLookAnswersBoth() {
+        var t = TileActions()
+        t.begin(.close, how: "destroyed", at: 0, workspace: 1)
+        t.begin(.close, how: "destroyed", at: 0.04, workspace: 1)
+        t.wrote([(1, 1), (2, 1)], looked: 0.055, at: 0.07)
+        XCTAssertEqual(t.due(now: 0.6).map(line), ["1 close fill=70 writes=1 windows=2 how=destroyed", "1 close fill=30 writes=1 windows=2 how=destroyed"])
+    }
+
+    /// A write from a look that began before the newer action still counts toward the older one, though it returns after.
+    func testAnOlderLooksWriteStillCountsTowardTheOlderAction() {
+        var t = TileActions()
+        t.begin(.move, how: "key", at: 0, workspace: 1)
+        t.wrote([(1, 1)], looked: 0.001, at: 0.015)
+        t.begin(.move, how: "key", at: 0.3, workspace: 1)
+        t.wrote([(2, 1)], looked: 0.002, at: 0.31)
+        XCTAssertEqual(t.due(now: 3.4).map(line), ["1 move fill=310 writes=1 windows=2 how=key", "1 move fill=- writes=0 windows=0 how=key"])
+    }
+
     /// Review of #871, first-F2: a write in flight from a look before the close returns after it and still isn't its
     /// fill; the close no look answered says so.
     func testAWriteFromALookBeforeTheCauseDoesNotCountThoughItReturnsAfter() {
