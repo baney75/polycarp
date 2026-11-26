@@ -317,7 +317,7 @@ What the rooms do in the launcher and the menu: [rooms.md](rooms.md).
 
 ### `tiling`: windows side by side
 
-Off until you turn it on. What is tiled and what never is: [spec/tiling.md](../spec/tiling.md).
+Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 
 | Path | Default | Takes |
 | --- | --- | --- |

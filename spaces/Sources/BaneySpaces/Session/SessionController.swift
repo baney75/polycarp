@@ -425,6 +425,9 @@ final class SessionController {
             return ContactsLibrary.shared.handle(r)
         case .role:
             return role(r)
+        case .tile:
+            // Answered above (`later`), once it is done.
+            return .init(ok: false, error: "Polycarp isn't placing windows now")
         case .remote:
             switch r.text ?? "status" {
             case "on":

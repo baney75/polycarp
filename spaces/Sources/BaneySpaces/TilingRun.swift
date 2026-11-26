@@ -1,7 +1,7 @@
 import AppKit
 import BaneySpacesCore
 
-/// What a key or a click asks tiling to do.
+/// What a key, the bar, the command line or an agent asks tiling to do.
 extension Tiling {
     /// Runs a command on the workspace in use and its front window. `done` gets nil when it did something, else why not.
     func run(_ command: TilingCommand, done: @escaping (String?) -> Void = { _ in }) {
@@ -24,6 +24,27 @@ extension Tiling {
             case .toggle: toggle(n, done: done)
             }
         }
+    }
+
+    /// The same from `polycarp-spaces tile`, answered with how tiling stands once it is done.
+    func answer(_ words: [String], done: @escaping (Wire.Reply) -> Void) {
+        let end: (String?) -> Void = { [self] why in done(why.map { Wire.Reply(ok: false, error: $0) } ?? status.reply) }
+        switch TilingRequest(words: words) {
+        case nil: end("tile doesn't take that; `polycarp-spaces tile help` lists what it takes")
+        case .status?: end(spaces.active ? nil : "Polycarp isn't placing windows now")
+        case .turn(let on, let n)?:
+            let n = n ?? spaces.model.current
+            guard spaces.active else { return end("Polycarp isn't placing windows now") }
+            if n == engine.options.agentWorkspace { return end("the agent workspace never tiles") }
+            engine.options.tiles(n) == on ? end(nil) : toggle(n, done: end)
+        case .run(let command)?: run(command, done: end)
+        }
+    }
+
+    private var status: TilingStatus {
+        let n = spaces.model.current, ids = engine.windows(of: n), front = spaces.front()
+        return TilingStatus(workspace: n, tiles: engine.options.tiles(n), style: engine.style(of: n).rawValue, full: engine.isFull(n), windows: ids,
+                            focused: front.flatMap { ids.contains($0) ? $0 : nil }, tiling: Workspaces.range.filter { engine.options.tiles($0) })
     }
 
     /// The workspaces that tile, and their style.

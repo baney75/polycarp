@@ -77,6 +77,9 @@ public enum Wire {
             /// Opens the app for a job (`RoleRequest`): `target` is the role, `text` a prompt for the agent, `args` the
             /// flags. Local callers only: nothing is opened for another machine (`Remote.allows`).
             case role
+            /// Windows side by side (`polycarp-spaces tile`, docs/tiling.md): `args` is the request (`TilingRequest`). Answered
+            /// once it is done, with a `TilingStatus`. Local callers only (`Remote.allows` never lets it through).
+            case tile
         }
         public var op: Op
         public var target: String?

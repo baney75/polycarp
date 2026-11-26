@@ -8,6 +8,7 @@ Behind it are the same tools Polycarp already has:
 | --- | --- | --- |
 | `theme_*` | read to look, act to change | Everything `polycarp mcp` does |
 | `keys_list` | read | Every Polycarp keyboard shortcut, from the same table as [keys.md](keys.md) |
+| `tiling_status`, `tiling_run` | read to look, act to change | [Window tiling](tiling.md): how it stands, and one command at a time |
 | `files_*` | files | Everything `polycarp files mcp` does |
 | `edits_page` | files | Read the page you shared from the browser's Page edits |
 | `app_status`, `app_items`, `app_settings`, `workspace_agent_status` | read | Ask the running app what it tracks and how it is set |

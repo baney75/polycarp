@@ -318,7 +318,7 @@ Any other MCP client can start the same command.
 | `surfaces_set` | Change one field or group; it's checked whole and a refusal writes nothing. Every field: [spaces/docs/surfaces.md](../spaces/docs/surfaces.md) |
 | `paper_set` | Change the wallpaper in one call: what lies behind the desktop, the new tab page and the idle screen. A picture path, an https URL to a picture, `#RRGGBB` or a scene; `on` limits it to some places |
 | `paper_get`, `paper_reset` | See each place's paper, or take it off so the theme's wallpaper and each place's old look come back |
-| `style_example` | Read every style sheet selector and property for the top bar, with what each takes. Start here to restyle one part past the theme |
+| `style_example` | Read every style sheet selector and property for the top bar and the tiling outline, with what each takes. Start here to restyle one part past the theme |
 | `style_get`, `style_check` | See the style sheet in use, or list its problems with line and column |
 | `style_set`, `style_unset` | Change or remove one declaration in place, keeping comments; a change that would add an error writes nothing. The grammar: [spaces/docs/style.md](../spaces/docs/style.md) |
 | `style_preset` | Replace the sheet with a whole look in one call (`omarchy`: a solid dark bar, monospace, numbered workspaces with an accent line); the old sheet is kept as the next backup (`style.css.bak`, `.bak.1` and on), never written over |
@@ -326,6 +326,8 @@ Any other MCP client can start the same command.
 | `search` | Find what the person has open (tabs, windows, terminal splits) and the web, ranked as the launcher and the new tab page rank it, with the same bangs and `search.engine`. Changes nothing |
 | `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |
 | `keys_list` | Read every Polycarp keyboard shortcut: its keys (`mod` is the person's modifier), what it does, its group, where it works and when. Read-only. The same list: [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md) |
+| `tiling_status` | See how window tiling stands: the workspace in use, its style and its tiled windows in order. Read-only |
+| `tiling_run` | One tiling command (`on`, `focus left`, `style columns`, `float` and the rest of `polycarp-spaces tile`), only when the person asked: it moves their windows. See [tiling.md](https://github.com/baney75/polycarp/blob/main/docs/tiling.md) |
 | `filters_list`, `filter_set`, `filter_remove` | See, add or replace (by `id`), and remove the feed filters Polycarp's browser extension applies. See [Filters](#filters) |
 | `edits_list`, `edits_page`, `edit_set`, `edit_remove` | See the page edits agents made, read the page the person shared, add or replace an edit (by `id`), and remove one. Polycarp's browser extension applies them. See [Page edits](../spaces/docs/edits.md) |
 
