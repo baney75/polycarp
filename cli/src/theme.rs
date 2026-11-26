@@ -22,7 +22,9 @@ mod png;
 mod preview;
 mod schema;
 
-pub(crate) use part::{apply, capture, hold, rollback, Did, ThemeDoc, ThemeLook};
+pub(crate) use part::{
+    apply, before, capture, hold, restore, rollback, Before, Did, ThemeDoc, ThemeLook,
+};
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.

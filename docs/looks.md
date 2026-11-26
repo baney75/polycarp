@@ -7,6 +7,7 @@ or send yours to a friend as one file.
 ```sh
 polycarp look save evening-desk --title "Evening desk"
 polycarp look apply polycarp            # everything as Polycarp comes
+polycarp look undo                      # back to how it was
 polycarp look export evening-desk ~/Desktop/evening-desk.polycarp-look
 polycarp look import friend.polycarp-look   # checked and saved; nothing on screen changes
 polycarp look show friend               # what applying it would change, in plain words
@@ -23,24 +24,29 @@ Every command takes `--json` and answers as `polycarp theme` does (the same enve
 | `show <name\|file\|->` | What a look holds, what it would change and what it leaves alone |
 | `save <name> [--title T] [--force]` | Keeps how everything looks now. `--force` replaces one of yours |
 | `apply <name\|file\|-> [--dry-run]` | Puts a look on, all of it or none |
+| `undo` | Back to how it was before the last apply. Undo again to come forward |
+| `delete <name> [--force]` | Removes a saved look. The one in force needs `--force`; how things look doesn't change |
 | `export <name> <file\|-> [--force]` | Writes one file to share. `-` prints it |
 | `import <file\|-> [--name N] [--force]` | Checks someone's look and saves it |
 
-Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can be applied, not replaced.
+Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can be applied and undone, not replaced.
 
-## Apply
+## Apply and undo
 
 Everything is checked before anything changes: the theme by every theme rule, contrast included, the sheet by
 `style check`, the settings by `surfaces validate`, and each picture by its own bytes. Then the theme, the sheet, the
 settings and the paper change, in that order. If one fails, what changed is put back, and the error names the step
-(`step_failed`). In the rare case that putting back fails too, the error is `stuck` and says what is left.
+(`step_failed`). In the rare case that putting back fails too, the error is `stuck` and says what is left; `look undo`
+tries again.
 
-A look puts on the parts it has and leaves the others alone. A look that carries its own theme saves it among your
-themes under a free name. Bar modules of your own (`custom:`) stay where they were, and a sheet you wrote by hand is also
-kept in `style.css.bak`.
+Before each apply the present state is kept in `<config>/looks/.history/`, the newest 10. A look puts on the parts it
+has and leaves the others alone, and undo puts back only the theme and those parts, so a change made since to a part
+the look didn't hold stays. A look that carries its own theme saves it among your themes under a free name, and
+undo takes it away again unless you have edited it. Bar modules of your own (`custom:`) stay where they were, and a
+sheet you wrote by hand is also kept in `style.css.bak`.
 
 Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`),
-`step_failed`, `stuck`.
+`current_look`, `nothing_to_undo`, `step_failed`, `stuck`.
 
 Without Polycarp Spaces (Linux, Windows) the theme part still works, and the output says the rest waits for it.
 

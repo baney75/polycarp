@@ -77,6 +77,7 @@ polycarp spaces ls          # runs baneyspaces ls
 polycarp doctor             # shows which tools it found, and whether their builds match
 polycarp version            # every part, the commit it was built from, and whether they all match
 polycarp update             # brings every part to the newest commit together
+polycarp look save mine     # keeps how everything looks under a name; apply, undo, export, import
 polycarp mcp                # serves the theme tools to an agent over MCP (stdio)
 ```
 
