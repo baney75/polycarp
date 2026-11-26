@@ -103,6 +103,7 @@ public enum RoleKeys {
         case .mail: "e"
         case .messages: "g"
         case .music: "m"
+        case .video: "v"
         case .calendar: "c"
         case .notes: "o"
         case .passwords: "slash"
