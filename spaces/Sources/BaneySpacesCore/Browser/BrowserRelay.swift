@@ -131,6 +131,8 @@ public final class BrowserServer {
     public var icon: (BrowserIcon, Link) -> Void = { _, _ in }
     /// Text the person chose on a page, for the launcher.
     public var find: (String, Link) -> Void = { _, _ in }
+    /// A page's readable text, for a quick look the person asked for.
+    public var text: (BrowserText, Link) -> Void = { _, _ in }
     public var gone: (Link) -> Void = { _ in }
 
     private let path: String
@@ -221,6 +223,7 @@ public final class BrowserServer {
                 if let m = BrowserMessage(line) { DispatchQueue.main.async { self.message(m, link) } }
                 else if let i = BrowserIcon(line) { DispatchQueue.main.async { self.icon(i, link) } }
                 else if let t = BrowserShare.find(line) { DispatchQueue.main.async { self.find(t, link) } }
+                else if let t = BrowserText(line) { DispatchQueue.main.async { self.text(t, link) } }
             }
         }
         link.end()

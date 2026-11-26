@@ -414,3 +414,23 @@ test('chosen text goes to the launcher only while the app is there, and never fr
   await x.settle();
   assert.equal(x.b.find('later', open), false, 'not once the app is gone');
 });
+
+test("a page's text goes to the app once, when it asks, and never a private one's", async () => {
+  const asked = [];
+  const share = { text: async (t) => { asked.push(t.id); return { title: '', text: t.id === 5 ? '' : 'Words ' + 'x'.repeat(200000) }; } };
+  const x = browser({ share, tabs: [tab(1, 'One'), tab(2, 'Secret', { incognito: true }), tab(3, 'File', { url: 'file:///etc/hosts' }), tab(5, 'Empty'), tab(6, 'Unsaid', { incognito: undefined })] });
+  const read = async (id) => { x.port().onMessage.fire({ op: 'browser.read', tab: id }); await x.settle(); };
+  await x.b.start();
+  await read(1);
+  assert.deepEqual(asked, [], 'not before the app asked for tabs');
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+  await x.settle();
+  for (const id of [1, 2, 3, 5, 6, '1']) await read(id);
+  assert.deepEqual(asked, [1, 5]);
+  const sent = x.sent('browser.text');
+  assert.equal(sent.length, 1, 'nothing for a page with no text');
+  assert.equal(sent[0].tab, 1);
+  assert.equal(sent[0].title, 'One', "the tab's title when the page has none");
+  assert.equal(sent[0].text.length, 100000);
+  assert.ok(JSON.stringify(sent[0]).length < 1 << 20);
+});

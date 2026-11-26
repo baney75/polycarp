@@ -201,6 +201,7 @@ message, and turns away a host that no Chromium browser it knows started. `spec/
 | `{"op":"browser.app","id":...,"url":...}` | Bring that web app's window forward, or open the address in a window with no tab strip. |
 | `{"op":"browser.icon","url":...}` | Send that page's site icon. |
 | `{"op":"browser.send","tab":4,"to":"reader"}` | Open that tab in the Reader, or with `"library"` save it to the library. |
+| `{"op":"browser.read","tab":4}` | Send that tab's readable text once, for a quick look. |
 | `{"op":"browser.away"}` | From the host itself: the app isn't there, on joining or when it goes. Nothing sent now is kept; wait for the next `browser.want`. |
 
 | From the extension | Means |
@@ -209,6 +210,7 @@ message, and turns away a host that no Chromium browser it knows started. `spec/
 | `{"op":"browser.change","source":"tabs","rows":[...],"gone":[...]}` | Rows added or replaced, and the ids of those gone. |
 | `{"op":"browser.icon","url":...,"png":...}` | A site's icon that was asked for, base64, at most 64 KB. |
 | `{"op":"browser.find","text":...}` | Text the person chose on a page, for the launcher to search: one line, at most 200 characters. |
+| `{"op":"browser.text","tab":4,"title":...,"text":...}` | The readable text `browser.read` asked for, at most 100,000 letters. |
 
 A tab is `{id, window, title, url, incognito, group?, audible, pinned, front, popup?, app?}` (`popup` in a window with no tab strip, `app` when that is a web app's), a bookmark `{id, title, url}`, a visited
 page `{title, url, visits, last}` (milliseconds) and a download `{id, title, url, incognito, state, received, total, ended}` (`ended` in milliseconds, once it is whole). A tab or

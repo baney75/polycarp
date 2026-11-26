@@ -58,4 +58,37 @@ final class BrowserShareTests: XCTestCase {
         XCTAssertNil(find(["op": "browser.rows", "text": "a"]))
         XCTAssertNil(find(["op": "browser.find", "text": String(repeating: "x", count: 5000)]), "a message that big isn't one")
     }
+
+    private func text(_ o: [String: Any]) -> BrowserText? {
+        BrowserText(try! JSONSerialization.data(withJSONObject: ["op": "browser.text", "tab": 7].merging(o) { $1 }))
+    }
+
+    func testAPagesTextIsParagraphsAndPrintsNothingOfThePage() {
+        let t = text(["title": "Dear\ndiary", "text": " First  line \n\n\n\u{202E}Second\r\nThird "])
+        XCTAssertEqual(t?.title, "Dear diary")
+        XCTAssertEqual(t?.paragraphs, ["First  line", "Second", "Third"])
+        var dumped = ""
+        dump(t, to: &dumped)
+        for s in ["\(t!)", String(reflecting: t!), dumped] { XCTAssertFalse(s.contains("diary") || s.contains("First"), s) }
+        XCTAssertFalse(t as Any is Encodable)
+        XCTAssertEqual(text(["text": String(repeating: "word ", count: 30_000) + "\n" + String(repeating: "more ", count: 30_000)])?
+            .paragraphs.reduce(0) { $0 + $1.count }, 100_000, "at most 100,000 letters")
+        XCTAssertEqual(text(["title": String(repeating: "t", count: 400), "text": "a"])?.title.count, 300)
+        XCTAssertNil(text(["text": " \n "]))
+        XCTAssertNil(text(["tab": true, "text": "a"]))
+        XCTAssertNil(text(["tab": "7", "text": "a"]))
+        XCTAssertNil(text(["op": "browser.find", "text": "a"]))
+    }
+
+    func testOnlyTheTextAskedForIsTaken() {
+        let peer = BrowserPeer("org.example.browser", 1), now = Date(timeIntervalSince1970: 1_000)
+        XCTAssertNil(BrowserShare.Asked(tab("Settings", "chrome://settings"), in: peer))
+        XCTAssertEqual(BrowserShare.read(tab("A", "https://a.example/"))?["op"] as? String, "browser.read")
+        guard let a = BrowserShare.Asked(tab("A", "https://a.example/"), in: peer, at: now), let t = text(["text": "words"]),
+              let other = text(["tab": 8, "text": "words"]) else { return XCTFail("an ask and its text") }
+        XCTAssertTrue(a.takes(t, from: peer, at: now.addingTimeInterval(9)))
+        XCTAssertFalse(a.takes(t, from: peer, at: now.addingTimeInterval(11)), "too late")
+        XCTAssertFalse(a.takes(other, from: peer, at: now), "another tab")
+        XCTAssertFalse(a.takes(t, from: BrowserPeer("org.example.browser", 2), at: now), "another profile")
+    }
 }

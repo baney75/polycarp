@@ -539,7 +539,8 @@ chrome.runtime.onInstalled.addListener(() => refreshAppFilters());
 // A page sent from the launcher opens in the Reader, or is saved to the library as the page's menu saves it.
 const share = {
   reader: (tab) => openReaderForTab(tab),
-  library: (tab) => saveTab(tab).then((it) => tell(tab, it ? "Saved to your library" : "Could not save this page", it ? it.title : ""))
+  library: (tab) => saveTab(tab).then((it) => tell(tab, it ? "Saved to your library" : "Could not save this page", it ? it.title : "")),
+  text: (tab) => (isPdfUrl(tab.url) ? null : pageText(tab))
 };
 const bridge = globalThis.PolycarpBridge ? globalThis.PolycarpBridge.make(chrome, { share }) : null;
 if (bridge) {

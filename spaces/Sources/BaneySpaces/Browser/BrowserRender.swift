@@ -20,6 +20,19 @@ enum BrowserRender {
                      icon: NSImage(systemSymbolName: "tree.fill", accessibilityDescription: nil))
     }
 
+    /// A made-up page's text, as the extension sends it for a quick look.
+    static func text() -> BrowserText {
+        let text = """
+        Plant young trees in late autumn, once the leaves have fallen and before the ground freezes.
+        Dig a hole twice as wide as the roots and no deeper than they grew. Spread the roots out, fill in with the soil you took out, and water it well.
+
+        Stake each tree on the side the wind comes from, and tie it loosely so it can still sway a little. A tree that moves grows a stronger trunk.
+        In the first summer, water once a week when it doesn't rain, and keep grass back from the trunk for a yard all round.
+        """
+        let o: [String: Any] = ["op": "browser.text", "tab": 1, "title": "Orchard planting guide", "text": text]
+        return BrowserText(try! JSONSerialization.data(withJSONObject: o))!
+    }
+
     static func download() -> NoticeBanner { BrowserNotices.done(page().now.downloads!.one, app: "Safari") }
 
     private static func book() -> BrowserBook {

@@ -236,6 +236,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         a.openWebApp = { [weak self] in self?.open($0) }
         a.frontPage = { [weak self] in self.flatMap { $0.page(on: $0.spaces.model.current)?.now.front } }
         a.sharePage = { BrowserHub.shared.share($0, to: $1) }
+        a.peekPage = { BrowserHub.shared.read($0) }
+        BrowserHub.shared.onText = { PagePeek.shared.show($0, site: $1) }
         Launcher.openHere = { [weak self] url, orElse in
             guard let browser = SessionController.mainBrowser() else { return false }
             return self?.openHere(["url": url.absoluteString], in: browser, orElse: orElse) ?? false

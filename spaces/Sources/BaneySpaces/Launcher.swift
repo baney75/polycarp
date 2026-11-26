@@ -247,6 +247,8 @@ struct LauncherActions {
     var frontPage: () -> BrowserWindows.Front? = { nil }
     /// A page to its browser's Reader or library; false when that browser is gone.
     var sharePage: (BrowserWindows.Front, BrowserShare.Place) -> Bool = { _, _ in false }
+    /// A quick look at a page's text; false when its browser is gone.
+    var peekPage: (BrowserWindows.Front) -> Bool = { _ in false }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -1288,6 +1290,12 @@ final class LauncherModel: ObservableObject {
              { [weak self] in if let peer = self?.actions.searcher() { self?.actions.newTab(peer) } }),
             ("Make This Page an App", "macwindow.badge.plus", "The page in front on this workspace, in a window of its own",
              { [weak self] in if let f = self?.actions.frontPage() { self?.makeApp(of: f.tab, in: f.peer) } }),
+            ("Quick Look at Page", "eye", "The text of the page in front on this workspace, here",
+             { [weak self] in
+                 guard let f = self?.actions.frontPage(), self?.actions.peekPage(f) == true else {
+                     return Toast.show("That browser isn't open", symbol: "exclamationmark.triangle.fill")
+                 }
+             }),
             ("Send Page to Reader", "doc.plaintext", "The page in front on this workspace, in Polycarp Reader",
              { [weak self] in self?.share(.reader) }),
             ("Save Page to Library", "books.vertical", "The page in front on this workspace, in your Polycarp library",
@@ -1302,7 +1310,7 @@ final class LauncherModel: ObservableObject {
             switch name {
             case "New Tab Here": actions.searcher() != nil
             case "Make This Page an App": actions.frontPage().map { WebApps.fits($0.tab) } ?? false
-            case "Send Page to Reader", "Save Page to Library": actions.frontPage().map { BrowserShare.send($0.tab, to: .reader) != nil } ?? false
+            case "Quick Look at Page", "Send Page to Reader", "Save Page to Library": actions.frontPage().map { BrowserShare.send($0.tab, to: .reader) != nil } ?? false
             case Self.notesCommand: actions.frontPage().map { BrowserShare.line($0.tab, on: Date()) != nil } ?? false
             default: true
             }

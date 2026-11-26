@@ -131,7 +131,7 @@ public struct BrowserMessage: Sendable, CustomStringConvertible, CustomDebugStri
     }
 
     /// A JSON true or false, and nothing else: `0` and `1` come out of `JSONSerialization` as numbers that cast to `Bool`.
-    static func flag(_ v: Any?) -> Bool? {
+    public static func flag(_ v: Any?) -> Bool? {
         guard let n = v as? NSNumber, CFGetTypeID(n) == CFBooleanGetTypeID() else { return nil }
         return n.boolValue
     }

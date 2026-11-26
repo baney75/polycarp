@@ -44,6 +44,7 @@ final class BrowserRelayTests: XCTestCase {
         s.joined = { box.links.append($0); $0.send(["op": "browser.want", "sources": ["tabs"]]) }
         s.message = { m, link in box.book.take(m, from: link.peer); box.count += 1 }
         s.find = { t, _ in box.found.append(t) }
+        s.text = { t, _ in box.found.append(t.title) }
         s.gone = { link in box.book.forget(link.peer); box.links.removeAll { $0 === link }; box.gone += 1 }
         return (s, box)
     }
@@ -115,7 +116,8 @@ final class BrowserRelayTests: XCTestCase {
         b.send(["op": "focus", "id": "x"])
         b.send(tabs("Second"))
         b.send(["op": "browser.find", "text": "a\nchosen line"])
-        until("both") { box.book.rows(.tabs).count == 2 && box.found == ["a chosen line"] }
+        b.send(["op": "browser.text", "tab": 4, "title": "A page", "text": "Its words"])
+        until("both") { box.book.rows(.tabs).count == 2 && box.found == ["a chosen line", "A page"] }
         XCTAssertEqual(box.count, 2)
         XCTAssertEqual(Set(box.book.rows(.tabs).map(\.peer)).count, 2)
         a.close(); b.close()

@@ -17,6 +17,7 @@
   const PIECE_BYTES = 700000;
   const CHANGED = 300; // changed rows in a message: an address of 2,048 and a title of 300 three-byte letters each still fit
   const SECOND = 1000;
+  const TEXT = 100000; // a page's text for a quick look: six bytes a letter at worst in JSON, still under the host's 1 MB
   const WAIT = 250; // changes are gathered this long
   const cut = (s, n) => String(s || "").slice(0, n);
   const address = (u) => (String(u || "").length <= 2048 ? String(u || "") : "");
@@ -73,7 +74,8 @@
   }
 
   // ---------- The line ----------
-  // `share`: what the extension does with a tab the person sends from the launcher, `{ reader(tab), library(tab) }`.
+  // `share`: what the extension does with a tab the person sends from the launcher, `{ reader(tab), library(tab) }`, and
+  // `text(tab)`, the page's readable text `{ title, text }` for a quick look the person asked for.
   function make(chrome, { later = (fn, ms) => setTimeout(fn, ms), now = () => Date.now(), share = {} } = {}) {
     let port = null;
     let here = false; // the app said what it wants, and hasn't gone
@@ -185,6 +187,13 @@
       if (m.op === "browser.send" && Number.isInteger(m.tab) && ["reader", "library"].includes(m.to) && sending.includes("tabs") && share[m.to]) {
         const t = await chrome.tabs.get(m.tab);
         if (t.incognito === false && /^https?:\/\//i.test(t.url || "")) return share[m.to](t);
+      }
+      // Read when the person asks, sent once, kept nowhere.
+      if (m.op === "browser.read" && Number.isInteger(m.tab) && sending.includes("tabs") && share.text) {
+        const t = await chrome.tabs.get(m.tab);
+        if (t.incognito !== false || !/^https?:\/\//i.test(t.url || "")) return;
+        const page = await share.text(t);
+        if (page && page.text) post({ op: "browser.text", tab: m.tab, title: cut(page.title || t.title, 300), text: String(page.text).slice(0, TEXT) });
       }
       if (m.op === "browser.app") return (opening = opening.then(() => app(m)).catch(() => {}));
       if (m.op === "browser.icon" && typeof m.url === "string") return icon(m.url);

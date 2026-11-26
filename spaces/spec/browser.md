@@ -70,4 +70,6 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   file the person chose; Polycarp writes nothing else there and never rewrites what is in it. Only a tab with a web page is
   sent, and the extension takes only a tab it told the app of, never a private one. Text chosen on a page goes to the
   launcher by the page's menu, as one line of at most 200 characters, only while the app is there and never from a private
-  window; it is the launcher's query and nothing keeps it.
+  window; it is the launcher's query and nothing keeps it. "Quick Look at Page" asks the extension for the page's readable
+  text, at most 100,000 letters, and shows it until Esc or a click elsewhere; the app takes only the answer for the tab it
+  asked about, from that browser, within 10 seconds, keeps it nowhere else, and a text prints as its size only.
