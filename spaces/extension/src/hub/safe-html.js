@@ -31,6 +31,7 @@
   // Invisible characters a sender can put inside a name to break a match: zero-width, joiners, bidi marks, fillers.
   const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u3164\uFFA0]/gu;
   // Names that end like a file, not a site, so "report.pdf" in a link's text is not a site it names.
+  const LEAD = /^[\p{L}\p{M}]{2,}/u;
   const FILES = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "jpg", "jpeg", "png", "gif", "htm", "html"]);
   // Every site a link's text names, anywhere in it and in any script ("Log in at paypal.com now", "p\u0430ypal.com."),
   // in the same form as hostOf, so a look-alike spelled in another alphabet compares as the different site it is.
@@ -39,10 +40,23 @@
     // or "paypal\u3002com" would not read as a name at all.
     const s = String(text || "").replace(INVISIBLE, "").replace(/[\u3002\uff0e\uff61]/g, ".");
     const out = new Set();
-    for (const m of s.matchAll(/(?:[\p{L}\p{N}\p{M}-]+\.)+[\p{L}\p{M}]{2,}/gu)) {
-      if (FILES.has(m[0].split(".").pop().toLowerCase())) continue;
-      const h = hostOf("http://" + m[0]);
-      if (h) out.add(h);
+    // One pass over words split at anything a host can't hold, so a long hostile text takes time in line with its length.
+    for (const word of s.split(/[^\p{L}\p{N}\p{M}.-]+/u)) {
+      if (!word.includes(".")) continue;
+      // Each run of labels between empty ones names at most one site: from its first label to the last later label
+      // that starts with two letters, cut after those letters. "paypal.com..x" names paypal.com, "paypal.com-login"
+      // paypal.com, "a.b.123" nothing. Every label is looked at once per run.
+      let run = [];
+      for (const label of word.split(".").concat("")) {
+        if (label) { run.push(label); continue; }
+        let t = run.length - 1, top = null;
+        while (t >= 1 && !(top = LEAD.exec(run[t]))) t--;
+        if (top && !FILES.has(top[0].toLowerCase())) {
+          const h = hostOf("http://" + run.slice(0, t).join(".") + "." + top[0]);
+          if (h) out.add(h);
+        }
+        run = [];
+      }
     }
     return Array.from(out);
   }
