@@ -88,6 +88,7 @@ impl Fake {
             extension: self.extension(),
             spot: self.spot(),
             data: self.root.join("Support/Polycarp/Browser"),
+            page_cache: self.root.join("Caches/Polycarp/Browser"),
             host: Some("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces".into()),
         }
     }
@@ -488,6 +489,7 @@ impl Tools for Fake {
             }
             "Polycarp Browser" => return said(scene.page),
             "hdiutil" => self.mounted.set(false),
+            "open" => {}
             // No one but the made-up app's maker could sign it, so the checks of their signature are answered here.
             "codesign" if line.contains("--verify") => {}
             "codesign" | "plutil" => return System.run(call),

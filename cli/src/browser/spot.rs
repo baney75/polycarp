@@ -224,8 +224,6 @@ impl Spot {
     }
 
     /// Removes the app and the builds beside it, and says what went.
-    // `uninstall`, which uses it, comes next.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn remove(&self) -> Result<Vec<PathBuf>, Refused> {
         self.ours()?;
         self.quit_first("Polycarp Browser is open. Quit it first")?;

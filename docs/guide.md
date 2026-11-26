@@ -59,6 +59,7 @@ polycarp doctor
 | `polycarp theme <command>` | Chooses and checks the theme |
 | `polycarp look <command>` | Saves, shares and applies how all of Polycarp looks, as one thing. See [Looks](https://github.com/baney75/polycarp/blob/main/docs/looks.md) |
 | `polycarp mcp` | Serves the theme commands to an agent |
+| `polycarp browser <command>` | Makes Polycarp Browser on a Mac from Helium's own release, and keeps it current. See [Polycarp Browser](https://github.com/baney75/polycarp/blob/main/docs/browser.md) |
 | `polycarp files <command>` | Searches, opens and sends your files across your own devices, over Tailscale only. See [Files](https://github.com/baney75/polycarp/blob/main/docs/files.md) |
 | `polycarp agent <command>` | One MCP gateway for Grok Bot, Claude Code, Codex and web assistants, local, over your tailnet or through a tunnel. See [Agents](https://github.com/baney75/polycarp/blob/main/docs/agents.md) |
 | `polycarp install --local-studio [--uninstall]` | Adds Polycarp's plugin to Local Studio and grants its tools, so a local model can drive Polycarp. See [Agents](https://github.com/baney75/polycarp/blob/main/docs/agents.md#local-studio) |
@@ -68,7 +69,7 @@ polycarp doctor
 | `polycarp --version` | Prints the version |
 | `polycarp --help` | Prints the usage |
 
-`polycarp spaces` passes your arguments, input, output and exit code straight through. `polycarp browser` only says the agent browser extension was removed, and exits with code 2. `polycarp voice` only says Silas is its own app, and exits with code 1.
+`polycarp spaces` passes your arguments, input, output and exit code straight through. The old agent browser's commands (`polycarp browser mcp` and the rest) only say it was removed, and exit with code 2; so does any `polycarp browser` off a Mac. `polycarp voice` only says Silas is its own app, and exits with code 1.
 
 ### How it finds an app
 
