@@ -1154,6 +1154,8 @@ const TILING_COMMANDS: &[&str] = &[
     "next display",
     "scratchpad",
     "scratchpad send",
+    "pop",
+    "pin",
     "style dwindle",
     "style columns",
     "style main",

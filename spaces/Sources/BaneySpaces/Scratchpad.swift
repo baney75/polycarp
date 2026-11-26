@@ -22,6 +22,14 @@ extension Spaces {
         holdUntilFresh { [self] in bringScratchpad() }
     }
 
+    /// Pins a window to its display, or lets it go where it is.
+    func pin(_ id: WindowID, _ on: Bool) {
+        guard active else { return }
+        model.pin(id, on)
+        persist()
+        onChange?()
+    }
+
     @discardableResult
     private func bringScratchpad() -> Bool {
         if let f = front() { noteFocus(f) }

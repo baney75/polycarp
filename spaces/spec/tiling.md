@@ -53,6 +53,12 @@ never tiled, keep their frame, and a minimized one stays in the Dock. There is n
 taken out by the key that sent it there or by sending it to a workspace, and the two keys stay while one is left. It is
 kept across restarts.
 
+### R-T11 Pinned
+A pinned window is on whichever workspace its display shows and floats there. It is not what a workspace gives the focus to
+while it has a window of its own, is never on the agent workspace, and is let go by sending it to a workspace or to the
+scratchpad. Let go, or floated and tiled again, a window takes its old place when the rest of that layout is as it was, with
+its frame from before tiling. Another native tab of a pinned or scratchpad window is pinned or on the scratchpad as it was.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without

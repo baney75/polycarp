@@ -8,8 +8,10 @@ public struct SavedLayout: Codable, Equatable {
         public var window: WindowID
         public var pid: Int32
         public var workspace: Int
-        public init(window: WindowID, pid: Int32, workspace: Int) {
-            self.window = window; self.pid = pid; self.workspace = workspace
+        /// On whichever workspace its display shows. Nil for one that isn't.
+        public var pinned: Bool?
+        public init(window: WindowID, pid: Int32, workspace: Int, pinned: Bool? = nil) {
+            self.window = window; self.pid = pid; self.workspace = workspace; self.pinned = pinned
         }
     }
 
@@ -29,6 +31,11 @@ public struct SavedLayout: Codable, Equatable {
         var out: [WindowID: Int] = [:]
         for e in entries where livePids[e.window] == e.pid { out[e.window] = e.workspace }
         return out
+    }
+
+    /// The pinned windows that still belong to the same process.
+    public func pins(livePids: [WindowID: Int32]) -> Set<WindowID> {
+        Set(entries.filter { $0.pinned == true && livePids[$0.window] == $0.pid }.map(\.window))
     }
 
     public static func load(from url: URL) -> SavedLayout? {

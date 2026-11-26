@@ -24,6 +24,11 @@ extension Tiling {
             case .nextDisplay(let id): done(next(from: n, carrying: id))
             case .toggle: toggle(n, done: done)
             case .scratchpad: spaces.toggleScratchpad(done: done)
+            case .pin(let id, let sized):
+                if !spaces.model.pinned.contains(id) { engine.popOut(id, sized: sized) }
+                spaces.pin(id, !spaces.model.pinned.contains(id))
+                look()
+                done(nil)
             case .toScratchpad(let id):
                 spaces.sendToScratchpad(id, at: engine.release(id))
                 look()

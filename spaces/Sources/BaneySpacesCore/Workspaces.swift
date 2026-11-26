@@ -47,6 +47,8 @@ public struct Workspaces: Codable, Equatable {
     public internal(set) var lastFocused: [Int: WindowID] = [:]
     /// Scratchpad windows in sight, each over the workspace `home` says (Scratchpad.swift).
     public internal(set) var out: Set<WindowID> = []
+    /// Windows on whichever workspace their display shows (Pinned.swift).
+    public internal(set) var pinned: Set<WindowID> = []
     /// The window of its own a workspace had in focus last, for when the scratchpad goes away again.
     var under: [Int: WindowID] = [:]
 
@@ -62,6 +64,7 @@ public struct Workspaces: Codable, Equatable {
         home = home.filter { alive.contains($0.key) }
         lastFocused = lastFocused.filter { alive.contains($0.value) && home[$0.value] == $0.key }
         out.formIntersection(alive)
+        pinned.formIntersection(alive)
         under = under.filter { home[$0.value] == $0.key }
         var added: [WindowID] = []
         for id in seen where home[id] == nil && alive.contains(id) {
@@ -124,10 +127,11 @@ public struct Workspaces: Codable, Equatable {
         // Only a window in sight can be dragged: one whose workspace no display shows was moved
         // by macOS (its display went away), not by you.
         guard let n = shown[d], let old = home[id], old != n, isShown(old) else { return false }
-        let wasOut = out.contains(id)
+        let wasOut = out.contains(id), wasPinned = pinned.contains(id)
         assign(id, to: n, focus: false)
-        // A scratchpad window stays one wherever it is dragged.
+        // A scratchpad window stays one wherever it is dragged, and a pinned one is pinned there.
         if wasOut { out.insert(id) }
+        if wasPinned { pinned.insert(id) }
         return true
     }
 
@@ -140,15 +144,16 @@ public struct Workspaces: Codable, Equatable {
     public mutating func noteFocus(_ id: WindowID) {
         guard let n = home[id] else { return }
         lastFocused[n] = id
-        if !isScratch(id) { under[n] = id }
+        if !isScratch(id), !pinned.contains(id) { under[n] = id }
     }
 
     /// Moves a window to workspace `n`. With `focus`, it becomes the window that workspace
-    /// focuses next; without, it only takes that role when the workspace has none. It is off the
-    /// scratchpad then.
+    /// focuses next; without, it only takes that role when the workspace has none. No longer pinned then, or on
+    /// the scratchpad.
     public mutating func assign(_ id: WindowID, to n: Int, focus: Bool = true) {
         guard Self.range.contains(n), home[id] != nil else { return }
         out.remove(id)
+        pinned.remove(id)
         if let old = home[id], lastFocused[old] == id { lastFocused[old] = nil }
         home[id] = n
         if focus || lastFocused[n] == nil { noteFocus(id) }
@@ -161,7 +166,7 @@ public struct Workspaces: Codable, Equatable {
     /// main display, else as a new display gets one. Picking before that saw every window on
     /// the workspace a fresh launch put them all on, so "empty" meant nothing.
     public mutating func restore(current n: Int, home saved: [WindowID: Int], lastFocused focus: [Int: WindowID],
-                                 displays: [DisplayKey: Int] = [:]) {
+                                 displays: [DisplayKey: Int] = [:], pinned: Set<WindowID> = []) {
         for (id, ws) in saved where home[id] != nil && (Self.range.contains(ws) || ws == Self.scratchpad) { home[id] = ws }
         let n = Self.range.contains(n) ? n : current
         if !order.isEmpty {
@@ -181,6 +186,7 @@ public struct Workspaces: Codable, Equatable {
         current = n
         settleFocus()
         for (ws, id) in focus where home[id] == ws { lastFocused[ws] = id }
+        for id in pinned { pin(id, true) }
     }
 
     /// Makes `n` current and says which windows to hide and show. Switching to the workspace
@@ -201,10 +207,11 @@ public struct Workspaces: Codable, Equatable {
         current = n
         // The scratchpad goes away with the workspace it is over.
         putAway(out.filter { home[$0].map { !isShown($0) } ?? false })
+        bringPinned(to: n)
         let show = home.filter { isShown($0.value) }.map(\.key).sorted()
         let hide = home.filter { !isShown($0.value) }.map(\.key).sorted()
         let mine = windows(on: n)
-        let focus = lastFocused[n].flatMap { mine.contains($0) ? $0 : nil } ?? mine.first
+        let focus = lastFocused[n].flatMap { mine.contains($0) ? $0 : nil } ?? mine.first { !pinned.contains($0) } ?? mine.first
         return SwitchPlan(hide: hide, show: show, focus: focus, display: shown.count > 1 ? display(showing: n) : nil)
     }
 }

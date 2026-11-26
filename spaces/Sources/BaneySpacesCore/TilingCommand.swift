@@ -22,6 +22,8 @@ public enum TilingCommand: Equatable, Sendable {
     case scratchpad
     /// The window goes to the scratchpad, or becomes one of this workspace's again.
     case toScratchpad
+    /// The window floats on every workspace of its display, in a size of its own (`pop`) or where it is, or goes back.
+    case pop, pin
 
     /// Every command a key can have, by the name the settings, the command line and the docs use.
     public static let named: [(name: String, title: String, command: TilingCommand)] = {
@@ -47,6 +49,8 @@ public enum TilingCommand: Equatable, Sendable {
         add("next-display", "Send the window to the next display", .nextDisplay)
         add("scratchpad", "Show the scratchpad, or put it away", .scratchpad)
         add("scratchpad-send", "Send the window to the scratchpad, or take it out", .toScratchpad)
+        add("pop", "Pop the window out over every workspace, or put it back", .pop)
+        add("pin", "Pin the window over every workspace where it is, or put it back", .pin)
         for s in TileStyle.allCases { add("style-\(s.rawValue)", "Tile in the \(s.rawValue) style", .style(s)) }
         return all
     }()
@@ -80,6 +84,8 @@ public enum TilingOutcome: Equatable, Sendable {
     case nextDisplay(WindowID)
     case scratchpad
     case toScratchpad(WindowID)
+    /// Pin this window, or let it go when it is pinned.
+    case pin(WindowID, sized: Bool)
     /// Turn this workspace on or off.
     case toggle
     /// Nothing to do, and why.
@@ -96,6 +102,10 @@ extension TilingEngine {
         if command == .toScratchpad {
             if workspace == options.agentWorkspace { return .nothing("the agent workspace has no scratchpad") }
             return focused.map { .toScratchpad($0) } ?? .nothing("no window is in front")
+        }
+        if command == .pop || command == .pin {
+            if workspace == options.agentWorkspace { return .nothing("a window of the agent workspace stays there") }
+            return focused.map { .pin($0, sized: command == .pop) } ?? .nothing("no window is in front")
         }
         guard options.tiles(workspace) else { return .nothing("this workspace isn't tiled") }
         if case .style(let s) = command { return restyle(s, workspace) }
@@ -130,7 +140,7 @@ extension TilingEngine {
         case .full: layout.full.toggle()
         case .nextDisplay: return isTiled ? .nextDisplay(id) : .nothing("the window in front isn't tiled")
         case .group, .join, .groupCycle: return group(command, isTiled ? id : nil, key)
-        case .toggle, .style, .float, .scratchpad, .toScratchpad: break
+        case .toggle, .style, .float, .scratchpad, .toScratchpad, .pop, .pin: break
         }
         guard layout != slot.layout else { return .nothing("there is nothing to change") }
         slots[key]!.layout = layout
@@ -198,6 +208,10 @@ extension TilingEngine {
         guard let id = focused, let w = seen[id] else { return .nothing("no window is in front") }
         if w.fixed { return .nothing("a window that can't be resized always floats") }
         if w.over == .scratchpad { return .nothing("it is on the scratchpad") }
+        if w.over == .pinned {
+            setFloating(id, false)
+            return .pin(id, sized: false)
+        }
         setFloating(id, !floats(w))
         return .changed
     }
@@ -205,6 +219,7 @@ extension TilingEngine {
     /// Floats a window, or tiles it, whatever its app's rule says.
     public mutating func setFloating(_ id: WindowID, _ floating: Bool) {
         guard let w = seen[id], !w.fixed else { return }
+        if floating { keepPlace(of: id) }
         choice[id] = options.floatApps.contains(w.bundle) == floating ? nil : floating
         asked[id] = nil
     }
