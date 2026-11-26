@@ -160,10 +160,25 @@ impl DeviceList {
     pub fn get(&self, id: &str) -> Option<&Device> {
         self.devices.iter().find(|d| d.id == id)
     }
-    /// Whether to take `self` in place of `trusted`, the list this device holds. With none held yet (a device just
-    /// approved), the list must hold `me_id` and be signed by a device on it. Otherwise it must be newer and signed by
-    /// a device on the trusted list. Every record must match its keys.
-    pub fn accept(&self, trusted: Option<&DeviceList>, me_id: &str) -> Result<(), String> {
+    /// Whether to take `self` in place of `trusted`, the list this device holds: it must be newer and signed by a
+    /// device on the trusted list. Every record must match its keys.
+    pub fn accept(&self, trusted: &DeviceList, me_id: &str) -> Result<(), String> {
+        self.accept_from(Some(trusted), me_id, None)
+    }
+
+    /// A device just approved takes its first list only when the device that signed it has the fingerprint the
+    /// person read on the approving device's screen, and the list holds this device. Anyone can make a key and sign
+    /// a list naming this device, the relay included, so the fingerprint is what makes it the person's own device.
+    pub fn accept_first(&self, me_id: &str, approver: &str) -> Result<(), String> {
+        self.accept_from(None, me_id, Some(approver))
+    }
+
+    fn accept_from(
+        &self,
+        trusted: Option<&DeviceList>,
+        me_id: &str,
+        approver: Option<&str>,
+    ) -> Result<(), String> {
         for d in &self.devices {
             d.check()?;
         }
@@ -171,6 +186,17 @@ impl DeviceList {
         let signer = signers
             .get(&self.signer)
             .ok_or("the device list on the relay is signed by a device this one doesn't trust")?;
+        if let Some(fp) = approver {
+            let norm = |s: &str| s.to_ascii_uppercase().replace(['-', ' '], "");
+            if norm(&signer.fingerprint()) != norm(fp) {
+                return Err(format!(
+                    "the device list on the relay was signed by {} with fingerprint {}, not the {fp} you read on the \
+                     approving device, so it was refused",
+                    signer.name,
+                    signer.fingerprint()
+                ));
+            }
+        }
         if !signer.verifies(&list_message(self.version, &self.devices), &self.sig) {
             return Err(
                 "the device list on the relay has a bad signature, so it was refused".into(),
@@ -371,36 +397,41 @@ mod tests {
         let (a, b, stranger) = (Me::generate(), Me::generate(), Me::generate());
         let idb = b.device("b").id;
         let v1 = list_of(&a, 1, &[(&a, "a"), (&b, "b")]);
+        let fpa = a.device("a").fingerprint();
         assert!(
-            v1.accept(None, &idb).is_ok(),
+            v1.accept_first(&idb, &fpa).is_ok(),
             "a device just approved takes its first list"
         );
+        assert!(v1
+            .accept_first(&idb, &fpa.to_lowercase().replace('-', " "))
+            .is_ok());
         assert!(
-            v1.accept(None, &stranger.device("s").id).is_err(),
+            v1.accept_first(&stranger.device("s").id, &fpa).is_err(),
             "not if it isn't on it"
         );
+        // The relay makes a key, names the new device and signs: refused, the fingerprint is not the approver's.
+        let relay = list_of(&stranger, 1, &[(&stranger, "a"), (&b, "b")]);
+        let err = relay.accept_first(&idb, &fpa).unwrap_err();
+        assert!(err.contains("not the"), "{err}");
         let v2 = list_of(&a, 2, &[(&a, "a")]);
-        assert!(v2.accept(Some(&v1), &idb).is_ok());
-        assert!(
-            v1.accept(Some(&v2), &idb).is_err(),
-            "an older list is refused"
-        );
+        assert!(v2.accept(&v1, &idb).is_ok());
+        assert!(v1.accept(&v2, &idb).is_err(), "an older list is refused");
         let rogue = list_of(&stranger, 3, &[(&stranger, "s"), (&a, "a")]);
         assert!(
-            rogue.accept(Some(&v2), &idb).is_err(),
+            rogue.accept(&v2, &idb).is_err(),
             "signed by a device not trusted"
         );
         let mut tampered = v2.clone();
         tampered.devices.push(stranger.device("s"));
         assert!(
-            tampered.accept(Some(&v1), &idb).is_err(),
+            tampered.accept(&v1, &idb).is_err(),
             "a device added after signing"
         );
         let mut fake = stranger.device("s");
         fake.id = idb.clone();
         let spoof = DeviceList::signed(&a, "a", 3, vec![a.device("a"), fake]);
         assert!(
-            spoof.accept(Some(&v2), &idb).is_err(),
+            spoof.accept(&v2, &idb).is_err(),
             "a record whose id isn't its keys'"
         );
     }
