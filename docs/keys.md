@@ -38,6 +38,14 @@ only while a Settings switch is on; Always means it always works there.
 | Tab | Finish a bang | On the browser's new tab page | Always |
 | Esc | Clear the search | On the browser's new tab page | When the search has text |
 
+## Apps
+
+| Keys | What it does | Where it works | When |
+| --- | --- | --- | --- |
+| ⌃⌘Return | Go to your terminal | Anywhere | Add ⌥ for a new window. Unless macOS or another app has it |
+| ⌃⇧⌘B | Go to your browser | Anywhere | Add ⌥ for a new window. Unless macOS or another app has it |
+| ⌃⇧⌘A | Go to your AI agent | Anywhere | Add ⌥ for a new window. Unless macOS or another app has it |
+
 ## Workspaces
 
 | Keys | What it does | Where it works | When |

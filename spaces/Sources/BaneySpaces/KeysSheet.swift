@@ -183,8 +183,9 @@ final class KeysSheetPanel {
 /// works under it when that is not everywhere.
 struct KeysSheetView: View {
     let modifier: String
+    /// Your tiling keys and your keys for the default apps are in it.
+    private var rows: [KeyBinding] { Keymap.rows(DefaultAppsStore.shared.keys, in: Keymap.rows(SurfacesStore.shared.current)) }
 
-    private var rows: [KeyBinding] { Keymap.rows(SurfacesStore.shared.current) }
     private var columns: [[KeyBinding.Group]] { KeysSheetLayout.columns(rows, count: 3) }
 
     var body: some View {

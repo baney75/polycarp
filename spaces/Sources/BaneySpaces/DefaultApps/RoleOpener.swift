@@ -46,6 +46,12 @@ enum RoleOpener {
         return reply
     }
 
+    /// From a key: there is nobody to answer, so what went wrong is said on screen.
+    static func key(_ role: AppRole, new: Bool) {
+        let reply = open(RoleRequest(role: role, new: new))
+        if !reply.ok { fail(reply.error ?? "Couldn’t open \(role.title.lowercased())") }
+    }
+
     // MARK: Programs
 
     private static func run(_ id: String, _ path: String, _ r: RoleRequest, _ hooks: Hooks) {

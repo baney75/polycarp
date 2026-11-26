@@ -8,12 +8,13 @@ import Foundation
 /// words ("hold mod").
 public struct KeyBinding: Equatable {
     public enum Group: String, CaseIterable {
-        case launcher, workspaces, windows, terminal, agents, player, bar
+        case launcher, apps, workspaces, windows, terminal, agents, player, bar
 
         /// The heading a cheat sheet puts over the group.
         public var title: String {
             switch self {
             case .launcher: "Launcher"
+            case .apps: "Apps"
             case .workspaces: "Workspaces"
             case .windows: "Windows"
             case .terminal: "Terminal"
@@ -142,6 +143,10 @@ public enum Keymap {
         KeyBinding(id: "newtab.tab", keys: ["Tab"], title: "Finish a bang", group: .launcher, scope: .newTab),
         KeyBinding(id: "newtab.clear", keys: ["Esc"], title: "Clear the search", group: .launcher, scope: .newTab,
                    note: "When the search has text"),
+        // Apps: the keys Polycarp comes with; `rows` puts yours in their place.
+        KeyBinding(id: "role.terminal", keys: ["ctrl", "cmd", "Return"], title: "Go to your terminal", group: .apps, scope: .global, note: roleNote),
+        KeyBinding(id: "role.browser", keys: ["ctrl", "shift", "cmd", "B"], title: "Go to your browser", group: .apps, scope: .global, note: roleNote),
+        KeyBinding(id: "role.agent", keys: ["ctrl", "shift", "cmd", "A"], title: "Go to your AI agent", group: .apps, scope: .global, note: roleNote),
         // Workspaces
         KeyBinding(id: "workspace.switch", keys: ["mod", "1...9"], title: "Go to workspace 1 to 9", group: .workspaces, scope: .global),
         KeyBinding(id: "workspace.overview", keys: ["F3"], title: "Show every workspace (the Mission Control key)",
@@ -187,6 +192,29 @@ public enum Keymap {
         KeyBinding(id: "menu.settings", keys: ["cmd", ","], title: "Open Settings", group: .bar, scope: .menu),
         KeyBinding(id: "menu.quit", keys: ["cmd", "Q"], title: "Quit Polycarp", group: .bar, scope: .menu),
     ]
+
+    static let roleNote = "Add ⌥ for a new window. Unless macOS or another app has it"
+
+    /// The table with the keys you have for the default apps in place of the ones Polycarp comes with, and none for a
+    /// chord somebody else has. `table` is the rest as this person has it (`rows(_ s: Surfaces)`).
+    public static func rows(_ plan: RoleKeys.Plan, in table: [KeyBinding] = all) -> [KeyBinding] {
+        let active = plan.active
+        var ids: Set<String> = [], mine: [KeyBinding] = []
+        for b in active {
+            // Option's own chord is said in the row it adds to.
+            if b.new, active.contains(where: { $0.role == b.role && !$0.new && $0.chord.withOption == b.chord }) { continue }
+            var id = RoleKeys.rowPrefix + b.role.rawValue + (b.new ? ".new" : "")
+            if !ids.insert(id).inserted { id += "." + b.chord.text; ids.insert(id) }
+            let paired = !b.new && active.contains { $0.role == b.role && $0.new && $0.chord == b.chord.withOption }
+            let name = b.role == .agent ? b.role.title : b.role.title.lowercased()
+            mine.append(KeyBinding(id: id, keys: b.chord.tokens, title: b.new ? "Open a new window of your \(name)" : "Go to your \(name)",
+                                   group: .apps, scope: .global, note: paired ? "Add ⌥ for a new window" : nil))
+        }
+        guard let at = table.firstIndex(where: { $0.id.hasPrefix(RoleKeys.rowPrefix) }) else { return table }
+        var out = table.filter { !$0.id.hasPrefix(RoleKeys.rowPrefix) }
+        out.insert(contentsOf: mine, at: at)
+        return out
+    }
 
     /// The row with this id.
     public static func binding(_ id: String) -> KeyBinding? { all.first { $0.id == id } }

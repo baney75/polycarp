@@ -18,6 +18,8 @@ final class KeymapTests: XCTestCase {
         "code mods | shiftKey": "window.move",
         "kVK_ANSI_Grave controlKey": "terminal.quick",
         "kVK_ANSI_U cmdShift": "agents.finished.terminal",
+        // The loop over RoleKeys' chords (RoleHotkeys.swift): one row for each job that has a key.
+        "code chordMods": "role.terminal",
     ]
 
     /// Each command the launcher's search field handles in `control(_:textView:doCommandBy:)`, and its row.
@@ -60,7 +62,7 @@ final class KeymapTests: XCTestCase {
     /// Return branch, the overview's 1 to 9 is read as characters, and the keys.* rows are the shortcut sheet.
     static let unscanned: Set<String> = [
         "launcher.reveal", "workspace.overview", "workspace.overview.controlUp", "switcher.next", "switcher.back",
-        "switcher.arrows", "switcher.cancel", "overview.pick", "keys.hold", "keys.launcher", "keys.launcher.word",
+        "switcher.arrows", "switcher.cancel", "overview.pick", "keys.hold", "keys.launcher", "keys.launcher.word", "role.browser", "role.agent",
     ]
 
     /// kVK_ constants in Launcher.swift and the row each is, or nil when it is not a shortcut: ⌘Q is posted to quit an

@@ -288,7 +288,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var setup: SetupWindowController = {
         setupBuilt = true
         let c = SetupWindowController()
-        c.model.onModifierChange = { [weak self] _ in self?.registerShortcuts() }
+        c.model.onModifierChange = { [weak self] _ in
+            self?.registerShortcuts()
+            // "mod" in a chord of yours means the new one.
+            DefaultAppsStore.shared.refresh()
+        }
         c.model.onQuickTerminalKeyChange = { [weak self] _ in self?.registerShortcuts() }
         c.model.onUninstall = { [weak self] in self?.uninstall() }
         c.model.onBringBack = { [weak self] in self?.bringBack() }
@@ -518,6 +522,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.
         StyleSheetStore.shared.start(log: { Trace.log($0) })
         // [defaults] in config.toml: which app does each job (docs/default-apps.md).
+        roleKeysWatch = NotificationCenter.default.addObserver(forName: DefaultAppsStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.roleKeys != DefaultAppsStore.shared.now.keys else { return }
+            self.roleKeys = DefaultAppsStore.shared.now.keys
+            self.registerShortcuts()
+        }
         DefaultAppsStore.shared.start(log: { Trace.log($0) })
         RoleOpener.hooks = RoleOpener.Hooks(
             // Before the workspaces start, macOS itself decides: opening a running app shows its windows or makes one.
@@ -854,6 +863,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// apps until then. Picking a different modifier in setup re-registers them.
     /// Whether ⌘Space opens the launcher now: set from the hotkey registration itself, which the menu reads.
     private var cmdSpaceHeld = false
+    /// The default apps' keys as they were last registered.
+    private var roleKeys = RoleKeys.Plan()
+    private var roleKeysWatch: NSObjectProtocol?
 
     private func registerShortcuts() {
         hotkeys.removeAll()
@@ -891,6 +903,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         registerTilingKeys()
+        // The default apps' keys (`RoleKeys`): the ones Polycarp comes with, moved by [keys.bindings] in config.toml.
+        // Last, so a chord one of Polycarp's other keys has costs the job's key and never that one.
+        RoleHotkeys.register(hotkeys)
     }
 
     private func registerTilingKeys() {

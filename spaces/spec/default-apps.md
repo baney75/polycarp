@@ -49,6 +49,14 @@ launches it; a window is never brought here from another workspace. Asked for a 
 opens in the terminal, the agent, the editor or the file manager. With no agent chosen, or the chosen one gone, it asks
 on screen; the answer is kept and opens at once. Never for another machine.
 
+### R-D12 Keys
+
+⌃⌘Return opens the terminal, ⌃⌘⇧B the browser and ⌃⌘⇧A the agent, and with Option a new window. The other jobs have a
+suggested chord and none bound. A line of `[keys.bindings]` whose action is `open <role>` or `open <role> --new` is a key
+of yours: a job with one has no default key, and `none` on a chord leaves it alone. A chord that is macOS's, another
+Polycarp key's, another binding's of yours or another app's is left to it and said; it is never taken. The keys change
+when the file does, with no restart, and `polycarp-spaces keys`, the launcher and the shortcut sheet list the ones you have.
+
 ### R-D15 Video
 `video` plays movies and clips. macOS keeps no one default for movies, only one per file type, so with no choice the
 first installed app of the catalog does it: Flick, IINA, VLC, then QuickTime Player, which comes with macOS, so the job
