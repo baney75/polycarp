@@ -124,6 +124,7 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
         "filter_",
         "edits_",
         "edit_",
+        "defaults_",
     ]
     .iter()
     .flat_map(|prefix| guide.match_indices(prefix))
@@ -277,8 +278,92 @@ fn every_flag_in_a_guide_example_is_in_that_commands_usage() {
     assert!(checked >= 4, "only {checked} flags were checked");
 }
 
+/// A new job reaches every list of jobs: the MCP tools, the skill and the guide all name the app's own jobs.
+#[test]
+fn every_list_of_jobs_names_the_apps_jobs() {
+    let swift = repo_file("spaces/Sources/BaneySpacesCore/DefaultApps.swift");
+    let line = swift
+        .split("public enum AppRole")
+        .nth(1)
+        .unwrap()
+        .lines()
+        .find(|l| l.trim().starts_with("case "))
+        .unwrap();
+    let jobs: Vec<&str> = line
+        .trim()
+        .trim_start_matches("case ")
+        .split(", ")
+        .collect();
+    assert!(jobs.len() >= 12 && jobs.contains(&"video"), "{jobs:?}");
+    let mcp = repo_file("cli/src/mcp.rs");
+    let roles: Vec<&str> = mcp
+        .split("const ROLES")
+        .nth(1)
+        .unwrap()
+        .split("];")
+        .next()
+        .unwrap()
+        .split('"')
+        .skip(1)
+        .step_by(2)
+        .collect();
+    assert_eq!(
+        roles, jobs,
+        "the MCP tools take every job, in the app's order"
+    );
+    let words = |s: &str| {
+        s.replace(" and ", ", ")
+            .replace(['.', ')', '\\', '\n'], " ")
+    };
+    let skill = repo_file("spaces/skill/SKILL.md");
+    let guide = repo_file("spaces/docs/default-apps.md");
+    let tools = mcp
+        .split("for a job (")
+        .nth(1)
+        .unwrap()
+        .split(')')
+        .next()
+        .unwrap()
+        .to_string();
+    let listed = [
+        (
+            "SKILL.md",
+            skill
+                .split("Roles: ")
+                .nth(1)
+                .unwrap()
+                .split('.')
+                .next()
+                .unwrap()
+                .to_string(),
+        ),
+        (
+            "default-apps.md",
+            guide
+                .split("The jobs are\n")
+                .nth(1)
+                .unwrap()
+                .split('.')
+                .next()
+                .unwrap()
+                .to_string(),
+        ),
+        ("mcp.rs instructions", tools),
+    ];
+    for (file, list) in listed {
+        let named: Vec<String> = words(&list)
+            .split(", ")
+            .map(|w| w.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(named, jobs, "{file} lists every job");
+    }
+}
+
 fn repo_file(rel: &str) -> String {
-    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel)).unwrap()
+    // A Windows checkout has CRLF line ends; the tests read lines as Git stores them.
+    std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(rel))
+        .unwrap()
+        .replace("\r\n", "\n")
 }
 
 /// #3 second-S3, second-S5: an open item in PLAN.md says how it will be checked.

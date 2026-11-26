@@ -1,6 +1,6 @@
 ---
 name: polycarp-spaces
-description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. It does not click or type into apps.
+description: See and drive what's open on Donovan's Mac through BaneySpaces - the session engine (every terminal split, browser tab and agent app in one list, with the workspace each is on), the agent workspace (list its windows, move a window there) and his Contacts (find a person, open a call, FaceTime, a Messages draft or an email to them). Use to find which terminal or tab holds something, open a URL, type into another Ghostty terminal, flag a terminal as needing him, keep an agent's windows off his workspaces, or set up a call or message he asked for. Faster and safer than screenshots. Also use it to change what Polycarp's surfaces show (top bar, desktop scene and verse, status menu, new tab page, idle screen) through `surfaces get|set|reset`, and to set the wallpaper, new tab background or idle background (a picture, URL, color or scene) through `paper set|get|reset`. Also use it to see or choose which app Polycarp opens for a job (default browser, terminal, AI agent, mail and the rest) through `defaults get|candidates|set|reset`, and to open one with `open <role>`. It does not click or type into apps.
 ---
 
 # BaneySpaces
@@ -30,6 +30,7 @@ BaneySpaces workspace.
 | Find a tab or window, or search the web | `baneyspaces search "gmail"` (JSON lines, best first: open tabs and windows that match with their `id`, bang completions, then the web search or bang `url`; ranked as the launcher and the new tab rank it, with `search.engine` and the bangs). `--json` for the envelope; text after `--` is never a flag. Read-only |
 | Go to the top search result | `baneyspaces search --open "gmail"` (an open tab or window comes forward as `focus` does; a web result opens in the default browser; bang completions are passed over). Only when Donovan asked to go there |
 | Open a page | `baneyspaces open https://…` (default browser, stays in the session engine) |
+| Open the app for a job | `baneyspaces open browser` (or any role below; `--new` for a new window, `--in DIR` for a folder in the terminal, agent, editor or file manager). It changes what Donovan sees: only when he asked |
 | Type into another Ghostty terminal | `baneyspaces send <id or words> "text"` (pasted, no Return unless you include a newline) |
 | Tell Donovan this terminal needs him | `baneyspaces notify "Tests failed, need a decision"` |
 | Report your own state (non-Claude agents) | `baneyspaces event --state working\|waiting\|idle\|end --agent <name>` (add `--started` with `working` when a prompt was just submitted in the window in front; `--at <unix seconds>` says when it happened, default now) |
@@ -101,6 +102,23 @@ baneyspaces paper reset                                      # the theme's wallp
 Polycarp's `Papers/` folder under a name it makes; never write `picture:` values by hand. A paper wins over the
 theme's wallpaper, and his own desktop picture is kept and comes back on `reset`. Over MCP, `polycarp mcp` serves the
 same as `paper_set`, `paper_get` and `paper_reset`. Docs: spaces/docs/surfaces.md, "Paper".
+
+## Default apps: which app does each job
+
+Roles: agent, browser, terminal, editor, files, mail, messages, calendar, notes, music, video, passwords. Polycarp's keys,
+launcher and commands open the app chosen for the role.
+
+```sh
+baneyspaces defaults --json                    # every role: the app, and who decided (you, macos, first_installed, none)
+baneyspaces defaults candidates terminal       # the installed ones that can
+baneyspaces defaults set terminal com.mitchellh.ghostty
+baneyspaces defaults reset terminal            # back to macOS's
+```
+
+`set` and `reset` only when Donovan asked for that role; note the old value first. They change what Polycarp opens and
+never macOS's own default: for the browser and mail the answer's `everywhere` says what he presses in Settings, so tell
+him that. Never start an agent with `open agent` on your own: it can cost him money. Over MCP, `polycarp mcp` serves the
+same as `defaults_get`, `defaults_candidates`, `defaults_set` and `defaults_reset`. Docs: spaces/docs/default-apps.md.
 
 ## People in Contacts
 

@@ -33,6 +33,7 @@ One command family on every platform. Every command prints one envelope ([envelo
 | `agent log [--since SECS]` | removed: no computer use | yes | yes |
 | `keys [--platform P]` | yes | yes | yes |
 | `defaults [get\|candidates\|set\|reset] [--json]` ([default-apps.md](default-apps.md)) | yes | not supported yet | not supported yet |
+| `open <role> [--new] [--in DIR] [--prompt TEXT]` ([default-apps.md](default-apps.md) R-D11) | yes | not supported yet | not supported yet |
 | `daemon` | the app | yes | the app |
 | `stop` | quit the app | yes (the uninstall script uses it) | quit the app |
 | `mcp` | removed: no computer use | yes | yes |

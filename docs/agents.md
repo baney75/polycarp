@@ -7,6 +7,8 @@ Behind it are the same tools Polycarp already has:
 | Tools | Scope | What they do |
 | --- | --- | --- |
 | `theme_*` | read to look, act to change | Everything `polycarp mcp` does |
+| `defaults_get`, `defaults_candidates` | read | Which app does each job in Polycarp, and the installed ones that can ([default-apps.md](../spaces/docs/default-apps.md)) |
+| `defaults_set`, `defaults_reset` | act | Choose the app Polycarp opens for a job. Never macOS's own default: only a person's click in Settings changes that |
 | `keys_list` | read | Every Polycarp keyboard shortcut, from the same table as [keys.md](keys.md) |
 | `tiling_status`, `tiling_run` | read to look, act to change | [Window tiling](tiling.md): how it stands, and one command at a time |
 | `files_*` | files | Everything `polycarp files mcp` does |

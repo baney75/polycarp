@@ -5,8 +5,10 @@
 //! `polycarp-spaces surfaces ... --json` and passes its envelope on as is, for the same reason
 //! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
 //! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, each paper tool with
-//! `polycarp-spaces paper ... --json`, `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the
-//! same envelope (docs/keys.md), the tiling tools with `polycarp-spaces tile ... --json` (docs/tiling.md), each filter tool with `polycarp-spaces filters ... --json`, and each page
+//! `polycarp-spaces paper ... --json`, each defaults tool with `polycarp-spaces defaults ... --json`
+//! (spaces/docs/default-apps.md), `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the same
+//! envelope (docs/keys.md), the tiling tools with `polycarp-spaces tile ... --json` (docs/tiling.md), each filter tool
+//! with `polycarp-spaces filters ... --json`, and each page
 //! edit tool with `polycarp-spaces edits ... --json` (spaces/docs/edits.md).
 
 use crate::look;
@@ -21,6 +23,22 @@ use std::time::Duration;
 
 pub(crate) const LATEST: &str = "2025-06-18";
 pub(crate) const KNOWN: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
+
+/// The jobs Polycarp keeps a default app for, as `polycarp-spaces defaults` names them.
+const ROLES: [&str; 12] = [
+    "agent",
+    "browser",
+    "terminal",
+    "editor",
+    "files",
+    "mail",
+    "messages",
+    "calendar",
+    "notes",
+    "music",
+    "video",
+    "passwords",
+];
 
 pub(crate) const INSTRUCTIONS: &str = "\
 Polycarp themes: one theme file drives every Polycarp product and the website. Use these tools to \
@@ -66,6 +84,10 @@ To find something the person has open (a browser tab, a window, a terminal split
 Polycarp's launcher and new tab page do (bangs like !yt and the engine in search.engine), call search; it changes \
 nothing. search_open performs the top result: it brings an open tab or window forward, or opens the page in the \
 default browser. Call it only when the person asked to go there.
+To see or change which app Polycarp opens for a job (agent, browser, terminal, editor, files, mail, messages, calendar, \
+notes, music, video, passwords), read defaults_get and defaults_candidates, then defaults_set one role the person asked about; \
+defaults_reset goes back to macOS's. None of them changes macOS's own default: tell the person data.everywhere, which \
+says what they press for that.
 To tell the person which keys do what in Polycarp, read keys_list; it changes nothing.
 To arrange the person's windows side by side, read tiling_status, then call tiling_run with one command, and only when \
 the person asked for that change: it moves their windows. The gaps, the style for new workspaces and the apps that are \
@@ -558,8 +580,55 @@ pub(crate) fn tools() -> Vec<Tool> {
             idempotent: false,
         },
         Tool {
+            name: "defaults_get",
+            description: "Which app does each job in Polycarp, and who decided. Without `role`, all of them. Each has role, app (id, name, or null), source (you: the person chose it; macos: macOS's default; first_installed; none), said (that in words) and gone (a choice that isn't installed now). Also any warnings about the file.",
+            schema: obj(
+                json!({"role": {"type":"string","enum": ROLES,"description":"One job. Leave out for all."}}),
+                &[],
+            ),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "defaults_candidates",
+            description: "The installed apps and programs that can do a job: id, name, whether it is the one in use, and a note of what it can't do. Finding them runs none of them.",
+            schema: obj(
+                json!({"role": {"type":"string","enum": ROLES,"description":"The job."}}),
+                &["role"],
+            ),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "defaults_set",
+            description: "Choose the app Polycarp opens for a job: its keys, launcher and commands. It writes one line of [defaults] in config.toml, and never changes macOS's own default app: for the browser and mail data.everywhere says what the person presses in Settings to do that. Only when the person asked for it. An app that isn't installed or can't do the job is refused with the ones that can.",
+            schema: obj(
+                json!({
+                    "role": {"type":"string","enum": ROLES,"description":"The job."},
+                    "app": {"type":"string","description":"An id from defaults_candidates, any installed app's bundle identifier, or the app's name."}
+                }),
+                &["role", "app"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "defaults_reset",
+            description: "Take the person's choice for a job away: macOS's own default does it again, or the first installed app. The agent has none then, and Polycarp asks the person the next time they open it.",
+            schema: obj(
+                json!({"role": {"type":"string","enum": ROLES,"description":"The job."}}),
+                &["role"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
             name: "keys_list",
-            description: "Every Polycarp keyboard shortcut on this Mac, from the one table the app, docs/keys.md and `polycarp-spaces keys` use. Each row has id, keys (display parts; \"mod\" is the person's Polycarp modifier, picked in Settings > Keys), display (the keys as macOS symbols with their modifier filled in, as \"⌘1...9\" or \"⌃⌘K\"), title (what it does), group (launcher, workspaces, windows, terminal, agents, player, bar), scope (global: anywhere; launcher; terminal: while a terminal app is in front; newTab: the browser's new tab page; overview; switcher: while the ⌘Tab switcher is up; player; menu: the Polycarp menu in the menu bar) and note (when it works beyond its scope, as \"When Settings has it on\", or null when it always does). Read-only.",
+            description: "Every Polycarp keyboard shortcut on this Mac, from the one table the app, docs/keys.md and `polycarp-spaces keys` use. Each row has id, keys (display parts; \"mod\" is the person's Polycarp modifier, picked in Settings > Keys), display (the keys as macOS symbols with their modifier filled in, as \"⌘1...9\" or \"⌃⌘K\"), title (what it does), group (launcher, apps, workspaces, windows, terminal, agents, player, bar), scope (global: anywhere; launcher; terminal: while a terminal app is in front; newTab: the browser's new tab page; overview; switcher: while the ⌘Tab switcher is up; player; menu: the Polycarp menu in the menu bar) and note (when it works beyond its scope, as \"When Settings has it on\", or null when it always does). Read-only.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -879,6 +948,12 @@ pub(crate) fn call(
             Ok(a) => paper_call(name, &a),
         });
     }
+    if name.starts_with("defaults_") {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => defaults_call(name, &a),
+        });
+    }
     if name == "keys_list" {
         return Some(match Args::new(&tool, args) {
             Err(e) => theme::envelope(&Err(e)),
@@ -1086,6 +1161,41 @@ fn paper_call(name: &str, a: &Args) -> theme::Envelope {
     };
     match built() {
         Ok(argv) => spaces_run_within(argv, "paper get", PAPER_LIMIT),
+        Err(e) => theme::envelope(&Err(e)),
+    }
+}
+
+/// Runs one defaults tool through `polycarp-spaces defaults ... --json` (no shell) and passes its envelope on.
+fn defaults_call(name: &str, a: &Args) -> theme::Envelope {
+    let built = || -> Result<Vec<String>, ApiErr> {
+        let mut argv: Vec<String> = vec!["defaults".into()];
+        let role = match name {
+            "defaults_get" => a.text("role")?,
+            _ => Some(a.need("role")?),
+        };
+        // The command reads a leading dash as an option, so only the jobs' own names go through.
+        if let Some(r) = role.filter(|r| !ROLES.contains(r)) {
+            return Err(ApiErr::usage(format!(
+                "no such role {r:?}; the roles are {}",
+                ROLES.join(", ")
+            )));
+        }
+        match (name, role) {
+            ("defaults_get", None) => {}
+            (_, Some(r)) => argv.extend([name["defaults_".len()..].into(), r.into()]),
+            _ => {}
+        }
+        if name == "defaults_set" {
+            let app = a.need("app")?.trim();
+            if app.is_empty() || app.starts_with('-') {
+                return Err(ApiErr::usage("app must be an id or an app's name"));
+            }
+            argv.push(app.into());
+        }
+        Ok(argv)
+    };
+    match built() {
+        Ok(argv) => spaces_run(argv, "defaults"),
         Err(e) => theme::envelope(&Err(e)),
     }
 }

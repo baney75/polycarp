@@ -327,6 +327,8 @@ Any other MCP client can start the same command.
 | `style_restore` | Undo a preset: put the newest backup back; the sheet in force becomes the next backup, so a second call undoes the first |
 | `search` | Find what the person has open (tabs, windows, terminal splits) and the web, ranked as the launcher and the new tab page rank it, with the same bangs and `search.engine`. Changes nothing |
 | `search_open` | Go to the top `search` result: bring the open tab or window forward, or open the page in the default browser. Only when the person asked to go there |
+| `defaults_get`, `defaults_candidates` | Which app does each job in Polycarp (agent, browser, terminal, mail and the rest), who decided, and the installed ones that can. Read-only. See [Default apps](../spaces/docs/default-apps.md) |
+| `defaults_set`, `defaults_reset` | Choose the app Polycarp opens for a job, or go back to macOS's. Neither changes macOS's own default: the answer says what the person presses for that |
 | `keys_list` | Read every Polycarp keyboard shortcut: its keys (`mod` is the person's modifier), what it does, its group, where it works and when. Read-only. The same list: [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md) |
 | `tiling_status` | See how window tiling stands: the workspace in use, its style and its tiled windows in order. Read-only |
 | `tiling_run` | One tiling command (`on`, `focus left`, `style columns`, `float` and the rest of `polycarp-spaces tile`), only when the person asked: it moves their windows. See [tiling.md](https://github.com/baney75/polycarp/blob/main/docs/tiling.md) |
@@ -399,7 +401,7 @@ A rule has an `id` (1 to 64 of a-z, 0-9 and -; `set` with an id in use replaces 
 
 ## Keys, motion and behavior
 
-Themes cover the look. On a Mac, keys and the launcher are in Polycarp's Settings, and the top bar is in `polycarp-spaces surfaces` (`bar.*`). Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
+Themes cover the look. On a Mac, keys and the launcher are in Polycarp's Settings, and the top bar is in `polycarp-spaces surfaces` (`bar.*`). Every shortcut, by group and with where it works, is in [docs/keys.md](https://github.com/baney75/polycarp/blob/main/docs/keys.md); `polycarp-spaces keys` prints the same list with your modifier. Which app does each job (your agent, browser, terminal, editor, mail and the rest), and the keys that open them, are in [Default apps](../spaces/docs/default-apps.md). Dictation is the [Silas](/projects/silas/docs/) app's, with its own settings.
 
 One file for all of them, with undo and a recovery key, is on the plan. Its contract is [`spaces/spec/config.md`](https://github.com/baney75/polycarp/blob/main/spaces/spec/config.md).
 

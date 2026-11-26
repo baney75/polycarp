@@ -133,7 +133,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 52] = [
+const TOOLS: [&str; 56] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -176,6 +176,10 @@ const TOOLS: [&str; 52] = [
     "style_unset",
     "style_preset",
     "style_restore",
+    "defaults_get",
+    "defaults_candidates",
+    "defaults_set",
+    "defaults_reset",
     "keys_list",
     "tiling_status",
     "tiling_run",
@@ -1373,6 +1377,7 @@ fn the_instructions_send_surfaces_work_to_the_surfaces_tools() {
     assert!(at("surfaces_schema") < at("surfaces_get") && at("surfaces_get") < at("surfaces_set"));
     assert!(at("style_example") < at("style_set") && at("style_set") < at("style_check"));
     assert!(at("paper_set") < at("paper_get") && at("paper_get") < at("paper_reset"));
+    assert!(at("defaults_get") < at("defaults_set") && at("defaults_set") < at("defaults_reset"));
     assert!(at("filters_list") < at("filter_set") && at("filter_set") < at("filter_remove"));
     assert!(at("edits_list") < at("edit_set") && at("edit_set") < at("edit_remove"));
     // The style sheet covers every panel, and both the instructions and the tool say so.
@@ -1613,6 +1618,103 @@ fn style_tools_check_their_arguments_and_say_when_the_command_is_missing() {
         r["structuredContent"]["error"]["message"],
         "this Polycarp has no style command"
     );
+    assert_eq!(s.finish(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn defaults_tools_run_the_spaces_defaults_command_and_pass_its_envelope_on_as_is() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"role": "browser", "app": {"id": "com.apple.Safari", "name": "Safari"},
+        "source": "you", "everywhere": "Settings > Default apps"}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let r = s.tool(
+        "defaults_set",
+        json!({"role": "browser", "app": "com.apple.Safari"}),
+    );
+    assert_eq!(r["isError"], false);
+    assert_eq!(
+        r["structuredContent"], reply,
+        "with what the person presses"
+    );
+    assert_eq!(
+        stub_args(&sb),
+        ["defaults", "set", "browser", "com.apple.Safari", "--json"]
+    );
+    for (tool, args, argv) in [
+        ("defaults_get", json!({}), vec!["defaults", "--json"]),
+        (
+            "defaults_get",
+            json!({"role": "mail"}),
+            vec!["defaults", "get", "mail", "--json"],
+        ),
+        (
+            "defaults_candidates",
+            json!({"role": "agent"}),
+            vec!["defaults", "candidates", "agent", "--json"],
+        ),
+        (
+            "defaults_reset",
+            json!({"role": "agent"}),
+            vec!["defaults", "reset", "agent", "--json"],
+        ),
+        (
+            "defaults_set",
+            json!({"role": "notes", "app": "Some App; $(x)"}),
+            vec!["defaults", "set", "notes", "Some App; $(x)", "--json"],
+        ),
+    ] {
+        s.tool(tool, args);
+        assert_eq!(stub_args(&sb), argv);
+    }
+    // A bad argument runs nothing.
+    fs::remove_file(sb.root.join("spaces/args")).unwrap();
+    for (tool, args) in [
+        ("defaults_set", json!({"role": "browser"})),
+        ("defaults_set", json!({"role": "browser", "app": "--new"})),
+        ("defaults_set", json!({"role": "browser", "app": " "})),
+        (
+            "defaults_set",
+            json!({"role": "browser", "app": "x", "everywhere": true}),
+        ),
+        ("defaults_get", json!({"role": "help"})),
+        ("defaults_reset", json!({})),
+        ("defaults_candidates", json!({"role": ["agent"]})),
+    ] {
+        let r = s.tool(tool, args.clone());
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{tool} {args}"
+        );
+    }
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "the command never ran"
+    );
+    // The two that change something say so, so a client that asks first asks.
+    let v = s.request("tools/list", json!({}));
+    for (name, changes) in [
+        ("defaults_get", false),
+        ("defaults_candidates", false),
+        ("defaults_set", true),
+        ("defaults_reset", true),
+    ] {
+        let t = v["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .cloned()
+            .unwrap();
+        assert_eq!(t["annotations"]["readOnlyHint"], json!(!changes), "{name}");
+        assert!(
+            t["description"].as_str().unwrap().contains("macOS") || !changes,
+            "{name}"
+        );
+    }
     assert_eq!(s.finish(), 0);
 }
 
