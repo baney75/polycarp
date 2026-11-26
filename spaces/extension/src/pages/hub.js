@@ -18,7 +18,7 @@
   };
   for (const b of O.BUNDLES) VIEWS[b.id] = { name: b.name, folder: "inbox", bundle: b.id };
 
-  const st = { view: "inbox", account: "", threads: [], more: false, opts: [], sel: -1, open: "", accounts: new Map(), undo: null };
+  const st = { view: "inbox", account: "", threads: [], more: false, opts: [], sel: -1, open: "", openSummary: null, loaded: 0, accounts: new Map(), undo: null };
 
   // ---------- Accounts ----------
 
@@ -63,10 +63,12 @@
 
   async function load() {
     const v = VIEWS[st.view];
-    const q = { folder: v.folder, limit: PAGE };
+    // A refresh keeps every page already shown.
+    const q = { folder: v.folder, limit: Math.max(PAGE, st.loaded || 0) };
     if (st.account) q.account = st.account;
     let list = await S.threads(q);
-    st.more = list.length === PAGE;
+    st.more = list.length === q.limit;
+    st.loaded = list.length;
     if (v.bundle) list = list.filter((t) => O.bundleOf(t) === v.bundle);
     st.threads = list;
   }
@@ -74,10 +76,11 @@
     const last = st.threads[st.threads.length - 1];
     if (!last) return;
     const v = VIEWS[st.view];
-    const q = { folder: v.folder, limit: PAGE, before: S.after(last) };
+    const q = { folder: v.folder, limit: PAGE, before: S.after(last, v.folder === "sent") };
     if (st.account) q.account = st.account;
     let list = await S.threads(q);
     st.more = list.length === PAGE;
+    st.loaded = (st.loaded || 0) + list.length;
     if (v.bundle) list = list.filter((t) => O.bundleOf(t) === v.bundle);
     st.threads = st.threads.concat(list);
     render();
@@ -189,21 +192,35 @@
     if (!VIEWS[view]) return;
     st.view = view;
     st.sel = 0;
+    st.loaded = 0;
     refresh().then(() => $("rows").focus({ preventScroll: true }));
   }
 
   // ---------- A conversation ----------
 
-  // HTML-only mail shows as plain text: DOMParser builds an inert document (no scripts run, nothing loads).
+  // HTML-only mail shows as plain text: DOMParser builds an inert document (no scripts run, nothing loads). Code and
+  // styles are dropped, and blocks and line breaks become new lines.
+  const BLOCK = /^(P|DIV|BR|LI|TR|H[1-6]|BLOCKQUOTE|PRE|TABLE|UL|OL|HR|SECTION|ARTICLE|HEADER|FOOTER)$/;
   function bodyText(m) {
     if (m.text) return m.text;
     if (!m.html) return "";
-    return (new DOMParser().parseFromString(m.html, "text/html").body.textContent || "").trim();
+    const doc = new DOMParser().parseFromString(m.html, "text/html");
+    doc.querySelectorAll("script,style,template,noscript,title,head").forEach((n) => n.remove());
+    let out = "";
+    const walk = (n) => {
+      if (n.nodeType === 3) { out += n.nodeValue.replace(/\s+/g, " "); return; }
+      if (n.nodeType !== 1) return;
+      for (const c of n.childNodes) walk(c);
+      if (BLOCK.test(n.tagName)) out += "\n";
+    };
+    walk(doc.body);
+    return out.replace(/[ \t]*\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   }
   const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " bytes");
 
   function paint(got) {
     const { summary: t, messages } = got;
+    st.openSummary = t;
     const pane = $("pane");
     const wrap = el("article", "thread");
     wrap.setAttribute("aria-labelledby", "subject");
@@ -231,7 +248,7 @@
       acts.append(b);
     };
     if (t.folder === "inbox") act("archive", "Archive", "E", () => archive(t));
-    else act("mail", "Move to the inbox", "I", () => moveTo(t, "inbox"));
+    else if (t.folder !== "sent") act("mail", "Move to the inbox", "I", () => moveTo(t, "inbox"));
     act("flag", "Flag", "S", () => flag(t), !!t.flagged);
     act("mail", t.unread ? "Mark read" : "Mark unread", "U", () => unread(t));
     head.append(h, acts);
@@ -338,7 +355,9 @@
     await run(t, (a) => A.actions.archive(a.rec.id, a.adapter, S, ids), "Archived", (a) => A.actions.move(a.rec.id, a.adapter, S, ids, "inbox"));
   }
   async function moveTo(t, folder) {
-    const ids = await idsIn(t, (m) => m.folder === t.folder);
+    // Only mail from others moves: your own stays in Sent.
+    const ids = await idsIn(t, (m) => m.folder === t.folder && m.folder !== "sent" && m.folder !== folder);
+    if (!ids.length) return;
     const from = t.folder;
     await run(t, (a) => A.actions.move(a.rec.id, a.adapter, S, ids, folder), "Moved to the inbox", (a) => A.actions.move(a.rec.id, a.adapter, S, ids, from));
   }
@@ -349,7 +368,9 @@
   }
   async function unread(t) {
     const on = !t.unread;
-    const ids = await idsIn(t, (m) => (on ? true : m.unread));
+    // Marking unread marks the newest message from someone else, or the newest at all when every one is yours.
+    let ids = await idsIn(t, (m) => (on ? m.folder !== "sent" : m.unread));
+    if (on && !ids.length) ids = await idsIn(t, () => true);
     await run(t, (a) => A.actions.markRead(a.rec.id, a.adapter, S, on ? ids.slice(-1) : ids, !on), on ? "Marked unread" : "Marked read", null);
   }
   async function undo() {
@@ -365,8 +386,10 @@
     $("toastText").textContent = text;
     $("toastUndo").hidden = !canUndo;
     $("toast").hidden = false;
+    // An undo lasts only while it is offered on screen.
+    if (!canUndo) st.undo = null;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $("toast").hidden = true; }, canUndo ? 8000 : 4000);
+    toastTimer = setTimeout(() => { $("toast").hidden = true; st.undo = null; }, canUndo ? 8000 : 4000);
   }
 
   // ---------- The command bar ----------
@@ -445,7 +468,8 @@
 
   // ---------- Keys ----------
 
-  const current = () => (st.open ? st.threads.find((t) => t.id === st.open) || selectedThread() : selectedThread());
+  // The open conversation when one is open (even one found by search outside this list), else the highlighted row.
+  const current = () => (st.open ? (st.openSummary && st.openSummary.id === st.open ? st.openSummary : null) : selectedThread());
   let gPending = 0;
   function onKey(e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCmd(); return; }
@@ -467,7 +491,7 @@
         case "Home": select(0); return true;
         case "End": select(st.opts.length - 1); return true;
         case "Enter": case "o": {
-          if (e.target.tagName === "BUTTON" && e.target.closest("#pane,.cmd,.toast,.empty")) return false;
+          if (e.target.tagName === "BUTTON") return false;
           const o = st.opts[st.sel];
           if (!o) return false;
           if (o.dataset.bundle) go(o.dataset.bundle); else openThread(o.dataset.thread);

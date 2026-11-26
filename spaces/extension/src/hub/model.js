@@ -110,12 +110,14 @@
     return msg.account + ":s" + hash(baseSubject(msg.subject) + "|" + people);
   }
 
-  // A thread's summary from its messages. A thread sits in the inbox while any of its messages does.
+  // A thread's summary from its messages. A thread sits in the inbox while any of its messages does; otherwise where
+  // its newest message from someone else is, so archiving a thread you answered puts it in Archive, not Sent.
   function summarize(threadId, messages) {
     const list = messages.slice().sort((a, b) => a.date - b.date);
     const last = list[list.length - 1];
     const folders = new Set(list.map((m) => m.folder));
-    const folder = folders.has("inbox") ? "inbox" : last.folder;
+    const theirs = list.filter((m) => m.folder !== "sent");
+    const folder = folders.has("inbox") ? "inbox" : theirs.length ? theirs[theirs.length - 1].folder : last.folder;
     const people = [];
     const seen = new Set();
     for (const m of list) {
@@ -139,6 +141,7 @@
       remindAt: Math.max(0, ...list.map((m) => m.remindAt)),
       hasAttachments: list.some((m) => m.attachments.length > 0),
       replied: list.some((m) => m.folder === "sent"),
+      sentAt: Math.max(0, ...list.filter((m) => m.folder === "sent").map((m) => m.date)),
       headers: last.headers,
       from: last.from
     };

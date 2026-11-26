@@ -98,6 +98,54 @@ try {
   await p.keyboard.press('i');
   await p.waitForFunction(() => document.getElementById('where').textContent === 'Inbox');
   check(true, 'G then I goes to the inbox', null);
+  await p.click('#rows [data-bundle="newsletters"]');
+  await p.waitForFunction(() => document.getElementById('where').textContent === 'Newsletters' && document.querySelector('#rows .row.sel'));
+  await p.focus('#up');
+  await p.keyboard.press('Enter');
+  await p.waitForFunction(() => document.getElementById('where').textContent === 'Inbox');
+  await new Promise((r) => setTimeout(r, 300));
+  check(!(await p.$('#subject')), 'Return on a focused button presses it, not the highlighted row', null);
+
+  // Sent: your own mail never moves to the inbox. A thread of only your mail is the newest in Sent.
+  await p.evaluate(() => globalThis.PolycarpHubStore.upsert('made-up', [{ remoteId: 'mine', messageId: '<mine@x>', from: { name: 'Me', addr: 'me@home.example' },
+    to: [{ addr: 'ada.arden@example.com' }], subject: 'Only mine', date: Date.now() - 1000, folder: 'sent', unread: false, text: 'Mine alone.' }]));
+  await p.keyboard.press('g');
+  await p.keyboard.press('s');
+  await p.waitForFunction(() => document.getElementById('where').textContent === 'Sent');
+  await p.waitForSelector('#rows [aria-label*="Only mine"]');
+  await p.click('#rows [aria-label*="Only mine"]');
+  await p.waitForFunction(() => document.getElementById('subject')?.textContent === 'Only mine');
+  const sentActs = await p.$$eval('#pane .acts button', (bs) => bs.map((b) => b.getAttribute('aria-label')));
+  const sentBefore = await p.evaluate(async () => (await globalThis.PolycarpHubStore.allMessages()).filter((m) => m.folder === 'sent').length);
+  await p.keyboard.press('i');
+  await new Promise((r) => setTimeout(r, 400));
+  const sentAfter = await p.evaluate(async () => (await globalThis.PolycarpHubStore.allMessages()).filter((m) => m.folder === 'sent').length);
+  check(!sentActs.includes('Move to the inbox') && sentAfter === sentBefore, 'a conversation in Sent offers no move to the inbox, and I moves nothing', { sentActs, sentBefore, sentAfter });
+  await p.keyboard.press('Escape');
+  await p.keyboard.press('Escape');
+  await p.waitForFunction(() => document.getElementById('where').textContent === 'Inbox');
+
+  // A conversation opened from search, outside the list: S flags that one, not the highlighted row.
+  const away = await p.evaluate(async () => {
+    const S = globalThis.PolycarpHubStore;
+    const [id] = await S.upsert('made-up', [{ remoteId: 'filed', messageId: '<filed@x>', from: { name: 'Ada Arden', addr: 'ada.arden@example.com' },
+      to: [{ addr: 'me@home.example' }], subject: 'Filed away', date: Date.now() - 5000, folder: 'archive', unread: false, text: 'Kept for later.' }]);
+    return { id, subject: 'Filed away' };
+  });
+  const rowBefore = await p.evaluate(() => document.querySelector('#rows .row.sel')?.dataset.thread);
+  await p.keyboard.press('Meta+k');
+  await p.fill('#cmdIn', away.subject);
+  await p.waitForFunction((s) => Array.from(document.querySelectorAll('#cmdList li span')).some((x) => x.textContent.endsWith(s)), away.subject);
+  const at = await p.$$eval('#cmdList li span:first-child', (s, want) => s.findIndex((x) => x.textContent.endsWith(want)), away.subject);
+  await p.click(`#c-${at}`);
+  await p.waitForFunction((s) => document.getElementById('subject')?.textContent === s, away.subject);
+  await p.keyboard.press('s');
+  const flagged = (id) => p.evaluate(async (i) => !!(await globalThis.PolycarpHubStore.thread(i))?.summary.flagged, id);
+  let awayFlag = false;
+  for (let i = 0; i < 30 && !awayFlag; i++) { await new Promise((r) => setTimeout(r, 100)); awayFlag = await flagged(away.id); }
+  const rowFlag = await flagged(rowBefore);
+  check(awayFlag && !rowFlag, 'S flags the conversation opened from search, not the highlighted row', { awayFlag, rowFlag, rowBefore });
+  await p.keyboard.press('Escape');
 
   // HTML-only mail: shown as text, nothing in it runs or loads.
   await p.evaluate(async () => {
@@ -105,7 +153,7 @@ try {
     await globalThis.PolycarpHubStore.upsert('made-up', [{
       remoteId: 'hostile', messageId: '<hostile@x>', from: { name: 'Sender', addr: 'sender@example.com' }, to: [{ addr: 'me@home.example' }],
       subject: 'HTML only', date: Date.now() + 1000, folder: 'inbox', unread: true,
-      html: '<p>Plain words</p><img src="https://pixel.example/t.gif" onerror="window.__ran=1"><script>window.__ran=2</script><a href="javascript:window.__ran=3">x</a>'
+      html: '<style>p{color:red}</style><p>Plain words</p><img src="https://pixel.example/t.gif" onerror="window.__ran=1"><script>window.__ran=2</script><a href="javascript:window.__ran=3">x</a>'
     }]);
   });
   const reqs = [];
@@ -115,7 +163,7 @@ try {
   await p.waitForFunction(() => document.getElementById('subject')?.textContent === 'HTML only');
   const body = await p.$eval('#pane .body', (b) => ({ text: b.textContent, kids: b.children.length }));
   const ran = await p.evaluate(() => window.__ran);
-  check(body.text.includes('Plain words') && body.kids === 0 && ran === 0 && reqs.length === 0, 'HTML-only mail shows as text, with nothing run or loaded', { body, ran, reqs });
+  check(body.text.includes('Plain words') && !body.text.includes('__ran') && body.kids === 0 && ran === 0 && reqs.length === 0, 'HTML-only mail shows as text, with nothing run or loaded', { body, ran, reqs });
 
   // It all comes back after a reload.
   await p.reload();
