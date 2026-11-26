@@ -196,7 +196,12 @@ which puts back the lists from before your last move until the next move or a qu
 can be dropped under the camera, and the middle's modules stay beside it; nor in a place style.css hides, or one
 that hides the module you hold. Escape is kept from the app in front while you drag. The first move writes all three places, so
 a place you never set stops following Polycarp's defaults; `polycarp-spaces surfaces reset bar.modules` gives them
-back. The rules and their cases are in spec/bar.md, "Moving modules (macOS)".
+back. Without ⌘: right-click the bar's empty space or the mark and choose Arrange Bar Items…. Every module gets a faint
+outline, the island splits show as small grips you can move too, a plain drag moves a module, clicks open nothing,
+and Done sits after the middle's modules. Done, Escape, a click outside the bar, or a minute with no drag ends it;
+⌘Z undoes the last move while it is on. VoiceOver: each module has the actions Move Left, Move Right, Move to Left
+Section, Move to Center and Move to Right Section, each the same move as a drop. The rules and their cases are in
+spec/bar.md, "Moving modules (macOS)".
 
 **Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
 `hour`) are for a file that sets no `bar.modules` place. A file that already lists its modules keeps them as they are;
