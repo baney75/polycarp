@@ -146,8 +146,9 @@ final class MainThreadScanTests: XCTestCase {
         XCTAssertGreaterThan(scans, 0)
         XCTAssertEqual(count("DispatchQueue.global(qos: .userInitiated).async { [weak self] in\n            let fresh = AppEntry.scan()", in: s), scans,
                        "an app list read on the main thread")
-        let items = try XCTUnwrap(SourceText.block(after: "private func appItems(", in: s))
-        XCTAssertTrue(items.contains("Fuzzy.score(folded: folded, key: a.key)"))
+        let ranked = try XCTUnwrap(SourceText.block(after: "private func rankedApps(", in: s))
+        let items = ranked + (try XCTUnwrap(SourceText.block(after: "private func appItems(", in: s)))
+        XCTAssertTrue(ranked.contains("Fuzzy.score(folded: folded, key: a.key)"))
         XCTAssertFalse(items.contains("Fuzzy.score(q, a.name)"), "a key press folds every app name again")
         XCTAssertFalse(items.contains("runningApplications"), "a key press walks the running apps")
     }

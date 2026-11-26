@@ -199,6 +199,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             look(40)
         }
         a.sessionItems = { [weak self] q in self?.session.launcherItems(q) ?? [] }
+        a.browserHits = { BrowserHub.shared.book.search($0) }
+        a.openBrowser = { [weak self] in self?.openBrowser($0) }
         a.browserTab = { [weak self] q in self?.session.browserTabItem(q) }
         a.willShow = { [weak self] in
             guard let self else { return }
@@ -551,6 +553,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         // ⌃⌘K (registered in `registerShortcuts`) opens the launcher, which searches the session rows.
         session.onSearch = { [weak self] in self?.launcher.toggle() }
+        BrowserHub.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
         session.onItemsChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
         // People for the launcher: read now only when Contacts access is already on. Nothing asks for it here.
         ContactsLibrary.shared.onChange = { [weak self] in if self?.launcherBuilt == true { self?.launcher.rowsChanged() } }
@@ -739,6 +742,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         SystemMissionControl.restore()
         viewer.close()
         session.stop()
+        BrowserHub.shared.stop()
         spaces.suspend()
         started = false
         registerShortcuts()
@@ -846,6 +850,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.button?.imagePosition = .imageLeading
     }
 
+    /// Goes to what a browser's row names: the exact tab, the download in Finder, or the page in that browser.
+    private func openBrowser(_ hit: BrowserHit) {
+        let app = hit.peer.bundleID
+        switch hit.row.source {
+        case .bookmarks, .history:
+            guard let url = URL(string: hit.row.url), ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
+                  let at = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app) else { return NSSound.beep() }
+            NSWorkspace.shared.open([url], withApplicationAt: at, configuration: NSWorkspace.OpenConfiguration())
+        case .downloads:
+            if !BrowserHub.shared.ask(hit) { NSSound.beep() }
+        case .tabs:
+            // The session engine knows the tab's window too, so the switch is Polycarp's own.
+            if let item = session.engine.item(hit.id) { return session.focus(item) }
+            guard BrowserHub.shared.ask(hit), let pid = NSRunningApplication.runningApplications(withBundleIdentifier: app).first?.processIdentifier
+            else { return NSSound.beep() }
+            // The browser has put the tab in front by now: go to the workspace its window is on.
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                let front: AXUIElement? = AX.app(pid, timeout: 0.3).value(kAXFocusedWindowAttribute)
+                guard let id = front?.windowNumber, id != 0 else { return }
+                DispatchQueue.main.async { self?.run { $0.focusWindow(id, pid: pid) } }
+            }
+        }
+    }
+
     private func startSession() {
         session.onUnseenChange = { [weak self] _ in self?.updateIcon() }
         var h = AgentHost()
@@ -867,6 +895,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.spaces.focus(id, on: n)
                 return true
             }
+            BrowserHub.shared.start()
             self.session.start(workspaceOf: { [weak self] in self?.spaces.model.workspace(of: $0) },
                             currentWorkspace: { [weak self] in self?.spaces.model.current ?? 1 })
         }

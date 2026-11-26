@@ -256,6 +256,13 @@ enum Render {
         guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher.png", CGSize(width: 760, height: 0)) else { return 1 }
         launcher.query = "ma"
         guard save(LauncherView(model: launcher).frame(height: 512).padding(30).background(Color(white: 0.3)), "launcher-search.png", CGSize(width: 760, height: 0)) else { return 1 }
+        // What the browsers running the Polycarp extension have open, beside the apps: a better match goes above them.
+        let pages = LauncherModel(actions: BrowserRender.actions())
+        pages.prepare(scope: .root)
+        for (typed, name) in [("orchard", "launcher-browser.png"), ("map", "launcher-browser-below.png")] {
+            pages.query = typed
+            guard save(LauncherView(model: pages).frame(height: 512).padding(30).background(Color(white: 0.3)), name, CGSize(width: 760, height: 0)) else { return 1 }
+        }
         // A coding agent by name, offered in your terminal.
         launcher.agents = ["claude": "/usr/local/bin/claude", "codex": "/usr/local/bin/codex"]
         launcher.query = "claude"

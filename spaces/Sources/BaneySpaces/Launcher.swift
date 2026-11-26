@@ -220,6 +220,9 @@ struct LauncherActions {
     var sessionItems: (String) -> [LauncherItem] = { _ in [] }
     /// The tab already open in the main browser that answers a web search, as a "Switch to" row (`OneSearch.sessions`).
     var browserTab: (String) -> LauncherItem? = { _ in nil }
+    /// What the browsers running the Polycarp extension have that answers a query (`BrowserBook`), and going there.
+    var browserHits: (String) -> [BrowserHit] = { _ in [] }
+    var openBrowser: (BrowserHit) -> Void = { _ in }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -665,9 +668,21 @@ final class LauncherModel: ObservableObject {
                 let site = OneSearch.typedSite(q)
                 if site?.sure == true { out += siteItems(q) }
                 out += provided.top.map(providedItem)
-                out += appItems(q, limit: 8)
+                let ranked = rankedApps(q).prefix(8)
+                let sessions = actions.sessionItems(q).prefix(8)
+                let hits = actions.browserHits(q)
+                let listed = Set(sessions.map { String($0.id.dropFirst("session:".count)) })
+                let pages = browserItems(hits, listed: listed)
+                // Apps that answer better than the best page shown go above the pages; the rest go below.
+                let above = BrowserListing.above(hits, listed: listed, apps: ranked.map(\.score))
+                out += appItems(ranked.prefix(above).map(\.app), q, limit: 8)
+                if above < ranked.count {
+                    out += pages
+                    out += appItems(ranked.dropFirst(above).map(\.app), q, limit: 8, section: "Other Apps")
+                }
                 out += restingItems(q)
-                out += actions.sessionItems(q).prefix(8)
+                out += sessions
+                if above == ranked.count { out += pages }
                 out += agentItems(q)
                 out += provided.normal.map(providedItem)
                 out += workspaceItems(q)
@@ -682,7 +697,7 @@ final class LauncherModel: ObservableObject {
                                         subtitle: "Search Homebrew and the App Store", icon: .symbol("arrow.down.circle"),
                                         badge: "⇥", run: { [weak self] in self?.enter(.install); self?.setQuery(q) }))
             }
-        case .apps: out = appItems(q, limit: 500)
+        case .apps: out = appItems(q.isEmpty ? apps : rankedApps(q).map(\.app), q, limit: 500)
         case .files: out = fileItems()
         case .install: out = installItems(q)
         case .remove: out = removeItems(q)
@@ -876,29 +891,48 @@ final class LauncherModel: ObservableObject {
         recents.paths.lazy.compactMap { path in self.apps.first { $0.path == path } }.prefix(5).map { appItem($0, section: "Recent") }
     }
 
-    private func appItems(_ q: String, limit: Int) -> [LauncherItem] {
-        let matches: [AppEntry]
-        if q.isEmpty {
-            matches = apps
-        } else {
-            let folded = Fuzzy.fold(q)
-            matches = apps.compactMap { a -> (AppEntry, Int)? in
-                guard let s = Fuzzy.score(folded: folded, key: a.key) else { return nil }
-                return (a, s + recents.boost(a.path) + (running[a.path] != nil ? 15 : 0))
-            }
-            .sorted { $0.1 != $1.1 ? $0.1 > $1.1 : $0.0.name < $1.0.name }
-            .map(\.0)
+    /// A browser's tabs, bookmarks, visited pages and downloads. Their icons are the browser's and a symbol.
+    private func browserItems(_ hits: [BrowserHit], listed: Set<String>) -> [LauncherItem] {
+        BrowserListing.rows(hits, listed: listed, app: Self.appName).map { r in
+            LauncherItem(id: "page:" + r.hit.id, section: "Browser", title: r.title, subtitle: r.subtitle,
+                         icon: r.symbol.map { .symbol($0) } ?? .file(SessionController.appPath(r.hit.peer.bundleID)), badge: r.badge,
+                         run: { [weak self] in
+                             self?.close()
+                             self?.actions.openBrowser(r.hit)
+                         })
         }
+    }
+
+    private static var appNames: [String: String] = [:]
+    private static func appName(_ bundleID: String) -> String {
+        if let known = appNames[bundleID] { return known }
+        let path = SessionController.appPath(bundleID)
+        let name = path.isEmpty ? "the browser" : FileManager.default.displayName(atPath: path).replacingOccurrences(of: ".app", with: "")
+        appNames[bundleID] = name
+        return name
+    }
+
+    /// The apps that answer what is typed, best first.
+    private func rankedApps(_ q: String) -> [(app: AppEntry, score: Int)] {
+        let folded = Fuzzy.fold(q)
+        return apps.compactMap { a -> (app: AppEntry, score: Int)? in
+            guard let s = Fuzzy.score(folded: folded, key: a.key) else { return nil }
+            return (a, s + recents.boost(a.path) + (running[a.path] != nil ? 15 : 0))
+        }
+        .sorted { $0.score != $1.score ? $0.score > $1.score : $0.app.name < $1.app.name }
+    }
+
+    private func appItems(_ matches: [AppEntry], _ q: String, limit: Int, section: String = "Apps") -> [LauncherItem] {
         // An app open on more than one workspace also gets a row for each, to pick which, and so
         // does one that opens a new window here instead of going to its workspace.
         return matches.prefix(limit).flatMap { a -> [LauncherItem] in
             let on = running[a.path] ?? []
             let look = !q.isEmpty && limit <= 8
-            let main = appItem(a, section: "Apps", look: look)
+            let main = appItem(a, section: section, look: look)
             if restingEntry(a) != nil { return [main] }
             guard on.count > 1 || opensHere(a, look: look), !q.isEmpty else { return [main] }
             return [main] + on.map { n in
-                LauncherItem(id: "app:\(a.path):\(n)", section: "Apps", title: "\(a.name) on Workspace \(n)",
+                LauncherItem(id: "app:\(a.path):\(n)", section: section, title: "\(a.name) on Workspace \(n)",
                              subtitle: "The \(a.name) windows there", icon: .file(a.path), workspaces: [n],
                              run: { [weak self] in self?.focus(a, on: n) }, reveal: URL(fileURLWithPath: a.path))
             }
