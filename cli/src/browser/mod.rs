@@ -137,6 +137,7 @@ fn build(
     let (identity, note) = sign::Identity::find(tools, &place.parts)?;
     let app = source::unpack(tools, dmg, work, version)?;
     change::apply(tools, &app, &place.parts, &changes)?;
+    identity.again(tools, &place.parts)?;
     sign::sign(tools, &app, work, &identity, &changes)?;
     Ok((app, note))
 }
@@ -185,6 +186,13 @@ mod tests {
         assert!(line.contains(VERSION), "{line}");
         assert!(!t.place().cache.join("work").exists());
         assert!(!t.mounted(), "the disk image stayed mounted");
+        // Once to refuse before anything is unpacked, and again to unlock the key just before signing.
+        let asked = t
+            .calls()
+            .iter()
+            .filter(|c| c.contains("signing-identity.sh"))
+            .count();
+        assert_eq!(asked, 2);
     }
 
     #[test]

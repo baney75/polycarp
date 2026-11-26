@@ -96,7 +96,7 @@ if ! healthy && [ -f "$KC" ] && [ -s "$PASS_FILE" ]; then
 fi
 
 if ! healthy; then
-  if [ "${1:-}" = --keep ] && { [ -f "$KC" ] || [ -s "$PASS_FILE" ]; }; then
+  if [ "${1:-}" = --keep ]; then   # it got here with a key: there was none, it exited 3 above
     echo "signing-identity.sh: the $NAME key can't be used now, and it was left alone" >&2
     exit 1
   fi

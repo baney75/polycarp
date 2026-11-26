@@ -78,6 +78,16 @@ impl Identity {
             )),
         }
     }
+
+    /// Asks for the identity again just before signing. Unpacking and changing the app can outlast the 5 minutes the
+    /// key stays unlocked, or the Mac can sleep, and the script unlocks it. A different answer stops the build.
+    pub fn again(&self, tools: &dyn Tools, parts: &Path) -> Result<(), Refused> {
+        if Identity::find(tools, parts)?.0 == *self {
+            return Ok(());
+        }
+        let why = "Polycarp's signing key changed while the browser was being built, so nothing was built and the browser was left alone";
+        Err(Refused::new(CHECK, why))
+    }
 }
 
 const AD_HOC: &str = "Polycarp's signing identity was not found, so this build is signed ad hoc: macOS will ask for its permissions and saved passwords again after each update.";
@@ -436,6 +446,22 @@ mod tests {
         assert!(refused.to_string().contains("left alone"), "{refused}");
         t.set(|s| s.fail = Some(("bash", "", Failure::CannotRun)));
         assert!(Identity::find(&t, &t.parts()).is_err());
+    }
+
+    #[test]
+    fn the_identity_is_asked_for_again_before_signing_and_must_not_change() {
+        let t = Fake::new();
+        t.set(|s| s.identity = "Polycarp Local Signing\t/keys/polycarp.keychain-db\n");
+        let (found, _) = Identity::find(&t, &t.parts()).unwrap();
+        found.again(&t, &t.parts()).unwrap();
+        t.set(|s| s.identity = "");
+        assert!(found
+            .again(&t, &t.parts())
+            .unwrap_err()
+            .to_string()
+            .contains("changed"));
+        t.set(|s| s.fail = Some(("bash", "", Failure::SaysNo)));
+        assert!(Identity::ad_hoc().again(&t, &t.parts()).is_err());
     }
 
     /// Two builds that differ have one designated requirement, so macOS and the Keychain see one app. It needs a
