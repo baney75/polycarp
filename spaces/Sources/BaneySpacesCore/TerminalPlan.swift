@@ -159,11 +159,13 @@ public enum AgentLaunch {
     /// The words the agent gets, and the prompt when it can't be given one: it goes on the clipboard instead.
     public static func argv(_ id: String, at path: String, prompt: String?) -> (argv: [String], clipboard: String?) {
         guard let prompt, !prompt.isEmpty else { return ([path], nil) }
+        // One word as a command's first word can be one of its own commands (`claude update`), even after `--`.
+        let oneWord = !prompt.contains(where: \.isWhitespace)
         switch prompts[id] ?? .typed {
-        case .afterDashes(let first): return ([path] + first + ["--", prompt], nil)
+        case .afterDashes(let first) where !oneWord: return ([path] + first + ["--", prompt], nil)
         case let .option(first, name): return ([path] + first + ["\(name)=\(prompt)"], nil)
-        case .plain where !prompt.hasPrefix("-") && !prompt.hasPrefix("@"): return ([path, prompt], nil)
-        case .plain, .typed: return ([path], prompt)
+        case .plain where !prompt.hasPrefix("-") && !prompt.hasPrefix("@") && !oneWord: return ([path, prompt], nil)
+        case .afterDashes, .plain, .typed: return ([path], prompt)
         }
     }
 }

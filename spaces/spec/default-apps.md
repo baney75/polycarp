@@ -41,7 +41,8 @@ What a person types for an agent reaches it as one argument, whole: quotes, newl
 backticks are characters in it. It is never part of a command line a shell or a terminal reads. On the Mac the words go
 into a file only this account can read, read once and deleted; the terminal is told to run Polycarp's own command with
 that file's name. An agent that can't be given a prompt as one argument opens without it, and the prompt is put on the
-clipboard. No agent is given an option that turns off its permission questions.
+clipboard. So does a one-word prompt where it would be the program's first word, which a program can read as one of
+its own commands (`claude update`) even after `--`. No agent is given an option that turns off its permission questions.
 
 ### R-D11 Opening a job's app
 Opening a role goes to its app's newest window on this workspace, else on the nearest one, else opens a new window, else

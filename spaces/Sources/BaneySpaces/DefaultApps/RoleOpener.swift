@@ -122,7 +122,7 @@ enum RoleOpener {
     private static func copy(_ prompt: String, for name: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(prompt, forType: .string)
-        Toast.show("\(name) takes no prompt from outside: it is on the clipboard, press ⌘V there", symbol: "doc.on.clipboard")
+        Toast.show("Your prompt is on the clipboard: press ⌘V in \(name)", symbol: "doc.on.clipboard")
     }
 
     private static func say(_ e: Error) { DispatchQueue.main.async { fail(e.localizedDescription) } }
