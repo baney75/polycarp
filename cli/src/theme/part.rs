@@ -288,6 +288,29 @@ impl ApiErr {
         out
     }
 
+    /// The step of a look that failed, and whether what came before it was put back.
+    pub(crate) fn step(mut self, step: &str, back: Result<(), String>) -> ApiErr {
+        let why = std::mem::take(&mut self.message);
+        (self.code, self.message) = match back {
+            Ok(()) => (
+                "step_failed",
+                format!("the {step} step failed, so everything was put back: {why}"),
+            ),
+            Err(e) => (
+                "stuck",
+                format!("the {step} step failed ({why}), and putting things back failed too ({e})"),
+            ),
+        };
+        for i in self
+            .items
+            .iter_mut()
+            .filter(|i| i["path"].is_null() || i["path"] == json!("$"))
+        {
+            i["path"] = json!(step);
+        }
+        self
+    }
+
     /// The refusal of one part of a look: its paths start with the part's name.
     pub(crate) fn under(mut self, part: &str, what: &str) -> ApiErr {
         if self.code != "refused" {
@@ -315,4 +338,87 @@ impl ApiErr {
         self.message = what.to_string();
         self
     }
+}
+
+/// What a theme step did: whether it is in history, and what to tell the person.
+pub(crate) struct Did {
+    pub(crate) changed: bool,
+    pub(crate) notes: Vec<String>,
+}
+
+fn did(out: Out, mut notes: Vec<String>) -> Did {
+    let changed = out.data["changed"] != json!(false);
+    notes.extend(out.warnings);
+    notes.extend(out.notes.into_iter().filter(|_| changed));
+    Did { changed, notes }
+}
+
+/// A user theme with the document's contents, or the name a new file for it takes.
+fn place_for(c: &Ctx, doc: &Table, notes: &mut Vec<String>) -> (String, bool) {
+    let name = doc
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("look")
+        .to_string();
+    let same = |n: &str| {
+        flatten(&c.cfg, n)
+            .is_ok_and(|t| same_doc(&ThemeDoc::Document(t), &ThemeDoc::Document(doc.clone())))
+    };
+    let free = |n: &str| !is_builtin(n) && c.cfg.theme_path(n).symlink_metadata().is_err();
+    if free(&name) {
+        return (name, true);
+    }
+    if same(&name) {
+        return (name, false);
+    }
+    // The person's theme of that name is not this one, so it stays and the look's goes beside it.
+    let stem: String = name.chars().take(40).collect();
+    let (to, new) = (1..)
+        .map(|i| {
+            if i == 1 {
+                format!("{stem}-look")
+            } else {
+                format!("{stem}-look-{i}")
+            }
+        })
+        .find_map(|n| match free(&n) {
+            true => Some((n, true)),
+            false => same(&n).then_some((n, false)),
+        })
+        .unwrap_or((format!("{stem}-look"), true));
+    notes.push(format!(
+        "you have another theme named {name:?}, so the look's is {to:?}"
+    ));
+    (to, new)
+}
+
+/// Puts a look's theme, mode and accents in force as one change in theme history. The caller holds the lock.
+pub(crate) fn apply(c: &Ctx, look: &ThemeLook, action: &str) -> Result<Did, ApiErr> {
+    look.check(c)?;
+    let mut notes = Vec::new();
+    let (mut st, _) = load_state(&c.cfg);
+    turn_on(&mut st, &mut notes);
+    let (name, text) = match &look.theme {
+        ThemeDoc::Builtin(n) => (n.clone(), None),
+        ThemeDoc::Document(t) => {
+            let (name, new) = place_for(c, t, &mut notes);
+            let mut t = t.clone();
+            t.insert("name".into(), Value::String(name.clone()));
+            let text = toml::to_string(&t)
+                .map_err(|e| io_err(format!("could not write the theme: {e}")))?;
+            (name, new.then_some(text))
+        }
+    };
+    st.theme = name.clone();
+    st.mode = look.mode.clone();
+    st.accent_light = look.accent_light.clone();
+    st.accent_dark = look.accent_dark.clone();
+    let file = text.as_deref().map(|t| (name.as_str(), Some(t)));
+    let out = commit(c, Some(&st), action, file)?;
+    Ok(did(out, notes))
+}
+
+/// Takes back the newest theme change, which the caller made under the lock it still holds.
+pub(crate) fn rollback(c: &Ctx) -> Result<(), ApiErr> {
+    undo_locked(c, true).map(|_| ())
 }

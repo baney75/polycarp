@@ -13,6 +13,7 @@ pub(crate) use format::{plain, shown};
 use crate::theme::{self, exactly, first, ApiErr, Ctx, Out, Res};
 use format::Look;
 use serde_json::{json, Value as Json};
+use state::Live;
 use std::ffi::OsString;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -23,6 +24,7 @@ usage: polycarp look <command> [--json]
   list                                  the shipped look and yours, and which is in force
   show <name|file|->                    what a look holds, and what it would change
   save <name> [--title T] [--force]     keep how everything looks now under a name
+  apply <name|file|-> [--dry-run]       put a look on, all of it or none (--dry-run only says what would change)
   export <name> <file|-> [--force]      write a look to one file to share (<name>.polycarp-look)
   import <file|-> [--name N] [--force]  check someone's look and save it; nothing on screen changes
 
@@ -43,6 +45,10 @@ pub fn run(args: &[OsString]) -> i32 {
         "save" => theme::cmd(rest, &["title"], &["force"], |c, p| {
             exactly(p, 1, "one look name")?;
             op_save(c, &p.pos[0], p.val("title"), p.flag("force"))
+        }),
+        "apply" => theme::cmd(rest, &[], &["dry-run"], |c, p| {
+            exactly(p, 1, "one look name or file")?;
+            op_apply(c, &p.pos[0], p.flag("dry-run"))
         }),
         "export" => theme::cmd(rest, &[], &["force"], |c, p| {
             exactly(p, 2, "a look name, and a file or -")?;
@@ -401,4 +407,69 @@ pub(crate) fn op_import(c: &Ctx, bytes: &[u8], name: Option<&str>, force: bool) 
         r => r?,
     }
     keep(c, &look, "imported", notes)
+}
+
+/// Runs the theme step, then the surfaces. A step that fails puts back what came before it, and is named.
+fn change(
+    c: &Ctx,
+    was: Option<&Live>,
+    theme_step: impl FnOnce() -> Result<theme::Did, ApiErr>,
+    to: Option<&Live>,
+) -> Result<theme::Did, ApiErr> {
+    let did = theme_step().map_err(|e| e.step("theme", Ok(())))?;
+    let (Some(now), Some(to)) = (was, to) else {
+        return Ok(did);
+    };
+    let saved: Vec<Look> = store::names(c)
+        .iter()
+        .filter_map(|n| store::load(c, n).ok().map(|(l, _)| l))
+        .collect();
+    let Err((step, e)) = state::put(c, now, to, Some(&saved)) else {
+        return Ok(did);
+    };
+    let surfaces = state::read()
+        .and_then(|l| l.ok_or_else(|| theme::io_err("polycarp-spaces is gone".into())))
+        .map_err(|e| e.message().to_string())
+        .and_then(|l| {
+            state::put(c, &l, now, None).map_err(|(s, e)| format!("{s}: {}", e.message()))
+        });
+    let theme = match did.changed {
+        true => theme::rollback(c).map_err(|e| format!("theme: {}", e.message())),
+        false => Ok(()),
+    };
+    Err((*e).step(step, surfaces.and(theme)))
+}
+
+pub(crate) fn op_apply(c: &Ctx, arg: &str, dry_run: bool) -> Res {
+    // Read before the lock: standard input can take its time, and no theme change should wait for it.
+    let (look, mut notes) = find(c, arg)?;
+    let _held = theme::hold(c)?;
+    let now = state::now(c)?;
+    if now.live.is_some() {
+        state::check(c, &look)?;
+    }
+    let changes = now.changes(c, &look);
+    let data = json!({
+        "name": look.name, "title": look.title, "changes": changes, "dry_run": dry_run,
+        "changed": !dry_run && !changes.is_empty(),
+    });
+    notes.extend(left_for_spaces(&now));
+    let list = match changes.is_empty() {
+        true => "nothing to change: that is already how everything looks\n".to_string(),
+        false => format!("  {}\n", changes.join("\n  ")),
+    };
+    if dry_run || changes.is_empty() {
+        let lead = if changes.is_empty() {
+            ""
+        } else {
+            "applying it would change:\n"
+        };
+        return Ok(Out::new(data, format!("{lead}{list}")).noting(notes));
+    }
+    let to = now.live.as_ref().map(|l| l.with(&look));
+    let step = || theme::apply(c, &look.theme, &format!("look apply {}", look.name));
+    let did = change(c, now.live.as_ref(), step, to.as_ref())?;
+    notes.extend(did.notes);
+    let text = format!("applied {}\n{list}", look.name);
+    Ok(Out::new(data, text).noting(notes))
 }

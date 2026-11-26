@@ -1,14 +1,16 @@
 # Looks
 
 A look is how all of Polycarp looks, as one thing: the theme with its mode and accents, your `style.css`, how the
-bar and the other surfaces are drawn, and the paper. Save how everything looks now, or send yours to a friend as one
-file.
+bar and the other surfaces are drawn, and the paper. Save how everything looks now, try something else, come back,
+or send yours to a friend as one file.
 
 ```sh
 polycarp look save evening-desk --title "Evening desk"
+polycarp look apply polycarp            # everything as Polycarp comes
 polycarp look export evening-desk ~/Desktop/evening-desk.polycarp-look
 polycarp look import friend.polycarp-look   # checked and saved; nothing on screen changes
 polycarp look show friend               # what applying it would change, in plain words
+polycarp look apply friend
 ```
 
 Every command takes `--json` and answers as `polycarp theme` does (the same envelope and exit codes).
@@ -20,12 +22,25 @@ Every command takes `--json` and answers as `polycarp theme` does (the same enve
 | `list` | The shipped look and yours, with a `*` on the one in force |
 | `show <name\|file\|->` | What a look holds, what it would change and what it leaves alone |
 | `save <name> [--title T] [--force]` | Keeps how everything looks now. `--force` replaces one of yours |
+| `apply <name\|file\|-> [--dry-run]` | Puts a look on, all of it or none |
 | `export <name> <file\|-> [--force]` | Writes one file to share. `-` prints it |
 | `import <file\|-> [--name N] [--force]` | Checks someone's look and saves it |
 
-Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can't be replaced.
+Yours are in `<config>/looks/`. `polycarp` is the shipped look: it can be applied, not replaced.
 
-Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`).
+## Apply
+
+Everything is checked before anything changes: the theme by every theme rule, contrast included, the sheet by
+`style check`, the settings by `surfaces validate`, and each picture by its own bytes. Then the theme, the sheet, the
+settings and the paper change, in that order. If one fails, what changed is put back, and the error names the step
+(`step_failed`). In the rare case that putting back fails too, the error is `stuck` and says what is left.
+
+A look puts on the parts it has and leaves the others alone. A look that carries its own theme saves it among your
+themes under a free name. Bar modules of your own (`custom:`) stay where they were, and a sheet you wrote by hand is also
+kept in `style.css.bak`.
+
+Error codes, beside the theme's: `invalid_look`, `unknown_look`, `exists`, `builtin_read_only` (the name `polycarp`),
+`step_failed`, `stuck`.
 
 Without Polycarp Spaces (Linux, Windows) the theme part still works, and the output says the rest waits for it.
 

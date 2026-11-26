@@ -40,6 +40,13 @@ pub fn no_spaces(e: &ApiErr) -> bool {
     e.code() == "spaces_not_found"
 }
 
+/// Where the style sheet is.
+pub fn style_file() -> Result<PathBuf, ApiErr> {
+    let d = spaces(&["style", "path"])?;
+    let file = d["file"].as_str().map(expand);
+    file.ok_or_else(|| theme::io_err("polycarp-spaces style path named no file".into()))
+}
+
 /// None without Polycarp Spaces (on Linux and Windows, say), where only the theme is a look's.
 pub fn read() -> Result<Option<Live>, ApiErr> {
     let style = match spaces(&["style", "show"]) {
@@ -355,5 +362,153 @@ fn wall(w: Option<&Wall>, pictures: &BTreeMap<String, Picture>) -> String {
             Some(p) => format!("a {} picture, {} KB", p.ext(), p.bytes.len().div_ceil(1024)),
             None => "a picture".into(),
         },
+    }
+}
+
+// Changing how the surfaces look. Each step returns its name with what went wrong.
+
+pub type Step = Result<(), (&'static str, Box<ApiErr>)>;
+
+/// Puts the surfaces as `to` has them, changing only what differs. A style sheet the person wrote, in none of
+/// `saved` and no backup, goes to a backup first, as `style reset` makes it; None keeps none.
+pub fn put(c: &Ctx, now: &Live, to: &Live, saved: Option<&[Look]>) -> Step {
+    put_style(now, to, saved).map_err(|e| ("style", Box::new(e)))?;
+    put_surfaces(now, to).map_err(|e| ("surfaces", Box::new(e)))?;
+    put_paper(c, now, to).map_err(|e| ("paper", Box::new(e)))
+}
+
+fn put_style(now: &Live, to: &Live, saved: Option<&[Look]>) -> Result<(), ApiErr> {
+    if now.style == to.style {
+        return Ok(());
+    }
+    let file = style_file()?;
+    store::refuse_link(&file)?;
+    if let (Some(css), Some(saved)) = (&now.style, saved) {
+        if !saved.iter().any(|l| l.style.as_ref() == Some(&now.style)) && !backed_up(&file, css) {
+            spaces(&["style", "reset"])?;
+        }
+    }
+    match &to.style {
+        Some(css) => store::write_plain(&file, css.as_bytes()),
+        None => match std::fs::remove_file(&file) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(theme::io_err(format!(
+                "could not remove {}: {e}",
+                file.display()
+            ))),
+            _ => Ok(()),
+        },
+    }
+}
+
+/// Whether a backup beside the sheet holds this text.
+fn backed_up(file: &Path, css: &str) -> bool {
+    let name = format!(
+        "{}.bak",
+        file.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("style.css")
+    );
+    let dir = file.parent().and_then(|d| std::fs::read_dir(d).ok());
+    dir.into_iter().flatten().flatten().any(|e| {
+        e.file_name().to_str().is_some_and(|n| n.starts_with(&name))
+            && store::read_plain(&e.path(), format::MAX_STYLE).is_ok_and(|b| b == css.as_bytes())
+    })
+}
+
+fn put_surfaces(now: &Live, to: &Live) -> Result<(), ApiErr> {
+    let modules = |l: &Live| -> BTreeMap<String, Json> {
+        let m = l.surfaces.iter().filter(|(p, _)| p.starts_with(MODULES));
+        m.map(|(p, v)| (p[MODULES.len() + 1..].to_string(), v.clone()))
+            .collect()
+    };
+    let set = |path: &str, v: Option<&Json>| match v {
+        Some(v) => spaces(&["surfaces", "set", path, &v.to_string()]),
+        None => spaces(&["surfaces", "reset", path]),
+    };
+    // All three lists at once: a module may be in one of them only, so it can't move one list at a time.
+    let (have, want) = (modules(now), modules(to));
+    if have != want {
+        set(MODULES, (!want.is_empty()).then(|| json!(want)).as_ref())?;
+    }
+    for (path, ..) in FIELDS
+        .iter()
+        .filter(|(p, keep, _)| *keep && !p.starts_with(MODULES))
+    {
+        let v = to.surfaces.get(*path);
+        if now.surfaces.get(*path) != v {
+            set(path, v)?;
+        }
+    }
+    Ok(())
+}
+
+fn put_paper(c: &Ctx, now: &Live, to: &Live) -> Result<(), ApiErr> {
+    if now.paper == to.paper {
+        return Ok(());
+    }
+    let work = Work::new(c)?;
+    let set = |w: &Wall, on: Option<&str>| -> Result<(), ApiErr> {
+        let what = match w {
+            Wall::Value(v) => v.clone(),
+            Wall::Picture(h) => {
+                let p = to
+                    .pictures
+                    .get(h)
+                    .ok_or_else(|| theme::io_err("the look has no such picture".into()))?;
+                work.file(&format!("{}.{}", &h[..16], p.ext()), &p.bytes)?
+            }
+        };
+        let mut argv = vec!["paper", "set", &what];
+        argv.extend(on.into_iter().flat_map(|p| ["--on", p]));
+        spaces(&argv).map(|_| ())
+    };
+    // Setting or resetting all of it clears each place's own, so the places start from nothing.
+    match to.paper.get("all") {
+        Some(w) => set(w, None)?,
+        None if now.paper.is_empty() => {}
+        None => spaces(&["paper", "reset"]).map(|_| ())?,
+    }
+    for place in PLACES {
+        if let Some(w) = to.paper.get(place) {
+            set(w, Some(place))?;
+        }
+    }
+    Ok(())
+}
+
+impl Live {
+    /// This with a look put on: what the look has, and the person's own modules where they were.
+    pub fn with(&self, look: &Look) -> Live {
+        let mut to = self.clone();
+        if let Some(s) = &look.style {
+            to.style = s.clone();
+        }
+        if let Some(s) = &look.surfaces {
+            to.surfaces = s.clone();
+            // What no look holds, such as a scene that names a picture file, stays as the person has it.
+            for (path, v) in &self.surfaces {
+                let never = fields::kept(path, v, &mut Vec::new()) == Ok(None);
+                if never && !path.starts_with(MODULES) && !s.contains_key(path) {
+                    to.surfaces.insert(path.clone(), v.clone());
+                }
+            }
+            for (path, v) in self.surfaces.iter().filter(|(_, v)| has_own(v)) {
+                let mut list = match s.get(path).or(self.defaults.get(path)) {
+                    Some(Json::Array(a)) => a.clone(),
+                    _ => Vec::new(),
+                };
+                for (i, m) in v.as_array().into_iter().flatten().enumerate() {
+                    if own_module(m) {
+                        list.insert(i.min(list.len()), m.clone());
+                    }
+                }
+                to.surfaces.insert(path.clone(), Json::Array(list));
+            }
+        }
+        if let Some(p) = &look.paper {
+            to.paper = p.clone();
+            to.pictures = look.pictures.clone();
+        }
+        to
     }
 }

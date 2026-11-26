@@ -22,7 +22,7 @@ mod png;
 mod preview;
 mod schema;
 
-pub(crate) use part::{capture, hold, ThemeDoc, ThemeLook};
+pub(crate) use part::{apply, capture, hold, rollback, Did, ThemeDoc, ThemeLook};
 
 /// What `theme off` can say: the state of the files, which it checked. Whether an app changes,
 /// and when, is up to that app, so the text says only what the apps are expected to do.
@@ -3959,6 +3959,10 @@ pub(crate) fn op_undo(c: &Ctx, force: bool) -> Res {
 
 fn undo_inner(c: &Ctx, force: bool) -> Res {
     let _lock = Lock::acquire(&c.cfg)?;
+    undo_locked(c, force)
+}
+
+fn undo_locked(c: &Ctx, force: bool) -> Res {
     let hist = read_history(&c.cfg);
     let Some(last) = hist.first() else {
         return Err(ApiErr::new("nothing_to_undo", "nothing to undo"));

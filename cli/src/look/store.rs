@@ -18,7 +18,7 @@ fn is_link(p: &Path) -> bool {
     fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink())
 }
 
-fn refuse_link(p: &Path) -> Result<(), ApiErr> {
+pub fn refuse_link(p: &Path) -> Result<(), ApiErr> {
     if is_link(p) {
         return Err(theme::io_err(format!(
             "{} is a symbolic link, and looks are not read or written through one",
