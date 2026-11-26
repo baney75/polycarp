@@ -45,6 +45,8 @@ The same list with your changes: `polycarp-spaces keys`.
 | ⌃⌥Return | Make the window the main one |
 | ⌃⌥F | Float the window, or tile it again |
 | ⌃⌥M | Give the window the whole area, or put it back |
+| ⌃⌥⇧M | Fill the display with the tile, or put it back |
+| ⌃⌥W | Give the tile the whole width, or put it back |
 | ⌃⌥G | Make the tile a group of tabs, or take it apart |
 | ⌃⌥⇧⌘ arrows | Move the window into the tile that way, or out of its group |
 | ⌃⌥Tab and ⌃⌥⇧Tab | Focus the next or previous window of the group |
@@ -63,6 +65,13 @@ opened in it joins it. ⌃⌥⇧⌘ with an arrow moves the window into the tile
 Click a tab to go to its window, or drop a dragged window on the strip to join. ⌃⌥G again takes the group apart.
 
 The layout treats a group as one window. A tile under 120 points high has no strip. Groups are kept across restarts.
+
+## Full size
+
+⌃⌥M shows one window of the layout at a time, at the size of the whole layout: the one you focus. ⌃⌥⇧M is for one window: it
+fills the display under the bar, without gaps and without going to a macOS desktop of its own. ⌃⌥W gives a window the whole
+width and leaves it its height. Both last until you press the key again, also while you are in another window or on another
+workspace, and the window's place in the layout is kept. Dragging such a window makes it a tile again.
 
 ## Scratchpad
 

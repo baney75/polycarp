@@ -9,6 +9,8 @@ public enum TilingCommand: Equatable, Sendable {
     case move(TileDirection)
     case grow(TileDirection)
     case balance, flip, promote, float, full
+    /// The window's tile fills the display, or the width of it, or goes back to its place.
+    case zoom(TilingZoom)
     /// The window's tile becomes a group of windows in tabs, or the group comes apart.
     case group
     /// Into the tile that way, or out of its group.
@@ -42,6 +44,8 @@ public enum TilingCommand: Equatable, Sendable {
         add("promote", "Make the window the main one", .promote)
         add("float", "Float the window, or tile it again", .float)
         add("full", "Give the window the whole area, or put it back", .full)
+        add("fullscreen", "Fill the display with the tile, or put it back", .zoom(.screen))
+        add("full-width", "Give the tile the whole width, or put it back", .zoom(.width))
         add("group", "Make the tile a group of tabs, or take it apart", .group)
         for d in TileDirection.allCases { add("group-\(d.rawValue)", "Move the window into the tile \(d.phrase), or out of its group", .join(d)) }
         add("group-next", "Focus the next window of the group", .groupCycle(backward: false))
@@ -132,6 +136,11 @@ extension TilingEngine {
             guard isTiled else { return .nothing("the window in front isn't tiled") }
             if layout.full { return .nothing("a window is at full size") }
             if !layout.move(id, toward: d, area: area, gaps: gaps, minimums: minimums) { return .cross(d, carrying: id) }
+        case .zoom(let z):
+            guard isTiled else { return .nothing("the window in front isn't tiled") }
+            Self.toggle(z, id, &slots[key]!)
+            return .changed
+        case .grow where Self.zoom(of: id, slot) != nil: return .nothing("the window is at full size")
         case .grow(let d): grow(id, d, &layout, area, minimums)
         case .balance: layout.balance(nil)
         case .flip: layout.flip(id, area: area)
@@ -278,12 +287,15 @@ extension TilingEngine {
         touched(id)
         if let t = tabs(at: point, for: id), let workspace = seen[id]?.workspace, let key = key(workspace), var slot = slots[key] {
             slot.take(id)
+            slot.zoomed[id] = nil
             slot.join(id, to: t.front, showing: true)
             slot.focused = id
             slots[key] = slot
             return true
         }
         guard let (key, _, drop) = drop(id, at: point) else { return false }
+        // Carried somewhere else it is a tile again.
+        slots[key]!.zoomed[id] = nil
         slots[key]!.layout.apply(drop, to: id, area: slots[key]!.area)
         return true
     }
@@ -307,6 +319,8 @@ extension TilingEngine {
         for (workspace, display) in lastDisplay {
             let key = TilingKey(workspace, display)
             guard options.tiles(workspace), var slot = slots[key], slot.layout.contains(id), slot.layout.style != .floating else { continue }
+            // A zoomed window has no edge of its own to pull: it goes back.
+            if Self.zoom(of: id, slot) != nil { return false }
             let was = slot.layout
             slot.layout.resize(id, to: frame, from: start, area: slot.area, gaps: options.gaps, minimums: needs(slot))
             slots[key] = slot

@@ -59,6 +59,12 @@ while it has a window of its own, is never on the agent workspace, and is let go
 scratchpad. Let go, or floated and tiled again, a window takes its old place when the rest of that layout is as it was, with
 its frame from before tiling. Another native tab of a pinned or scratchpad window is pinned or on the scratchpad as it was.
 
+### R-T12 Full size
+A window in tiled full screen has all its workspace may tile, with no gaps; one in full width has the layout's width and
+its tile's height. The layout is not changed by either and neither makes a macOS desktop. A window stays so until it is
+asked back, dragged or floated, through other windows' focus, other workspaces, the Dock and restarts. A group is zoomed as
+one, and no strip of tabs is drawn under a zoomed window.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without

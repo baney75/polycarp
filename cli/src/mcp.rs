@@ -1145,6 +1145,8 @@ const TILING_COMMANDS: &[&str] = &[
     "promote",
     "float",
     "full",
+    "fullscreen",
+    "full width",
     "group",
     "group left",
     "group right",

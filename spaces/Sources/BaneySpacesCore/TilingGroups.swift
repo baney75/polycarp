@@ -162,10 +162,11 @@ extension TilingEngine {
     /// The strips of tabs of a workspace.
     public func tabs(_ workspace: Int) -> [TilingTabs] {
         guard let key = key(workspace), let slot = slots[key], options.tiles(workspace) else { return [] }
-        let tiles = tiles(workspace).own
+        let tiles = tiles(workspace).own, frames = slot.zoomed.isEmpty ? [:] : frames(workspace)
         return slot.groups.compactMap { g in
             guard let front = slot.front(of: g), stowed[front] == nil, let t = tiles[front], TilingGroup.inner(t) != t, Self.strips(slot) else { return nil }
             let frame = CGRect(x: t.minX, y: t.minY, width: t.width, height: TilingGroup.strip - TilingGroup.gap)
+            if covered(frame, slot, frames) { return nil }
             return TilingTabs(frame: frame, windows: g.members, front: front)
         }
     }
