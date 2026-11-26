@@ -1,7 +1,7 @@
 import AppKit
 import BaneySpacesCore
 
-/// What a key asks tiling to do.
+/// What a key or a click asks tiling to do.
 extension Tiling {
     /// Runs a command on the workspace in use and its front window. `done` gets nil when it did something, else why not.
     func run(_ command: TilingCommand, done: @escaping (String?) -> Void = { _ in }) {
@@ -24,6 +24,13 @@ extension Tiling {
             case .toggle: toggle(n, done: done)
             }
         }
+    }
+
+    /// The workspaces that tile, and their style.
+    var styles: [Int: TileStyle] {
+        var out: [Int: TileStyle] = [:]
+        for n in Workspaces.range where engine.options.tiles(n) { out[n] = engine.style(of: n) }
+        return out
     }
 
     /// Turns a workspace on or off: at once here, and in surfaces.json.

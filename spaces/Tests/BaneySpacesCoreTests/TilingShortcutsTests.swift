@@ -99,3 +99,20 @@ final class TilingShortcutsTests: XCTestCase {
         XCTAssertTrue(code.contains("guard let self, self.stillTrusted() else { return }\n                self.tiling.run(command)"))
     }
 }
+
+final class KeyPressTests: XCTestCase {
+    func testAPressReadsAsTheChordItIs() {
+        func press(_ code: Int, ctrl: Bool = false, opt: Bool = false, shift: Bool = false, cmd: Bool = false) -> Result<KeyChord, KeyChord.Problem> {
+            KeyChord.read(keyCode: code, ctrl: ctrl, opt: opt, shift: shift, cmd: cmd)
+        }
+        XCTAssertEqual(press(17, ctrl: true, opt: true), .success(KeyChord("ctrl+opt+T")!))
+        XCTAssertEqual(press(17, ctrl: true, cmd: true), .success(KeyChord("ctrl+cmd+T")!))
+        XCTAssertEqual(press(123, ctrl: true, shift: true), .success(KeyChord("ctrl+shift+Left")!))
+        for (name, code) in KeyChord.keyCodes { XCTAssertEqual(press(code, ctrl: true, opt: true, shift: true), .success(KeyChord("ctrl+opt+shift+\(name)")!), name) }
+        guard case .failure(let digit) = press(18, ctrl: true, opt: true) else { return XCTFail("1 is a workspace's") }
+        XCTAssertEqual(digit.message, "1 to 9 are the workspaces'")
+        guard case .failure = press(17, cmd: true) else { return XCTFail("Command-T is the app's") }
+        guard case .failure(let odd) = press(200, ctrl: true, opt: true) else { return XCTFail("no such key") }
+        XCTAssertEqual(odd.message, "that key can't be a shortcut")
+    }
+}

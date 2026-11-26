@@ -42,7 +42,7 @@ final class SettingsSidebarTests: XCTestCase {
 
     func testSectionsAreGroupedAsDesigned() throws {
         let kit = try read("Sources/BaneySpaces/SettingsKit.swift")
-        XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .agents, .appearance, .launcher]"#))
+        XCTAssertTrue(kit.contains(#"tabs: [.general, .keys, .windows, .agents, .appearance, .launcher]"#))
         // The sandbox was removed (2026-11-21). Settings > Agents holds the hooks and the finished list,
         // which lived under Settings > Dock until the Workspace Dock went (2026-11-23).
         XCTAssertFalse(kit.contains("Your tools"))

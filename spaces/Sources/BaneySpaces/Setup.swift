@@ -416,7 +416,7 @@ final class SetupModel: ObservableObject {
 
 /// The settings window's tabs. General comes first: it's where a new Mac starts.
 enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General", keys = "Keys", agents = "Agents", appearance = "Appearance", launcher = "Launcher",
+    case general = "General", keys = "Keys", windows = "Windows", agents = "Agents", appearance = "Appearance", launcher = "Launcher",
          automation = "Automation", permissions = "Permissions", updates = "Updates"
     var id: Self { self }
 
@@ -424,6 +424,7 @@ enum SettingsTab: String, CaseIterable, Identifiable {
         switch self {
         case .general: "gearshape"
         case .keys: "keyboard"
+        case .windows: "rectangle.split.2x1"
         case .agents: "sparkles"
         case .appearance: "paintpalette"
         case .launcher: "magnifyingglass"
@@ -453,6 +454,7 @@ struct SetupView: View {
                     switch model.tab {
                     case .general: general
                     case .keys: keys
+                    case .windows: WindowsPane()
                     case .agents: agents
                     case .appearance: appearanceTab
                     case .launcher: launcher
@@ -608,6 +610,8 @@ struct SetupView: View {
             }
             LearnMore(cmdTabNote)
         }
+
+        TilingKeysGroup()
     }
 
     // MARK: Agents

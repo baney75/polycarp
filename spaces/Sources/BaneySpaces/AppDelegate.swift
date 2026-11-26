@@ -549,8 +549,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.tiling.settingsChanged()
             self?.tilingKeysMayHaveChanged()
         }
+        TilingSettings.shared.onRecording = { [weak self] in self?.registerShortcuts() }
         voiceOver = NSWorkspace.shared.observe(\.isVoiceOverEnabled) { [weak self] _, _ in
             DispatchQueue.main.async { self?.tilingKeysMayHaveChanged() }
+        }
+        tiling.onChange = { [weak self] in TilingState.shared.set(self?.tiling.styles ?? [:]) }
+        TilingState.shared.run = { [weak self] command, screen in
+            guard let self else { return }
+            self.spaces.useDisplay(of: screen)
+            self.tiling.run(command)
         }
         tiling.settingsChanged()
         // It reads surfaces.json and stays away while `bar.enabled` is off.
@@ -871,13 +878,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func registerTilingKeys() {
         tilingShortcuts = TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+        var refused: Set<String> = []
+        guard TilingSettings.shared.recording == nil else { return }
         for key in tilingShortcuts?.keys ?? [] {
             guard let command = TilingCommand(words: [key.name]) else { continue }
-            hotkeys.register(keyCode: key.chord.keyCode, modifiers: key.chord.carbon) { [weak self] in
+            let took = hotkeys.register(keyCode: key.chord.keyCode, modifiers: key.chord.carbon) { [weak self] in
                 guard let self, self.stillTrusted() else { return }
                 self.tiling.run(command)
             }
+            if !took { refused.insert(key.name) }
         }
+        TilingSettings.shared.refused = refused
+        TilingSettings.shared.toVoiceOver = Set(tilingShortcuts?.toVoiceOver ?? [])
     }
 
     /// The tiling keys changed, the first or last workspace started or stopped tiling, or VoiceOver came or went.
