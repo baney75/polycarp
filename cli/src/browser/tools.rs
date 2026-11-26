@@ -15,6 +15,8 @@ pub struct Call {
     pub program: PathBuf,
     pub args: Vec<OsString>,
     pub limit: Duration,
+    /// A throwaway home for what is run, instead of the person's.
+    pub home: Option<PathBuf>,
 }
 
 impl Call {
@@ -23,6 +25,7 @@ impl Call {
             program: program.into(),
             args: args.iter().map(|a| a.as_ref().to_owned()).collect(),
             limit: Duration::from_secs(600),
+            home: None,
         }
     }
 }
@@ -76,6 +79,12 @@ impl Tools for System {
                 command.env(key, value);
             }
         }
+        if let Some(home) = &call.home {
+            // macOS's own calls for the home folder read CFFIXED_USER_HOME and ignore HOME.
+            for key in ["HOME", "CFFIXED_USER_HOME", "TMPDIR"] {
+                command.env(key, home);
+            }
+        }
         command.stdin(Stdio::null()).stdout(Stdio::piped());
         command.stderr(Stdio::piped()).process_group(0);
         let mut child = command.spawn()?;
@@ -127,6 +136,17 @@ mod tests {
         let e = System.run(&call).unwrap_err();
         assert_eq!(e.kind(), io::ErrorKind::TimedOut);
         assert!(began.elapsed() < Duration::from_secs(20));
+    }
+
+    #[test]
+    fn a_throwaway_home_replaces_every_way_to_the_real_one() {
+        let mut call = Call::new("/usr/bin/env", &[]);
+        call.home = Some("/throwaway".into());
+        let out = System.run(&call).unwrap().out;
+        for key in ["HOME", "CFFIXED_USER_HOME", "TMPDIR"] {
+            let line = format!("{key}=/throwaway\n");
+            assert!(out.contains(&line), "{out}");
+        }
     }
 
     #[test]

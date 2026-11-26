@@ -34,6 +34,8 @@ pub struct Scene {
     pub app_is_a_link: bool,
     /// What signing-identity.sh prints; empty when there is no key.
     pub identity: &'static str,
+    /// What the headless start shows.
+    pub page: &'static str,
     /// Run the real tool for anything that isn't made to fail.
     pub real: bool,
 }
@@ -61,6 +63,7 @@ impl Fake {
                 version_inside: VERSION,
                 app_is_a_link: false,
                 identity: "",
+                page: "<input placeholder=\"Search or type an address\">",
                 real: false,
             }),
             calls: RefCell::default(),
@@ -82,6 +85,7 @@ impl Fake {
         Place {
             cache: self.root.join("cache"),
             parts: self.parts(),
+            extension: self.extension(),
         }
     }
 
@@ -134,7 +138,17 @@ impl Fake {
             fs::write(parts.join(icon), icon).unwrap();
         }
         fs::write(parts.join("signing-identity.sh"), "exit 3\n").unwrap();
+        fs::copy("/usr/bin/true", parts.join("launcher")).unwrap();
         parts
+    }
+
+    pub fn extension(&self) -> PathBuf {
+        let extension = self.root.join("extension");
+        fs::create_dir_all(extension.join("newtab")).unwrap();
+        for file in ["manifest.json", "newtab/newtab.html"] {
+            fs::write(extension.join(file), "{}").unwrap();
+        }
+        extension
     }
 
     pub fn work(&self) -> PathBuf {
@@ -377,7 +391,8 @@ impl Tools for Fake {
     fn run(&self, call: &Call) -> io::Result<Ran> {
         let name = call.program.file_name().unwrap().to_str().unwrap();
         let args: Vec<&str> = call.args.iter().map(|a| a.to_str().unwrap()).collect();
-        let line = format!("{name} {}", args.join(" "));
+        let home = call.home.iter().map(|h| format!(" home={}", h.display()));
+        let line = format!("{name} {}{}", args.join(" "), home.collect::<String>());
         self.calls.borrow_mut().push(line.clone());
         let scene = self.scene.borrow();
         if let Some((tool, part, failure)) = scene.fail {
@@ -426,6 +441,7 @@ impl Tools for Fake {
             "plutil" if line.contains("CFBundleShortVersionString") => {
                 return said(scene.version_inside);
             }
+            "Polycarp Browser" => return said(scene.page),
             "hdiutil" => self.mounted.set(false),
             // No one but the made-up app's maker could sign it, so the checks of their signature are answered here.
             "codesign" if line.contains("--verify") => {}

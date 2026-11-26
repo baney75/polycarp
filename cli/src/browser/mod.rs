@@ -3,15 +3,16 @@
 //! that can't run is a refusal.
 
 mod change;
+mod pages;
 mod pak;
 mod release;
-// The install step that uses these two comes next.
-#[cfg_attr(not(test), allow(dead_code))]
 mod running;
 mod sign;
 mod source;
+// The install step that uses it comes next.
 #[cfg_attr(not(test), allow(dead_code))]
 mod spot;
+mod start;
 #[cfg(test)]
 mod testing;
 mod tools;
@@ -58,6 +59,8 @@ pub struct Place {
     pub cache: PathBuf,
     /// What ships beside this command in Polycarp.app: the list of changes, icons, the launcher.
     pub parts: PathBuf,
+    /// Polycarp's extension, as staged into Polycarp.app.
+    pub extension: PathBuf,
 }
 
 impl Place {
@@ -120,7 +123,7 @@ fn dry_run(tools: &dyn Tools, place: &Place, arch: &str) -> Result<String, Refus
     cleared?;
     let note = note.map(|n| format!("{n}\n")).unwrap_or_default();
     Ok(format!(
-        "{note}Helium {} was downloaded, passed its checks and was made into Polycarp Browser. Nothing was installed.",
+        "{note}Helium {} was downloaded, passed its checks and was made into Polycarp Browser, which starts. Nothing was installed.",
         release.version
     ))
 }
@@ -137,8 +140,10 @@ fn build(
     let (identity, note) = sign::Identity::find(tools, &place.parts)?;
     let app = source::unpack(tools, dmg, work, version)?;
     change::apply(tools, &app, &place.parts, &changes)?;
+    pages::put_in(tools, &app, place, &changes)?;
     identity.again(tools, &place.parts)?;
     sign::sign(tools, &app, work, &identity, &changes)?;
+    start::check(tools, &app, work, &changes)?;
     Ok((app, note))
 }
 
@@ -161,6 +166,7 @@ pub fn run(args: &[OsString], cache: Option<PathBuf>, app: Option<PathBuf>) -> O
     let place = Place {
         cache: cache.join("browser"),
         parts: resources.join("make-browser"),
+        extension: resources.join("extension"),
     };
     Some(match dry_run(&System, &place, release::this_arch()) {
         Ok(line) => {
@@ -193,6 +199,28 @@ mod tests {
             .filter(|c| c.contains("signing-identity.sh"))
             .count();
         assert_eq!(asked, 2);
+    }
+
+    /// The whole of it on the newest real release: fetched, checked, changed, signed ad hoc, and started with no window.
+    /// `POLYCARP_BROWSER_RESOURCES` is what `browser/scripts/build-parts.sh` and the extension's `stage.sh` made.
+    #[test]
+    #[ignore = "downloads a browser and starts it without a window"]
+    fn a_real_release_is_made_into_a_browser_that_starts() {
+        let t = Fake::new();
+        let made = std::env::var_os("POLYCARP_BROWSER_RESOURCES");
+        let made = PathBuf::from(made.expect("POLYCARP_BROWSER_RESOURCES"));
+        let mut place = t.place();
+        // The real signing script is left out: `parts()` put a stand-in that says there is no key, so no keychain is asked.
+        for part in ["changes.toml", "icon.icns", "icon-32.png", "launcher"] {
+            fs::copy(made.join("make-browser").join(part), place.parts.join(part)).unwrap();
+        }
+        place.extension = made.join("extension");
+        if let Some(kept) = std::env::var_os("POLYCARP_CACHE_DIR") {
+            place.cache = kept.into();
+        }
+        let line = dry_run(&System, &place, release::this_arch()).unwrap();
+        assert!(line.contains("which starts"), "{line}");
+        assert!(!place.cache.join("work").exists());
     }
 
     #[test]
