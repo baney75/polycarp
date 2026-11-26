@@ -11,7 +11,8 @@ final class Tiling {
     /// What is shown of tiling changed (`TilingState`).
     var onChange: () -> Void = {}
 
-    /// Apps are being asked, or frames written: a look asked for meanwhile comes after.
+    /// Apps are being asked, or frames written: a look asked for meanwhile comes as soon as that returns, never after a
+    /// settle (spec/tiling-speed.md R-TS4).
     private var busy = false
     private var again = false
     private var soon: DispatchWorkItem?
@@ -25,6 +26,7 @@ final class Tiling {
     /// What the looks answer, for timing.log (`TileCauses`), and the windows a frame was ever asked for.
     var causes = TileCauses()
     private var placed: Set<WindowID> = []
+    private var writes = TilingWrites()
     private var watching = false
     var loaded = false
     var titleKey = Data()
@@ -238,6 +240,8 @@ final class Tiling {
         let list = moves.compactMap { m in windows[m.id].map { (m, $0) } }
         let gate = Window.gate
         let pass = gate.pass
+        // The windows are this write's from its start, so an older settle watching them gives them up at once (R-TS4).
+        let serial = writes.wrote(Set(list.map(\.0.id)))
         Spaces.axQueue.async { [weak self] in
             let wrote = Tiling.place(list, while: { gate.open(pass) && !Tiling.pressed })
             DispatchQueue.main.async {
@@ -246,36 +250,51 @@ final class Tiling {
                 var timed = timed
                 (timed.asked, timed.moves) = (Self.uptime, moves.count)
                 // One a switch or a press got in front of was never asked; one whose app didn't answer is asked later.
+                // Cut off by a switch or a press: looked at again shortly, not at once, so a closed gate isn't spun on.
+                var cut = false
                 for (id, whole) in wrote where !whole {
                     self.engine.touched(id)
-                    if gate.open(pass), !Tiling.pressed { self.silent[id] = Date().addingTimeInterval(2) } else { self.again = true }
+                    if gate.open(pass), !Tiling.pressed { self.silent[id] = Date().addingTimeInterval(2) } else { cut = true }
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
-                self.settle(Set(wrote.filter(\.1).map(\.0)), Dictionary(uniqueKeysWithValues: moves.map { ($0.id, $0.to) }), pass, timed)
+                let ids = Set(wrote.filter(\.1).map(\.0))
+                self.writes.done(Set(wrote.filter { !$0.1 }.map(\.0)), serial)
+                self.engine.flying(ids)
+                let again = self.ready()
+                self.settle(ids, Dictionary(uniqueKeysWithValues: moves.map { ($0.id, $0.to) }), pass, serial, timed)
+                if again { self.look() } else if cut { self.lookSoon(0.03) }
             }
         }
     }
 
     /// Waits until the windows hold still, then tells the engine where they are. One on its tile at once is done; one
-    /// that isn't is given a quarter of a second, since some apps lay out late.
-    private func settle(_ ids: Set<WindowID>, _ targets: [WindowID: CGRect], _ pass: Int, _ timed: Timed, last: [WindowID: CGRect] = [:], still: Int = 0, looks: Int = 0) {
+    /// that isn't is given a quarter of a second, since some apps lay out late. It only reports: looks go on meanwhile,
+    /// and a window a newer write took is that write's to report (R-TS4).
+    private func settle(_ all: Set<WindowID>, _ targets: [WindowID: CGRect], _ pass: Int, _ serial: Int, _ timed: Timed,
+                        last: [WindowID: CGRect] = [:], still: Int = 0, looks: Int = 0) {
         DispatchQueue.main.asyncAfter(deadline: .now() + (looks == 0 ? 0.03 : 0.06)) { [weak self] in
             guard let self else { return }
+            let ids = self.writes.own(all, serial)
+            guard !ids.isEmpty || all.isEmpty else { return timed.log(landed: nil) }
             // A switch or a drag owns the windows now: what is seen here isn't their app's answer.
             guard Window.gate.open(pass) else {
                 timed.log(landed: nil)
-                self.ready()
+                self.engine.grounded(ids)
+                self.writes.done(ids, serial)
                 return self.look()
             }
             let now = WindowMoves.bounds(of: ids)
             let there = now.allSatisfy { id, f in targets[id].map { TilingEngine.near(f, $0) } ?? true }
             let held = now == last ? still + 1 : 0
             guard there || held >= 3 || looks >= 10 else {
-                return self.settle(ids, targets, pass, timed, last: now, still: held, looks: looks + 1)
+                return self.settle(all, targets, pass, serial, timed, last: now, still: held, looks: looks + 1)
             }
-            timed.log(landed: Self.uptime)
-            let again = self.ready()
-            if self.engine.landed(now) || again { self.look() }
+            timed.log(landed: ids.count == all.count ? Self.uptime : nil)
+            self.writes.done(ids, serial)
+            // Graded first: grading reads whether a plan held a window back, and ends the flight of each it grades.
+            let look = self.engine.landed(now, targets: targets)
+            self.engine.grounded(ids.subtracting(now.keys))
+            if look { self.look() }
         }
     }
 

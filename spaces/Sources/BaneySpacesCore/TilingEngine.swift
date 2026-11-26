@@ -158,6 +158,10 @@ public struct TilingEngine: Equatable, Sendable {
         var answered: Bool
         /// It is on its way back to its frame from before tiling.
         var back: Bool
+        /// Written, and its settle hasn't said where it landed (spec/tiling-speed.md R-TS5).
+        var flying = false
+        /// A plan wanted it on this target while it flew and asked nothing: its settle owes a look if it lands short.
+        var heldBack = false
     }
 
     public internal(set) var options = TilingOptions()
@@ -277,16 +281,22 @@ public struct TilingEngine: Equatable, Sendable {
             }
         }
         seen = windows
-        if moves.isEmpty { roundings = [:] }
+        // A plan that held a window back for its flight didn't write nothing: the rounding count stands (R-TS5).
+        if moves.isEmpty, !asked.values.contains(where: \.heldBack) { roundings = [:] }
         return moves
     }
 
     /// Where the windows ended up after a write. True when something was learned, so the layouts are solved once more, or
-    /// when one didn't move at all: its app may have been busy, so it is asked again.
-    public mutating func landed(_ frames: [WindowID: CGRect]) -> Bool {
+    /// when one didn't move at all: its app may have been busy, so it is asked again. With `targets`, the write's own,
+    /// a window asked for another target since is a newer write's to report and is skipped (R-TS4).
+    public mutating func landed(_ frames: [WindowID: CGRect], targets: [WindowID: CGRect]? = nil) -> Bool {
         var learned = false
         for (id, now) in frames {
+            if let targets, let a = asked[id], let t = targets[id], !Self.near(a.target, t) { continue }
             guard var a = asked[id] else { continue }
+            let held = a.heldBack
+            (a.flying, a.heldBack) = (false, false)
+            asked[id] = a
             let there = Self.near(now, a.target)
             let over = CGSize(width: now.width - a.target.width, height: now.height - a.target.height)
             // An app takes a place and a size one after the other: a side it left as it was may only be late.
@@ -295,7 +305,8 @@ public struct TilingEngine: Equatable, Sendable {
             a.answered = a.answered || !Self.near(now, a.from)
             asked[id] = a
             if !there, a.tries < Self.mostTries, a.back || late && (a.tries < 2 || !a.answered) {
-                if a.tries < 2 { learned = true }
+                // A plan during its flight skipped it, so no look is owed it otherwise.
+                if a.tries < 2 || held { learned = true }
                 continue
             }
             if a.back {
@@ -317,6 +328,16 @@ public struct TilingEngine: Equatable, Sendable {
             learned = true
         }
         return learned
+    }
+
+    /// Frames written to these windows, on their way (R-TS5): a plan asks for the same target again only once they land.
+    public mutating func flying(_ ids: Set<WindowID>) {
+        for id in ids { asked[id]?.flying = true }
+    }
+
+    /// These windows' settle ended without a word on where they are: a plan may ask for their targets again.
+    public mutating func grounded(_ ids: Set<WindowID>) {
+        for id in ids { asked[id]?.flying = false; asked[id]?.heldBack = false }
     }
 
     /// The person took hold of a window: what was asked of it before no longer counts, its way back neither.
@@ -523,6 +544,11 @@ public struct TilingEngine: Equatable, Sendable {
         let a = asked[w.id].flatMap { Self.near($0.target, target) ? $0 : nil }
         if Self.near(w.frame, target) { return nil }
         if let a, let landed = a.landed, Self.near(w.frame, landed) { return nil }
+        // On its way there already: asking again would only use up a try.
+        if a?.flying == true {
+            asked[w.id]?.heldBack = true
+            return nil
+        }
         let tries = a?.tries ?? 0
         guard tries < Self.mostTries else { return nil }
         asked[w.id] = Asked(from: w.frame, target: target, landed: nil, tries: tries + 1, answered: a?.answered ?? false, back: back)
@@ -531,7 +557,7 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// Seen smaller than the minimum learned: it was busy then, not at its least.
     private mutating func disprove(_ w: TilingWindow) {
-        guard let m = minimums[w.id], w.frame.width < m.width - Self.close || w.frame.height < m.height - Self.close else { return }
+        guard asked[w.id]?.flying != true, let m = minimums[w.id], w.frame.width < m.width - Self.close || w.frame.height < m.height - Self.close else { return }
         minimums[w.id] = CGSize(width: min(m.width, w.frame.width), height: min(m.height, w.frame.height))
     }
 
@@ -584,6 +610,9 @@ public struct TilingEngine: Equatable, Sendable {
         if before[old] == nil { before[new] = nil }
         if let s = stowed.removeValue(forKey: old) { stowed[new] = s }
         carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&roundings); carry(&asked); carry(&landing)
+        // The old tab's settle watches the old id: no settle ends the new one's flight, so it isn't in flight (R-TS5).
+        asked[new]?.flying = false
+        asked[new]?.heldBack = false
         recent = recent.map { $0 == old ? new : $0 }
     }
 
