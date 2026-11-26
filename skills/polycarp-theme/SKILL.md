@@ -1,6 +1,6 @@
 ---
 name: polycarp-theme
-description: Use when the user wants Polycarp (Spaces, Voice, Browser or the website) to look different, such as colors, corners, fonts, spacing or motion, or wants a theme previewed or undone.
+description: Use when the user wants Polycarp (Spaces, Voice, Browser or the website) to look different, such as colors, corners, fonts, spacing or motion, wants a theme previewed or undone, or wants a whole look saved, applied, shared or taken back.
 ---
 
 # Customizing Polycarp for the user
@@ -13,6 +13,10 @@ page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `
 To restyle one part of the bar past the theme (a gold clock, square workspace numbers), use `<config>/style.css`: run
 `polycarp-spaces style example`, `style set '<selector>' <property> <value>` per change, then `style check`; `style preset
 omarchy` is the Omarchy look in one command, `style restore` undoes it (MCP `style_*`; spaces/docs/style.md).
+
+A look is all of that and the paper as one thing (MCP `look_*`; docs/looks.md). Before a redesign run `polycarp look save
+<name>`, so one command brings it back. `look show <name|file>` says what it would change, `look apply <name|file>` is all
+or nothing, `look undo` takes it back, `look export` and `look import` share one file. Never replace a look the person saved unasked.
 
 ## Steps
 
@@ -44,8 +48,6 @@ omarchy` is the Omarchy look in one command, `style restore` undoes it (MCP `sty
 Set `POLYCARP_CONFIG_DIR` to a temporary absolute folder when you test. Never edit the user's real config to experiment.
 
 ## Example: "warmer"
-
-Warm paper in light mode, warm brown in dark mode, a terracotta accent. Read from stdin:
 
 ```sh
 polycarp theme apply - <<'EOF'
@@ -82,8 +84,6 @@ polycarp theme change type.display 'ui-monospace, "SF Mono", Menlo, Consolas, mo
 ```
 
 ## Example: "only the browser panel greener"
-
-Only the browser extension changes; Spaces, Voice and the site keep their accent.
 
 ```sh
 polycarp theme change surface.browser.light.accent '#2f6b3a'

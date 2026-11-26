@@ -9,6 +9,7 @@
 //! same envelope (docs/keys.md), each filter tool with `polycarp-spaces filters ... --json`, and each page
 //! edit tool with `polycarp-spaces edits ... --json` (spaces/docs/edits.md).
 
+use crate::look;
 use crate::theme::{self, ApiErr, Ctx};
 use serde_json::{json, Map, Value as Json};
 use std::collections::BTreeSet;
@@ -45,6 +46,10 @@ then theme_set it.
 Themes you did not make in this session belong to the person: theme_delete and a theme_apply that would replace \
 one are refused unless you pass force true, which you do only after the person agrees. theme_delete removes \
 a theme you made and no longer need.
+A look is all of it in one (theme, style sheet, surfaces' appearance, paper): look_save before a redesign so the \
+person can come back, look_apply puts one on, look_undo goes back, look_export and look_import move one between \
+people as a file. look_show says in plain words what one would change. A look the person saved is theirs: replacing \
+it needs force, after they agree.
 Surfaces (what the top bar, desktop scene, status menu, new tab page and idle screen show) are one \
 file of their own, not the theme: read surfaces_schema, then surfaces_get the path, then surfaces_set it. A refused \
 set wrote nothing; error.data.errors gives each path and why. To undo, surfaces_set the value surfaces_get gave before.
@@ -297,6 +302,89 @@ pub(crate) fn tools() -> Vec<Tool> {
             name: "theme_reset",
             description: "Go back to the default theme (polycarp), mode auto, no accent override, and turn the theme on. Always works, even if a theme file is broken. Your own themes stay on disk.",
             schema: obj(json!({}), &[]),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "look_list",
+            description: "The looks there are: the shipped one (polycarp) and the saved ones, with each one's colors, its problems if it can't be used, and whether it is in force (current). A look is everything about how Polycarp looks in one: theme, mode, accents, style sheet, the bar and other surfaces' appearance, and the paper.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "look_show",
+            description: "One look, and in plain words what applying it would change from how things look now (changes; empty when it is in force). Read it before look_apply and tell the person what will change.",
+            schema: obj(json!({"name": {"type":"string","description":"A look's name, from look_list."}}), &["name"]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "look_save",
+            description: "Keep how everything looks now as a look, under a name. Do it before a redesign, so the person can come back, and when they like what you made. A look you did not save in this session is the person's: replacing it is refused unless you pass force, only after they agree.",
+            schema: obj(
+                json!({
+                    "name": {"type":"string","description":"Lowercase letters, digits and hyphens. Not polycarp, the shipped look."},
+                    "title": {"type":"string","description":"What the person sees it called. Left out: the name in words, or the title it had."},
+                    "force": {"type":"boolean","description":"Replace a look of that name. Only after the person agrees, unless you saved it in this session."},
+                }),
+                &["name"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "look_apply",
+            description: "Put a look on: theme, style sheet, surfaces and paper together, all of it or none. Everything is checked first, and if a step fails what came before it is put back. look_undo goes back. With dry_run it only says what would change. The look polycarp puts everything back as Polycarp ships it.",
+            schema: obj(
+                json!({
+                    "name": {"type":"string","description":"A look's name, from look_list."},
+                    "dry_run": {"type":"boolean","description":"Only check it and say what would change."},
+                }),
+                &["name"],
+            ),
+            read_only: false,
+            destructive: true,
+            idempotent: true,
+        },
+        Tool {
+            name: "look_undo",
+            description: "Go back to how everything looked before the last look_apply, whoever made it: check look_list or theme_history first if the person may have applied one since you. Call it again to come forward again. Use it when the person dislikes the look you put on.",
+            schema: obj(json!({}), &[]),
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+        },
+        Tool {
+            name: "look_export",
+            description: "Write a look to one file the person can send to someone, pictures and all. The file's name must end in .polycarp-look, and a file that is already there is never replaced. Leave file out to get the look itself in the result, when it is at most 256 KB; a look with a picture needs a file.",
+            schema: obj(
+                json!({
+                    "name": {"type":"string","description":"A look's name, from look_list."},
+                    "file": {"type":"string","description":"Where to write it: an absolute path ending in .polycarp-look. Left out: the look comes back in the result, if it is at most 256 KB."},
+                }),
+                &["name"],
+            ),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+        },
+        Tool {
+            name: "look_import",
+            description: "Check a look someone made and save it; nothing on screen changes until look_apply. It can hold only how things look: anything else in it is refused with its path, or left out with a note. Pass file or look, one of them. A look you did not save in this session is not replaced unless you pass force, only after the person agrees.",
+            schema: obj(
+                json!({
+                    "file": {"type":"string","description":"A look file's absolute path."},
+                    "look": {"type":"object","description":"The look itself, as look_export gives it."},
+                    "name": {"type":"string","description":"The name to save it under. Left out: the name in the file."},
+                    "force": {"type":"boolean","description":"Replace a look of that name. Only after the person agrees, unless you saved it in this session."},
+                }),
+                &[],
+            ),
             read_only: false,
             destructive: true,
             idempotent: true,
@@ -603,6 +691,9 @@ fn tool_list() -> Json {
 }
 
 /// The arguments of one call, checked against the tool's input schema.
+/// The most of a look `look_export` puts in its result.
+const INLINE: usize = 256 * 1024;
+
 struct Args {
     map: Map<String, Json>,
 }
@@ -676,6 +767,22 @@ impl Args {
             })
             .collect()
     }
+    /// The name of a look. A path is not one: a look in a file is imported first.
+    fn look(&self) -> Result<&str, ApiErr> {
+        let n = self.need("name")?;
+        match theme::valid_name(n) {
+            true => Ok(n),
+            false => Err(ApiErr::usage("name must be a look's name, from look_list")),
+        }
+    }
+    /// An absolute path: this server's own folder means nothing to a client.
+    fn path<'a>(&self, f: &'a str) -> Result<&'a std::path::Path, ApiErr> {
+        let p = std::path::Path::new(f);
+        match p.is_absolute() {
+            true => Ok(p),
+            false => Err(ApiErr::usage("file must be an absolute path")),
+        }
+    }
     fn flag(&self, k: &str) -> Result<Option<bool>, ApiErr> {
         match self.map.get(k) {
             None | Some(Json::Null) => Ok(None),
@@ -690,12 +797,17 @@ impl Args {
 #[derive(Default)]
 pub(crate) struct Session {
     made: BTreeSet<String>,
+    /// The looks it saved or imported under a name that was free.
+    looks: BTreeSet<String>,
 }
 
 impl Session {
     /// Notes a theme a successful call made: a new file from create or apply, or the
     /// `<name>-custom` copy a change makes of a built-in.
     fn note(&mut self, tool: &str, data: &Json) {
+        if matches!(tool, "look_save" | "look_import") && data["replaced"] == json!(false) {
+            self.looks.extend(data["name"].as_str().map(str::to_string));
+        }
         let made = match tool {
             "theme_create" => data["name"].as_str(),
             "theme_apply" if data["replaced"] == json!(false) => data["name"].as_str(),
@@ -707,6 +819,17 @@ impl Session {
         if let Some(n) = made {
             self.made.insert(n.to_string());
         }
+    }
+}
+
+impl Session {
+    /// Whether a save or import may replace the look of that name: its own it may, anyone else's only with force.
+    fn may_replace(&self, c: &Ctx, name: &str, a: &Args) -> Result<bool, ApiErr> {
+        let force = a.flag("force")?.unwrap_or(false);
+        if look::exists(c, name) && !self.looks.contains(name) && !force {
+            return Err(look::not_yours(name));
+        }
+        Ok(force || self.looks.contains(name))
     }
 }
 
@@ -761,6 +884,44 @@ pub(crate) fn call(
         }
         let c = Ctx::new(caller)?;
         match name {
+            "look_list" => look::op_list(&c),
+            "look_show" => look::op_show(&c, a.look()?),
+            "look_apply" => look::op_apply(&c, a.look()?, a.flag("dry_run")?.unwrap_or(false)),
+            "look_undo" => look::op_undo(&c),
+            "look_export" => match a.text("file")? {
+                Some(f) => look::op_export(&c, a.look()?, a.path(f)?, false),
+                None => {
+                    // A picture makes a look megabytes, too much for one reply and the model reading it.
+                    let out = look::op_text(&c, a.look()?)?;
+                    let size = out.data()["look"].to_string().len();
+                    match size > INLINE {
+                        true => Err(ApiErr::usage(format!(
+                            "this look is {} KB, over the {} KB a result carries: pass file, an absolute path ending in .polycarp-look",
+                            size / 1024,
+                            INLINE / 1024
+                        ))),
+                        false => Ok(out),
+                    }
+                }
+            },
+            "look_save" => {
+                let target = a.need("name")?;
+                let force = session.may_replace(&c, target, &a)?;
+                look::op_save(&c, target, a.text("title")?, force)
+            }
+            "look_import" => {
+                let bytes = match (a.text("file")?, a.map.get("look").filter(|v| !v.is_null())) {
+                    (Some(f), None) => look::input(&a.path(f)?.display().to_string())?,
+                    (None, Some(l)) => l.to_string().into_bytes(),
+                    _ => return Err(ApiErr::usage("pass file or look, one of them")),
+                };
+                let target = match a.text("name")? {
+                    Some(n) => Some(n.to_string()),
+                    None => look::name_in(&bytes),
+                };
+                let force = session.may_replace(&c, target.as_deref().unwrap_or_default(), &a)?;
+                look::op_import(&c, &bytes, a.text("name")?, force)
+            }
             "theme_list" => theme::op_list(&c),
             "theme_current" => theme::op_current(&c),
             "theme_show" => theme::op_show(&c, a.text("name")?),

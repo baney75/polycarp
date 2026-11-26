@@ -2,6 +2,7 @@
 //! Every run gets its own config folder through POLYCARP_CONFIG_DIR.
 
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -132,7 +133,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 43] = [
+const TOOLS: [&str; 50] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -153,6 +154,13 @@ const TOOLS: [&str; 43] = [
     "theme_off",
     "theme_on",
     "theme_reset",
+    "look_list",
+    "look_show",
+    "look_save",
+    "look_apply",
+    "look_undo",
+    "look_export",
+    "look_import",
     "surfaces_schema",
     "surfaces_get",
     "surfaces_set",
@@ -1643,4 +1651,139 @@ fn keys_list_runs_the_spaces_keys_command_and_wraps_its_rows() {
         .unwrap()
         .contains("keys"));
     assert_eq!(s.finish(), 0);
+}
+
+#[test]
+fn an_agent_keeps_applies_undoes_and_passes_on_looks_and_leaves_the_persons_alone() {
+    let sb = Sandbox::new();
+    assert_eq!(sb.cli(&["set", "evening"])["ok"], true);
+    let mut s = sb.server();
+    s.initialize("look-test");
+    let data = |r: &Value| r["structuredContent"]["data"].clone();
+    // The person's own, saved before this session.
+    let file = sb.cfg().join("looks/theirs.polycarp-look");
+    assert_eq!(
+        data(&s.tool("look_save", json!({"name": "before"})))["replaced"],
+        false
+    );
+    fs::copy(sb.cfg().join("looks/before.polycarp-look"), &file).unwrap();
+    let text = fs::read_to_string(&file).unwrap();
+    assert_eq!(
+        code_of(&s.tool("look_save", json!({"name": "theirs"}))),
+        "not_yours"
+    );
+    let look = json!({"schema": 1, "name": "theirs", "theme": {"builtin": "calm"}});
+    assert_eq!(
+        code_of(&s.tool("look_import", json!({"look": look}))),
+        "not_yours"
+    );
+    let r = s.tool("look_import", json!({"look": look, "name": "theirs"}));
+    assert_eq!(code_of(&r), "not_yours");
+    assert_eq!(fs::read_to_string(&file).unwrap(), text);
+    // Its own it may replace, and with force the person's.
+    assert_eq!(
+        data(&s.tool("look_save", json!({"name": "before"})))["replaced"],
+        true
+    );
+    let r = s.tool("look_import", json!({"look": look, "force": true}));
+    assert_eq!(r["isError"], false, "{r}");
+    assert_eq!(
+        code_of(&s.tool("look_save", json!({"name": "theirs"}))),
+        "not_yours",
+        "force makes it no one's but theirs"
+    );
+
+    let r = s.tool("look_show", json!({"name": "theirs"}));
+    assert!(
+        data(&r)["changes"]
+            .to_string()
+            .contains("theme: Calm (now Evening)"),
+        "{r}"
+    );
+    let r = s.tool("look_apply", json!({"name": "theirs", "dry_run": true}));
+    assert_eq!(data(&r)["changed"], false);
+    s.tool("look_apply", json!({"name": "theirs"}));
+    assert_eq!(data(&s.tool("theme_current", json!({})))["theme"], "calm");
+    let r = s.tool("theme_history", json!({}));
+    assert!(
+        r.to_string().contains("agent:look-test") && r.to_string().contains("look apply theirs"),
+        "{r}"
+    );
+    s.tool("look_undo", json!({}));
+    assert_eq!(
+        data(&s.tool("theme_current", json!({})))["theme"],
+        "evening"
+    );
+    let r = s.tool("look_list", json!({}));
+    assert_eq!(data(&r)["looks"][1]["name"], "before");
+    assert_eq!(data(&r)["looks"][1]["current"], true);
+
+    // Out to a file and in again, by absolute path and never over a file.
+    let out = sb.root.join("sent.polycarp-look").display().to_string();
+    assert_eq!(
+        s.tool("look_export", json!({"name": "before", "file": out}))["isError"],
+        false
+    );
+    assert_eq!(
+        code_of(&s.tool("look_export", json!({"name": "before", "file": out}))),
+        "exists"
+    );
+    let r = s.tool(
+        "look_export",
+        json!({"name": "before", "file": "sent.polycarp-look"}),
+    );
+    assert_eq!(code_of(&r), "invalid_args");
+    assert_eq!(
+        data(&s.tool("look_import", json!({"file": out, "name": "back"})))["name"],
+        "back"
+    );
+    assert_eq!(
+        code_of(&s.tool("look_import", json!({"file": out, "look": look}))),
+        "invalid_args"
+    );
+    assert_eq!(
+        code_of(&s.tool("look_apply", json!({"name": out}))),
+        "invalid_args",
+        "a file is imported first"
+    );
+    let r = s.tool("look_export", json!({"name": "before"}));
+    assert_eq!(data(&r)["look"]["theme"]["builtin"], "evening");
+    // A null is no value, as many clients send one.
+    let r = s.tool(
+        "look_import",
+        json!({"file": out, "look": null, "name": "again"}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    // A look with a picture is too much for one result.
+    let mut pic = b"\x89PNG\r\n\x1a\n".to_vec();
+    pic.resize(300 * 1024, 7);
+    let sha: String = sha2::Sha256::digest(&pic)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let big = json!({"schema": 1, "name": "big", "theme": {"builtin": "calm"},
+        "paper": {"all": {"picture": sha}}, "pictures": {&sha: {"type": "image/png", "base64": base64(&pic)}}});
+    let r = s.tool("look_import", json!({"look": big}));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = s.tool("look_export", json!({"name": "big"}));
+    assert_eq!(code_of(&r), "invalid_args");
+    assert!(r.to_string().contains("pass file"), "{r}");
+    assert_eq!(s.finish(), 0);
+}
+
+fn base64(b: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            match i <= c.len() {
+                true => out.push(A[(n >> (18 - 6 * i) & 63) as usize] as char),
+                false => out.push('='),
+            }
+        }
+    }
+    out
 }

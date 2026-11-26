@@ -113,6 +113,7 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
     let guide = guide();
     let mut docs: BTreeSet<String> = [
         "theme_",
+        "look_",
         "surfaces_",
         "paper_",
         "style_",
