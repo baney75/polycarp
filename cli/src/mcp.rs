@@ -353,7 +353,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "look_undo",
-            description: "Go back to how everything looked before the last look_apply. Call it again to come forward again. Use it when the person dislikes the look you put on.",
+            description: "Go back to how everything looked before the last look_apply, whoever made it: check look_list or theme_history first if the person may have applied one since you. Call it again to come forward again. Use it when the person dislikes the look you put on.",
             schema: obj(json!({}), &[]),
             read_only: false,
             destructive: true,
@@ -361,11 +361,11 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "look_export",
-            description: "Write a look to one file the person can send to someone, pictures and all. The file's name must end in .polycarp-look, and a file that is already there is never replaced. Leave file out to get the look itself in the result, for a look with no large picture.",
+            description: "Write a look to one file the person can send to someone, pictures and all. The file's name must end in .polycarp-look, and a file that is already there is never replaced. Leave file out to get the look itself in the result, when it is at most 256 KB; a look with a picture needs a file.",
             schema: obj(
                 json!({
                     "name": {"type":"string","description":"A look's name, from look_list."},
-                    "file": {"type":"string","description":"Where to write it: an absolute path ending in .polycarp-look. Left out: the look comes back in the result."},
+                    "file": {"type":"string","description":"Where to write it: an absolute path ending in .polycarp-look. Left out: the look comes back in the result, if it is at most 256 KB."},
                 }),
                 &["name"],
             ),
@@ -691,6 +691,9 @@ fn tool_list() -> Json {
 }
 
 /// The arguments of one call, checked against the tool's input schema.
+/// The most of a look `look_export` puts in its result.
+const INLINE: usize = 256 * 1024;
+
 struct Args {
     map: Map<String, Json>,
 }
@@ -887,7 +890,19 @@ pub(crate) fn call(
             "look_undo" => look::op_undo(&c),
             "look_export" => match a.text("file")? {
                 Some(f) => look::op_export(&c, a.look()?, a.path(f)?, false),
-                None => look::op_text(&c, a.look()?),
+                None => {
+                    // A picture makes a look megabytes, too much for one reply and the model reading it.
+                    let out = look::op_text(&c, a.look()?)?;
+                    let size = out.data()["look"].to_string().len();
+                    match size > INLINE {
+                        true => Err(ApiErr::usage(format!(
+                            "this look is {} KB, over the {} KB a result carries: pass file, an absolute path ending in .polycarp-look",
+                            size / 1024,
+                            INLINE / 1024
+                        ))),
+                        false => Ok(out),
+                    }
+                }
             },
             "look_save" => {
                 let target = a.need("name")?;
@@ -895,7 +910,7 @@ pub(crate) fn call(
                 look::op_save(&c, target, a.text("title")?, force)
             }
             "look_import" => {
-                let bytes = match (a.text("file")?, a.map.get("look")) {
+                let bytes = match (a.text("file")?, a.map.get("look").filter(|v| !v.is_null())) {
                     (Some(f), None) => look::input(&a.path(f)?.display().to_string())?,
                     (None, Some(l)) => l.to_string().into_bytes(),
                     _ => return Err(ApiErr::usage("pass file or look, one of them")),

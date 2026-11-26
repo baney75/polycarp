@@ -2,6 +2,7 @@
 //! Every run gets its own config folder through POLYCARP_CONFIG_DIR.
 
 use serde_json::{json, Value};
+use sha2::Digest;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -1747,5 +1748,42 @@ fn an_agent_keeps_applies_undoes_and_passes_on_looks_and_leaves_the_persons_alon
     );
     let r = s.tool("look_export", json!({"name": "before"}));
     assert_eq!(data(&r)["look"]["theme"]["builtin"], "evening");
+    // A null is no value, as many clients send one.
+    let r = s.tool(
+        "look_import",
+        json!({"file": out, "look": null, "name": "again"}),
+    );
+    assert_eq!(r["isError"], false, "{r}");
+    // A look with a picture is too much for one result.
+    let mut pic = b"\x89PNG\r\n\x1a\n".to_vec();
+    pic.resize(300 * 1024, 7);
+    let sha: String = sha2::Sha256::digest(&pic)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let big = json!({"schema": 1, "name": "big", "theme": {"builtin": "calm"},
+        "paper": {"all": {"picture": sha}}, "pictures": {&sha: {"type": "image/png", "base64": base64(&pic)}}});
+    let r = s.tool("look_import", json!({"look": big}));
+    assert_eq!(r["isError"], false, "{r}");
+    let r = s.tool("look_export", json!({"name": "big"}));
+    assert_eq!(code_of(&r), "invalid_args");
+    assert!(r.to_string().contains("pass file"), "{r}");
     assert_eq!(s.finish(), 0);
+}
+
+fn base64(b: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16
+            | (*c.get(1).unwrap_or(&0) as u32) << 8
+            | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            match i <= c.len() {
+                true => out.push(A[(n >> (18 - 6 * i) & 63) as usize] as char),
+                false => out.push('='),
+            }
+        }
+    }
+    out
 }
