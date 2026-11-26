@@ -3,14 +3,13 @@
 //! that can't run is a refusal.
 
 mod change;
+mod install;
 mod pages;
 mod pak;
 mod release;
 mod running;
 mod sign;
 mod source;
-// The install step that uses it comes next.
-#[cfg_attr(not(test), allow(dead_code))]
 mod spot;
 mod start;
 #[cfg(test)]
@@ -61,6 +60,12 @@ pub struct Place {
     pub parts: PathBuf,
     /// Polycarp's extension, as staged into Polycarp.app.
     pub extension: PathBuf,
+    /// Where the app goes.
+    pub spot: spot::Spot,
+    /// The browser's own data folder.
+    pub data: PathBuf,
+    /// What answers the new tab page; None where Polycarp.app isn't installed.
+    pub host: Option<PathBuf>,
 }
 
 impl Place {
@@ -75,9 +80,14 @@ impl Place {
             .map_err(refuse(check, "making it private"))
     }
 
-    /// One install or update at a time. The lock lasts as long as the file stays open.
+    /// One install or update at a time.
     fn lock(&self) -> Result<fs::File, Refused> {
-        let file = fs::File::create(self.cache.join("lock")).map_err(refuse("lock", "opening"))?;
+        self.lock_named("lock")
+    }
+
+    /// The lock lasts as long as the file stays open.
+    fn lock_named(&self, name: &str) -> Result<fs::File, Refused> {
+        let file = fs::File::create(self.cache.join(name)).map_err(refuse("lock", "opening"))?;
         // A tool being started elsewhere holds a copy of the file for a moment, so one no is not yet an answer.
         for _ in 0..20 {
             match file.try_lock() {
@@ -117,7 +127,7 @@ fn dry_run(tools: &dyn Tools, place: &Place, arch: &str) -> Result<String, Refus
     let release = release::newest(tools, arch)?;
     let dmg = source::fetch(tools, &release, &place.cache)?;
     let work = place.work(tools)?;
-    let built = build(tools, place, &dmg, &work, &release.version);
+    let built = build(tools, place, &dmg, &work, &release);
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
     let (_, note) = built?;
     cleared?;
@@ -134,50 +144,163 @@ fn build(
     place: &Place,
     dmg: &Path,
     work: &Path,
-    version: &str,
+    release: &release::Release,
 ) -> Result<(PathBuf, Option<&'static str>), Refused> {
     let changes = change::Changes::read(&place.parts)?;
     let (identity, note) = sign::Identity::find(tools, &place.parts)?;
-    let app = source::unpack(tools, dmg, work, version)?;
+    let certificate = identity.certificate();
+    if !certificate && place.spot.installed().is_some_and(|b| b.certificate) {
+        // It would lose the browser its saved passwords and permissions until the person allows each again.
+        let why = "Polycarp's signing identity was not found, and the installed build was signed with it. Run `polycarp browser uninstall` first to start over without it";
+        return Err(Refused::new("signing", why));
+    }
+    let app = source::unpack(tools, dmg, work, &release.version)?;
     change::apply(tools, &app, &place.parts, &changes)?;
     pages::put_in(tools, &app, place, &changes)?;
+    let built = spot::Built {
+        helium: release.version.clone(),
+        published: release.published,
+        built: now_millis(),
+        parts: install::fingerprint(place)?,
+        certificate,
+    };
+    built
+        .write(&app)
+        .map_err(refuse("built-in pages", "marking the build"))?;
     identity.again(tools, &place.parts)?;
     sign::sign(tools, &app, work, &identity, &changes)?;
     start::check(tools, &app, work, &changes)?;
     Ok((app, note))
 }
 
-/// None when these arguments are not a browser command yet.
-pub fn run(args: &[OsString], cache: Option<PathBuf>, app: Option<PathBuf>) -> Option<i32> {
-    let words: Vec<&str> = args.iter().filter_map(|a| a.to_str()).collect();
-    if words.len() != args.len() || words != ["install", "--dry-run"] {
+fn now_millis() -> u64 {
+    let since = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
+    since.map_or(0, |d| d.as_millis() as u64)
+}
+
+/// What was asked, from the arguments.
+#[derive(Debug, Default, PartialEq)]
+struct Asked {
+    verb: String,
+    flags: Vec<String>,
+    app_dir: Option<PathBuf>,
+}
+
+/// Err is the line to print.
+fn read_args(args: &[OsString]) -> Result<Asked, String> {
+    let mut asked = Asked::default();
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        let Some(word) = arg.to_str() else {
+            return Err(format!("{} is not an option", arg.to_string_lossy()));
+        };
+        if word == "--app-dir" {
+            let folder = args.next().ok_or("--app-dir needs a folder")?;
+            asked.app_dir = Some(folder.into());
+        } else if word.starts_with('-') {
+            asked.flags.push(word.into());
+        } else if asked.verb.is_empty() {
+            asked.verb = word.into();
+        } else {
+            return Err(format!("{word} is not an option"));
+        }
+    }
+    let allowed: &[&str] = match asked.verb.as_str() {
+        "install" => &["--dry-run", "--rollback"],
+        "update" => &["--when-quit"],
+        _ => &[],
+    };
+    if let Some(flag) = asked.flags.iter().find(|f| !allowed.contains(&f.as_str())) {
+        return Err(format!("{flag} is not an option of {}", asked.verb));
+    }
+    if asked.flags.len() > 1 {
+        return Err(format!("{} can't go together", asked.flags.join(" and ")));
+    }
+    Ok(asked)
+}
+
+/// The first words this command answers. Anything else is the old agent browser's command.
+const VERBS: [&str; 3] = ["install", "update", "finish"];
+
+/// None when these arguments are not a browser command.
+pub fn run(
+    args: &[OsString],
+    home: Option<PathBuf>,
+    cache: Option<PathBuf>,
+    app: Option<PathBuf>,
+) -> Option<i32> {
+    let verb = args.first()?.to_str()?;
+    if !VERBS.contains(&verb) {
         return None;
     }
-    let Some(cache) = cache else {
+    let asked = match read_args(args) {
+        Ok(asked) => asked,
+        Err(line) => {
+            eprintln!("polycarp browser: {line}");
+            return Some(2);
+        }
+    };
+    let (Some(home), Some(cache)) = (home, cache) else {
         eprintln!("polycarp browser: no home folder");
         return Some(1);
     };
     // For tests and for building from a checkout: a folder laid out as Polycarp.app's Resources.
     let resources = std::env::var_os("POLYCARP_BROWSER_RESOURCES").map(PathBuf::from);
-    let Some(resources) = resources.or_else(|| app.map(|a| a.join("Contents/Resources"))) else {
+    let resources = resources.or_else(|| app.as_ref().map(|a| a.join("Contents/Resources")));
+    let Some(resources) = resources else {
         eprintln!("polycarp browser: Polycarp.app was not found, and the browser is built from parts inside it");
         return Some(1);
     };
-    let place = Place {
-        cache: cache.join("browser"),
-        parts: resources.join("make-browser"),
-        extension: resources.join("extension"),
-    };
-    Some(match dry_run(&System, &place, release::this_arch()) {
+    let done =
+        install::spot_for(asked.app_dir.as_deref(), &home, app.as_deref()).and_then(|spot| {
+            let place = Place {
+                cache: cache.join("browser"),
+                parts: resources.join("make-browser"),
+                extension: resources.join("extension"),
+                spot,
+                data: home.join("Library/Application Support/Polycarp/Browser"),
+                host: app.map(|a| a.join("Contents/Resources/bin/polycarp-spaces")),
+            };
+            answer(&System, &place, &asked)
+        });
+    Some(match done {
         Ok(line) => {
-            println!("{line}");
+            if !line.is_empty() {
+                println!("{line}");
+            }
             0
         }
         Err(refused) => {
-            eprintln!("polycarp browser: {refused}. Nothing was changed.");
+            eprintln!("polycarp browser: {refused}. The installed browser was not changed.");
             1
         }
     })
+}
+
+fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Refused> {
+    let arch = release::this_arch();
+    let flag = |f: &str| asked.flags.iter().any(|x| x == f);
+    let ask = install::Ask {
+        update: asked.verb == "update",
+        when_quit: flag("--when-quit"),
+    };
+    let outcome = match asked.verb.as_str() {
+        "finish" => {
+            let wait = || std::thread::sleep(std::time::Duration::from_secs(2));
+            return install::finish(place, wait).map(|_| String::new());
+        }
+        "install" if flag("--dry-run") => return dry_run(tools, place, arch),
+        "install" if flag("--rollback") => install::roll_back(tools, place)?,
+        _ => install::install(tools, place, arch, ask)?,
+    };
+    if outcome.waiting {
+        let start = std::env::current_exe().and_then(|me| install::start_waiter(&me, &place.spot));
+        start.map_err(refuse(
+            "swap",
+            "starting what waits for the browser to quit",
+        ))?;
+    }
+    Ok(outcome.line)
 }
 
 #[cfg(test)]
@@ -243,10 +366,22 @@ mod tests {
     }
 
     #[test]
-    fn anything_else_is_not_a_browser_command_yet() {
-        for args in [&["install"][..], &[], &["install", "--dry-run", "x"]] {
-            let args: Vec<OsString> = args.iter().map(OsString::from).collect();
-            assert_eq!(run(&args, None, None), None);
+    fn anything_else_is_not_a_browser_command() {
+        let words = |args: &[&str]| args.iter().map(OsString::from).collect::<Vec<_>>();
+        for args in [&[][..], &["mcp"], &["--version"], &["serve", "--port", "1"]] {
+            assert_eq!(run(&words(args), None, None, None), None);
         }
+        for args in [
+            &["install", "x"][..],
+            &["install", "--when-quit"],
+            &["install", "--dry-run", "--rollback"],
+            &["update", "--rollback"],
+            &["update", "--app-dir"],
+        ] {
+            assert_eq!(run(&words(args), None, None, None), Some(2), "{args:?}");
+        }
+        let asked = read_args(&words(&["update", "--app-dir", "/x", "--when-quit"])).unwrap();
+        assert_eq!(asked.app_dir.unwrap(), Path::new("/x"));
+        assert_eq!(asked.flags, ["--when-quit"]);
     }
 }

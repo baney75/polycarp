@@ -155,7 +155,12 @@ fn main() {
 /// browser's command: say where that went, with the exit code for a command used wrong.
 fn browser(args: &[OsString]) -> i32 {
     #[cfg(target_os = "macos")]
-    if let Some(code) = browser::run(args, home().map(|h| update::cache_dir(&h)), polycarp_app()) {
+    if let Some(code) = browser::run(
+        args,
+        home(),
+        home().map(|h| update::cache_dir(&h)),
+        polycarp_app(),
+    ) {
         return code;
     }
     let _ = args;

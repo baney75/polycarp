@@ -85,6 +85,11 @@ impl Spot {
         Built::read(&self.app())
     }
 
+    /// Running, or it can't be told.
+    pub fn running(&self) -> bool {
+        running::inside(&self.app()).map_or(true, |pids| !pids.is_empty())
+    }
+
     /// An app of that name that this command did not build is never replaced or removed.
     pub fn ours(&self) -> Result<(), Refused> {
         if exists(&self.app()) && self.installed().is_none() {
@@ -219,6 +224,8 @@ impl Spot {
     }
 
     /// Removes the app and the builds beside it, and says what went.
+    // `uninstall`, which uses it, comes next.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn remove(&self) -> Result<Vec<PathBuf>, Refused> {
         self.ours()?;
         self.quit_first("Polycarp Browser is open. Quit it first")?;
