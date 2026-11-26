@@ -144,4 +144,31 @@ final class DefaultAppsTests: XCTestCase {
         }
         XCTAssertTrue(DefaultAppCatalog.runsCommands.allSatisfy { b in DefaultAppCatalog.entries(.terminal).contains { $0.app == .app(b) } })
     }
+
+    func testVideoIsFlickWhenInstalledAndQuickTimeWhenNot() {
+        let flick = DefaultAppCatalog.flick, quickTime = DefaultAppCatalog.quickTime, iina = "com.colliderli.iina"
+        let mac = FakeInstalledApps([quickTime: "QuickTime Player"])
+        XCTAssertEqual(resolve(.video, nil, mac).app?.app, .app(quickTime))
+        XCTAssertEqual(resolve(.video, nil, mac).source, .firstInstalled)
+        XCTAssertFalse(resolve(.video, nil, mac).candidates.contains { $0.app == .app(flick) }, "never offered before it is installed")
+        mac.apps[iina] = "IINA"
+        XCTAssertEqual(resolve(.video, nil, mac).app?.app, .app(iina))
+        mac.apps[flick] = "Flick"
+        XCTAssertEqual(resolve(.video, nil, mac).app?.app, .app(flick))
+        XCTAssertEqual(resolve(.video, nil, mac).candidates.map(\.name), ["Flick", "IINA", "QuickTime Player"])
+        XCTAssertEqual(resolve(.video, quickTime, mac).app?.app, .app(quickTime), "yours over the catalog")
+        XCTAssertEqual([flick, quickTime], ["com.dbaney.flick", "com.apple.QuickTimePlayerX"], "as Launch Services names them")
+        XCTAssertNil(AppRole.video.systemQuestion)
+        XCTAssertEqual(AppRole.video.title, "Video")
+    }
+
+    func testFlickPlaysMusicAfterTheOthers() {
+        let flick = DefaultAppCatalog.flick
+        let mac = FakeInstalledApps([flick: "Flick", "com.apple.Music": "Music"])
+        XCTAssertEqual(resolve(.music, nil, mac).app?.name, "Music")
+        XCTAssertEqual(resolve(.music, nil, mac).candidates.map(\.name), ["Music", "Flick"])
+        XCTAssertEqual(resolve(.music, nil, FakeInstalledApps([flick: "Flick"])).app?.name, "Flick")
+        XCTAssertEqual(DefaultAppCatalog.entries(.music).last?.app, .app(flick))
+    }
+
 }

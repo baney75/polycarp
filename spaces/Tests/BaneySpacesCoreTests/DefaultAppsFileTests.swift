@@ -92,4 +92,23 @@ final class DefaultAppsFileTests: XCTestCase {
         try DefaultAppsFile.set(.mail, to: nil, path: file)
         XCTAssertFalse(FileManager.default.fileExists(atPath: file))
     }
+
+    func testVideoGoesThroughTheFileAndAnOldFileStillLoads() throws {
+        let old = "[defaults]\nterminal = \"\(ghostty)\"\nmusic = \"com.spotify.client\"\n"
+        try FileManager.default.createDirectory(atPath: dir + "/baneyspaces", withIntermediateDirectories: true)
+        try old.write(toFile: file, atomically: true, encoding: .utf8)
+        let before = try DefaultAppsFile.load(path: file)
+        XCTAssertEqual(before.apps, [.terminal: .app(ghostty), .music: .app("com.spotify.client")])
+        XCTAssertEqual(before.warnings, [])
+        let mac = FakeInstalledApps([DefaultAppCatalog.quickTime: "QuickTime Player"])
+        XCTAssertEqual(DefaultAppResolver.resolve(.video, choice: before.apps[.video], installed: mac).app?.name, "QuickTime Player")
+        try DefaultAppsFile.set(.video, to: .app(DefaultAppCatalog.flick), path: file)
+        let after = try DefaultAppsFile.load(path: file)
+        XCTAssertEqual(after.apps[.video], .app(DefaultAppCatalog.flick))
+        XCTAssertEqual(after.apps[.terminal], .app(ghostty), "the rest stays")
+        XCTAssertEqual(after.warnings, [])
+        try DefaultAppsFile.set(.video, to: nil, path: file)
+        XCTAssertNil(try DefaultAppsFile.load(path: file).apps[.video])
+    }
+
 }

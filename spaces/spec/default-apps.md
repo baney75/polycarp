@@ -3,7 +3,7 @@
 Which app does each job, kept in one place and used by everything in Polycarp: the keys, the launcher, the bar, the CLI
 and agents. Built on the Mac. Windows and Linux: unchanged, and the file format is theirs to read too.
 
-**Roles:** `agent`, `browser`, `terminal`, `editor`, `files`, `mail`, `messages`, `calendar`, `notes`, `music`, `passwords`.
+**Roles:** `agent`, `browser`, `terminal`, `editor`, `files`, `mail`, `messages`, `calendar`, `notes`, `music`, `video`, `passwords`.
 
 ### R-D1 Who does the job
 Your choice, if it is installed. Then the system's own default for the job, if that is installed: on the Mac what opens
@@ -48,6 +48,13 @@ Opening a role goes to its app's newest window on this workspace, else on the ne
 launches it; a window is never brought here from another workspace. Asked for a new window, it opens one. A folder
 opens in the terminal, the agent, the editor or the file manager. With no agent chosen, or the chosen one gone, it asks
 on screen; the answer is kept and opens at once. Never for another machine.
+
+### R-D15 Video
+`video` plays movies and clips. macOS keeps no one default for movies, only one per file type, so with no choice the
+first installed app of the catalog does it: Flick, IINA, VLC, then QuickTime Player, which comes with macOS, so the job
+always has an answer. Flick also plays music and is offered for `music` after the others. An app is offered only when
+Launch Services finds it installed: Polycarp never offers to install one. A file from before `video` reads as no
+choice, with no warning.
 
 ### R-D9 The file
 The choices are the `[defaults]` table of the configuration file (config.md), a role to an id, only for roles you chose:

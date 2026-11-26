@@ -68,6 +68,10 @@ public enum DefaultAppCatalog {
         Command(id: "hermes", name: "Hermes", programs: ["hermes"]),
     ]
 
+    /// Flick has no installer yet: like every app here, it is offered only once Launch Services finds it.
+    public static let flick = "com.dbaney.flick"
+    public static let quickTime = "com.apple.QuickTimePlayerX"
+
     private static func apps(_ role: AppRole) -> [(String, String)] {
         switch role {
         case .agent:
@@ -108,7 +112,11 @@ public enum DefaultAppCatalog {
              ("com.lukilabs.lukiapp", "Craft"), ("com.electron.logseq", "Logseq"), ("com.evernote.Evernote", "Evernote"),
              ("net.cozic.joplin-desktop", "Joplin")]
         case .music:
-            [("com.apple.Music", "Music"), ("com.spotify.client", "Spotify"), ("com.tidal.desktop", "TIDAL"), ("tv.plex.plexamp", "Plexamp")]
+            [("com.apple.Music", "Music"), ("com.spotify.client", "Spotify"), ("com.tidal.desktop", "TIDAL"), ("tv.plex.plexamp", "Plexamp"),
+             (flick, "Flick")]
+        case .video:
+            // QuickTime Player comes with macOS, so a Mac always has an answer.
+            [(flick, "Flick"), ("com.colliderli.iina", "IINA"), ("org.videolan.vlc", "VLC"), (quickTime, "QuickTime Player")]
         case .passwords:
             [("com.apple.Passwords", "Passwords"), ("com.1password.1password", "1Password"), ("com.bitwarden.desktop", "Bitwarden"),
              ("me.proton.pass.electron", "Proton Pass"), ("org.keepassxc.keepassxc", "KeePassXC"),
