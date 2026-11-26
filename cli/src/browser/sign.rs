@@ -13,8 +13,9 @@ const CODESIGN: &str = "/usr/bin/codesign";
 
 /// What upstream's code may keep. Any other entitlement, Apple's restricted ones first, is dropped: they are granted
 /// to Helium's own team, and macOS refuses to start an app that claims one it was not granted.
-const KEPT: [&str; 8] = [
+const KEPT: [&str; 9] = [
     "com.apple.security.cs.allow-jit",
+    "com.apple.security.cs.allow-unsigned-executable-memory",
     "com.apple.security.device.audio-input",
     "com.apple.security.device.bluetooth",
     "com.apple.security.device.camera",
@@ -40,29 +41,46 @@ impl Identity {
         }
     }
 
-    /// The identity Polycarp is signed with, made if there is none and never replaced. Without it, ad hoc and the line
-    /// to print.
-    pub fn find(tools: &dyn Tools, parts: &Path) -> (Identity, Option<&'static str>) {
+    /// The identity Polycarp is signed with. Without one, ad hoc and the line to print. One that exists but can't be
+    /// used now stops the build, so a passing keychain fault never changes the app's signature.
+    pub fn find(
+        tools: &dyn Tools,
+        parts: &Path,
+    ) -> Result<(Identity, Option<&'static str>), Refused> {
+        let none = Ok((Identity::ad_hoc(), Some(AD_HOC)));
         let script = parts.join("signing-identity.sh");
-        let ran = tools.run(&Call::new("/bin/bash", &[&script, &"--keep"]));
-        let found = ran.ok().filter(|r| r.ok()).and_then(|r| {
-            let (name, keychain) = r.out.trim_end().split_once('\t')?;
-            let keychain = PathBuf::from(keychain);
-            let usable = !name.is_empty() && name != "-" && keychain.is_absolute();
-            usable.then(|| Identity {
-                name: name.into(),
-                keychain: Some(keychain),
-            })
-        });
-        match found {
-            Some(identity) => (identity, None),
-            None => (
-                Identity::ad_hoc(),
-                Some("Polycarp's signing identity was not found, so this build is signed ad hoc: macOS will ask for its permissions and saved passwords again after each update."),
-            ),
+        if !script.is_file() {
+            return none;
+        }
+        let ran = tools
+            .run(&Call::new("/bin/bash", &[&script, &"--keep"]))
+            .map_err(refuse(CHECK, "running signing-identity.sh"))?;
+        match ran.code {
+            Some(0) => {
+                let found = ran.out.trim_end().split_once('\t').and_then(|(name, keychain)| {
+                    let keychain = PathBuf::from(keychain);
+                    let usable = !name.is_empty() && name != "-" && keychain.is_absolute();
+                    usable.then(|| Identity {
+                        name: name.into(),
+                        keychain: Some(keychain),
+                    })
+                });
+                let why = || Refused::new(CHECK, "signing-identity.sh named no usable identity");
+                Ok((found.ok_or_else(why)?, None))
+            }
+            Some(3) => none,
+            _ => Err(Refused::new(
+                CHECK,
+                format!(
+                    "Polycarp's signing key can't be used now, so nothing was built and the browser was left alone: {}",
+                    ran.err.trim().lines().last().unwrap_or("signing-identity.sh failed")
+                ),
+            )),
         }
     }
 }
+
+const AD_HOC: &str = "Polycarp's signing identity was not found, so this build is signed ad hoc: macOS will ask for its permissions and saved passwords again after each update.";
 
 /// One piece of code to sign.
 #[derive(Debug)]
@@ -151,7 +169,9 @@ fn bundle(
         let why = || Refused::new(CHECK, format!("{} has no {key}", plist.display()));
         plist_string(tools, plist, key).ok_or_else(why)
     };
-    let (identifier, program) = (read("CFBundleIdentifier")?, read("CFBundleExecutable")?);
+    let identifier = read("CFBundleIdentifier")?;
+    // A bundle of resources alone has no program of its own, so it is signed as a whole with nothing taken out.
+    let program = plist_string(tools, plist, "CFBundleExecutable").unwrap_or_default();
     let mut runs = false;
     code.retain(|c| {
         let of_this = c.path.starts_with(&path) && c.path.file_name() == Some(program.as_ref());
@@ -352,6 +372,26 @@ mod tests {
     }
 
     #[test]
+    fn a_bundle_of_resources_alone_is_signed_as_a_whole() {
+        let b = built();
+        let inner = b.app.join("Contents/Resources/words.bundle/Contents");
+        fs::create_dir_all(inner.join("Resources")).unwrap();
+        fs::write(inner.join("Resources/words.txt"), "made up").unwrap();
+        fs::write(
+            inner.join("Info.plist"),
+            "<plist version=\"1.0\"><dict><key>CFBundleIdentifier</key><string>test.words</string></dict></plist>",
+        )
+        .unwrap();
+        let changes = Changes::read(&b.t.parts()).unwrap();
+        sign(&System, &b.app, &b.t.work(), &Identity::ad_hoc(), &changes).unwrap();
+        let said = shown(
+            &b.app.join("Contents/Resources/words.bundle"),
+            &["-d", "-vv"],
+        );
+        assert!(said.contains("Identifier=test.words\n"), "{said}");
+    }
+
+    #[test]
     fn a_tool_that_fails_stops_the_signing() {
         let b = built();
         let changes = Changes::read(&b.t.parts()).unwrap();
@@ -368,21 +408,34 @@ mod tests {
     }
 
     #[test]
-    fn the_identity_is_polycarps_or_ad_hoc_with_a_note() {
+    fn the_identity_is_polycarps_or_ad_hoc_with_a_note_or_the_build_stops() {
         let t = Fake::new();
         t.set(|s| s.identity = "Polycarp Local Signing\t/keys/polycarp.keychain-db\n");
-        let (found, note) = Identity::find(&t, &t.parts());
+        let (found, note) = Identity::find(&t, &t.parts()).unwrap();
         assert_eq!(found.name, "Polycarp Local Signing");
         assert_eq!(found.keychain, Some("/keys/polycarp.keychain-db".into()));
         assert_eq!(note, None);
-        for bad in ["", "no tab", "-\t/keys/k", "name\trelative"] {
+        t.set(|s| s.identity = "");
+        let (found, note) = Identity::find(&t, &t.parts()).unwrap();
+        assert_eq!(found, Identity::ad_hoc());
+        assert!(note.unwrap().contains("ad hoc"));
+        let parts = t.parts();
+        fs::remove_file(parts.join("signing-identity.sh")).unwrap();
+        assert_eq!(Identity::find(&t, &parts).unwrap().0, Identity::ad_hoc());
+        for bad in ["no tab", "-\t/keys/k", "name\trelative"] {
             t.set(|s| s.identity = bad);
-            let (found, note) = Identity::find(&t, &t.parts());
-            assert_eq!(found, Identity::ad_hoc(), "{bad:?}");
-            assert!(note.unwrap().contains("ad hoc"));
+            assert_eq!(
+                Identity::find(&t, &t.parts()).unwrap_err().check,
+                CHECK,
+                "{bad:?}"
+            );
         }
+        // A key that exists but can't be used now never falls back to ad hoc.
         t.set(|s| s.fail = Some(("bash", "", Failure::SaysNo)));
-        assert_eq!(Identity::find(&t, &t.parts()).0, Identity::ad_hoc());
+        let refused = Identity::find(&t, &t.parts()).unwrap_err();
+        assert!(refused.to_string().contains("left alone"), "{refused}");
+        t.set(|s| s.fail = Some(("bash", "", Failure::CannotRun)));
+        assert!(Identity::find(&t, &t.parts()).is_err());
     }
 
     /// Two builds that differ have one designated requirement, so macOS and the Keychain see one app. It needs a

@@ -32,7 +32,7 @@ pub struct Scene {
     pub gatekeeper: &'static str,
     pub version_inside: &'static str,
     pub app_is_a_link: bool,
-    /// What signing-identity.sh prints.
+    /// What signing-identity.sh prints; empty when there is no key.
     pub identity: &'static str,
     /// Run the real tool for anything that isn't made to fail.
     pub real: bool,
@@ -124,7 +124,7 @@ impl Fake {
         self.mounted.get()
     }
 
-    /// What ships beside the command: the repo's own changes.toml, and made-up icons.
+    /// What ships beside the command: the repo's own changes.toml, made-up icons and a stand-in signing script.
     pub fn parts(&self) -> PathBuf {
         let parts = self.root.join("parts");
         fs::create_dir_all(&parts).unwrap();
@@ -133,6 +133,7 @@ impl Fake {
         for icon in ["icon.icns", "icon-32.png"] {
             fs::write(parts.join(icon), icon).unwrap();
         }
+        fs::write(parts.join("signing-identity.sh"), "exit 3\n").unwrap();
         parts
     }
 
@@ -392,6 +393,12 @@ impl Tools for Fake {
             }
             // The real copy of a made-up app.
             "ditto" => return System.run(call),
+            "bash" if scene.identity.is_empty() => {
+                return Ok(Ran {
+                    code: Some(3),
+                    ..Ran::default()
+                })
+            }
             "bash" => return said(scene.identity),
             "spctl" => return said(scene.gatekeeper),
             "plutil" if line.contains("CFBundleShortVersionString") => {

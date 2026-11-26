@@ -134,9 +134,9 @@ fn build(
     version: &str,
 ) -> Result<(PathBuf, Option<&'static str>), Refused> {
     let changes = change::Changes::read(&place.parts)?;
+    let (identity, note) = sign::Identity::find(tools, &place.parts)?;
     let app = source::unpack(tools, dmg, work, version)?;
     change::apply(tools, &app, &place.parts, &changes)?;
-    let (identity, note) = sign::Identity::find(tools, &place.parts);
     sign::sign(tools, &app, work, &identity, &changes)?;
     Ok((app, note))
 }

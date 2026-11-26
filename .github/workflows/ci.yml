@@ -69,8 +69,11 @@ jobs:
         with: { workspaces: cli }
       - run: cargo test
       # Makes a throwaway certificate and keychain, so only here: two builds of Polycarp Browser must look like one app.
+      # It must run exactly one test: a renamed test would otherwise match nothing and pass.
       - if: runner.os == 'macOS'
-        run: cargo test --bin polycarp -- --ignored --exact browser::sign::tests::two_builds_have_the_same_designated_requirement
+        run: |
+          cargo test --bin polycarp -- --ignored --exact browser::sign::tests::two_builds_have_the_same_designated_requirement | tee "$RUNNER_TEMP/sign.log"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/sign.log"
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
       # Polycarp Browser's launcher, a program of its own (GPL).

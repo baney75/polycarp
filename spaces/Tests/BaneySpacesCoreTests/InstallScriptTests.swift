@@ -234,6 +234,30 @@ final class InstallScriptTests: XCTestCase {
         XCTAssertFalse(try String(contentsOf: home.appendingPathComponent("asked"), encoding: .utf8).contains("delete-keychain"))
     }
 
+    func testKeepMakesAndRestoresNoKey() throws {
+        let fm = FileManager.default
+        let home = fm.temporaryDirectory.appendingPathComponent("signing-none-\(UUID().uuidString)")
+        defer { try? fm.removeItem(at: home) }
+        let bin = home.appendingPathComponent("bin"), kept = home.appendingPathComponent("Library/Polycarp Release Signing")
+        for d in [bin, kept] { try fm.createDirectory(at: d, withIntermediateDirectories: true) }
+        let stub = bin.appendingPathComponent("security")
+        try "#!/bin/bash\necho \"$@\" >> '\(home.path)/asked'\nexit 1\n".write(to: stub, atomically: true, encoding: .utf8)
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: stub.path)
+        try "a kept key".write(to: kept.appendingPathComponent("polycarp-signing.keychain-db"), atomically: true, encoding: .utf8)
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = [root.appendingPathComponent("scripts/signing-identity.sh").path, "--keep"]
+        p.environment = ["HOME": home.path, "PATH": "\(bin.path):/usr/bin:/bin"]
+        p.standardOutput = FileHandle.nullDevice
+        p.standardError = FileHandle.nullDevice
+        try p.run()
+        p.waitUntilExit()
+        XCTAssertEqual(p.terminationStatus, 3)
+        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent("Library/Application Support").path))
+        XCTAssertFalse(fm.fileExists(atPath: home.appendingPathComponent("asked").path))
+        XCTAssertTrue(fm.fileExists(atPath: kept.appendingPathComponent("polycarp-signing.keychain-db").path))
+    }
+
     private func runSigningRestore(home: URL) throws -> String {
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/bash")
