@@ -14,9 +14,11 @@ const READER = "src/reader/reader.html";
 chrome.runtime.onInstalled.addListener(async (details) => {
   const settings = await P.getSettings();
   await P.setSettings(settings); // writes defaults or migrates an older schema
-  if (details.reason === "install") {
+  // A browser that loads the extension from a folder at every start says "install" each time: only the first one counts.
+  const seen = (await chrome.storage.local.get(SEEN_VERSION))[SEEN_VERSION];
+  if (details.reason === "install" && !seen) {
     await chrome.storage.local.set({ [SEEN_VERSION]: runningVersion() });
-    chrome.tabs.create({ url: chrome.runtime.getURL("src/pages/welcome.html") });
+    if (!(await builtIn())) chrome.tabs.create({ url: chrome.runtime.getURL("src/pages/welcome.html") });
   } else await noteVersion(details.previousVersion);
   buildMenus();
   injectIntoOpenTabs();
@@ -24,6 +26,11 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   chrome.alarms.create("polycarp-badge", { periodInMinutes: 30 });
   nasAlarm();
 });
+
+// Polycarp Browser carries the extension and marks its copy: it is the browser's own, so it needs no welcome.
+async function builtIn() {
+  try { return (await fetch(chrome.runtime.getURL("builtin.txt"))).ok; } catch (e) { return false; }
+}
 
 // An app update changes only version_name (the app's full version), not version, so the last version seen is kept
 // here and compared on every update and browser start; a change lists what is new in the popup.

@@ -302,8 +302,9 @@ public enum NewTabHost {
 
     // MARK: Registration
 
-    /// The browsers' own folders, under the home folder, in the order they are written: Helium, Chrome, Chromium.
+    /// The browsers' own folders, under the home folder, in the order they are written: Polycarp Browser, Helium, Chrome, Chromium.
     public static let browserFolders = [
+        "Library/Application Support/Polycarp/Browser",
         "Library/Application Support/net.imput.helium",
         "Library/Application Support/Google/Chrome",
         "Library/Application Support/Chromium",
@@ -312,6 +313,7 @@ public enum NewTabHost {
     /// The browsers' names for a log line, by folder.
     public static func browserName(_ folder: String) -> String {
         switch (folder as NSString).lastPathComponent {
+        case "Browser": "Polycarp Browser"
         case "net.imput.helium": "Helium"
         case "Chrome": "Chrome"
         default: "Chromium"
@@ -328,7 +330,7 @@ public enum NewTabHost {
     }
 
     /// Where the manifest goes: `<browser folder>/NativeMessagingHosts/com.polycarp.newtab.json` for each browser folder in
-    /// `existing` (absolute paths), Helium first. A browser whose own folder isn't there is left alone.
+    /// `existing` (absolute paths), in `browserFolders`' order. A browser whose own folder isn't there is left alone.
     public static func targets(home: URL, existing: Set<String>) -> [URL] {
         browserFolders.map { home.appendingPathComponent($0, isDirectory: true) }
             .filter { existing.contains($0.path) }
@@ -342,7 +344,7 @@ public enum NewTabHost {
         public var failed: [String] = []
 
         public var line: String {
-            if written.isEmpty && current.isEmpty && failed.isEmpty { return "newtab host: no Helium, Chrome or Chromium folder, nothing registered" }
+            if written.isEmpty && current.isEmpty && failed.isEmpty { return "newtab host: no Polycarp Browser, Helium, Chrome or Chromium folder, nothing registered" }
             var parts: [String] = []
             if !written.isEmpty { parts.append("written for \(written.joined(separator: ", "))") }
             if !current.isEmpty { parts.append("already current for \(current.joined(separator: ", "))") }

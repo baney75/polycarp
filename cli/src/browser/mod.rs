@@ -155,7 +155,7 @@ pub fn run(args: &[OsString], cache: Option<PathBuf>, app: Option<PathBuf>) -> O
     };
     let place = Place {
         cache: cache.join("browser"),
-        parts: resources.join("browser"),
+        parts: resources.join("make-browser"),
     };
     Some(match dry_run(&System, &place, release::this_arch()) {
         Ok(line) => {

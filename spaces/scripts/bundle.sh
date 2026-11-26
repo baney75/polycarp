@@ -90,6 +90,9 @@ DIRTY=0
 # differs from the one the browser runs, so an app update updates it too.
 sh extension/scripts/stage.sh "$APP/Contents/Resources/extension" "$FULL_VERSION"
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@FULL_VERSION@/$FULL_VERSION/g" -e "s/@CHANNEL@/$CHANNEL/g" -e "s/@BUILD_NUMBER@/$BUILD_NUMBER/g" -e "s/@COMMIT@/$COMMIT/g" -e "s/@COMMIT_DATE@/$COMMIT_DATE/g" -e "s/@DIRTY@/$DIRTY/g" Resources/Info.plist > "$APP/Contents/Info.plist"
+# What `polycarp browser` builds Polycarp Browser from on the person's own Mac (browser/AGENTS.md). It holds no Helium code.
+PARTS=(); [ "${BANEYSPACES_ARM64_ONLY:-}" != 1 ] || PARTS=(--arm64-only)
+POLYCARP_PARTS_BUILD="$PWD/build/browser-parts" ../browser/scripts/build-parts.sh "$APP/Contents/Resources/make-browser" ${PARTS[@]+"${PARTS[@]}"}
 # A stable local identity keeps the Accessibility permission across rebuilds; ad-hoc is the fallback.
 # Ad-hoc is for local builds and CI checks only and never ships as an update: install-app.sh refuses
 # it over an installed copy, and release.sh and install.sh require scripts/release-requirement.txt.
@@ -97,6 +100,7 @@ if [ "${BANEYSPACES_ADHOC:-}" != 1 ] && IDENT=$(scripts/signing-identity.sh 2>/d
   # Inside out: the commands, then the app that holds them.
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
+  codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID.browser-launcher" "$APP/Contents/Resources/make-browser/launcher"
   codesign --force --sign "${IDENT%%$'\t'*}" --keychain "${IDENT#*$'\t'}" --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 else
   # A channel build in CI never falls back to ad-hoc: its identity was named, so failing to use it is the error.
@@ -105,6 +109,7 @@ else
   echo "$ADHOC_NOTE" >&2
   codesign --force --sign - --identifier "$BUNDLE_ID.cli" "$APP/Contents/Resources/bin/$CLI_NAME"
   codesign --force --sign - --identifier "$BUNDLE_ID.command" "$APP/Contents/Resources/bin/polycarp"
+  codesign --force --sign - --identifier "$BUNDLE_ID.browser-launcher" "$APP/Contents/Resources/make-browser/launcher"
   codesign --force --sign - --identifier "$BUNDLE_ID" --entitlements Resources/Polycarp.entitlements "$APP"
 fi
 codesign --verify --deep --strict "$APP"

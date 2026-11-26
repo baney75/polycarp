@@ -52,6 +52,20 @@ try {
   await web.goto(`http://127.0.0.1:${server.address().port}/`);
   await web.waitForSelector('polycarp-b', { timeout: 8000 }).catch(() => {});
   ok(await web.evaluate(() => document.querySelectorAll('polycarp-b').length > 5), 'content script restyles a web page');
+  // A browser that loads the extension from a folder at every start says "install" each time; Polycarp Browser marks its copy.
+  const welcomes = () => ctx.pages().filter((p) => p.url().includes('welcome.html')).length;
+  const installed = () => sw.evaluate(async () => { chrome.runtime.onInstalled.dispatch({ reason: 'install' }); await new Promise((r) => setTimeout(r, 3000)); });
+  const first = welcomes();
+  ok(first === 1, `the first install opens the welcome page (${first})`);
+  await installed();
+  ok(welcomes() === first, 'the same install at the next start opens nothing');
+  ok(await sw.evaluate(() => builtIn()) === false, 'a copy without the mark is not built in');
+  fs.writeFileSync(path.join(dir, 'builtin.txt'), 'Polycarp Browser\n');
+  ok(await sw.evaluate(() => builtIn()) === true, 'a copy with the mark is built in');
+  await sw.evaluate(() => chrome.storage.local.remove('polycarp.seenVersion'));
+  await installed();
+  ok(welcomes() === first, 'built in, not even the first install opens the welcome page');
+  fs.rmSync(path.join(dir, 'builtin.txt'));
   // An app update changes only version_name: the popup still learns what is new, and the welcome page and backups
   // name the full version (review finding second-F8).
   const seenAtInstall = await sw.evaluate(() => chrome.storage.local.get('polycarp.seenVersion').then((g) => g['polycarp.seenVersion']));

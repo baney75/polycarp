@@ -26,6 +26,11 @@ pub const FIELDS: &[(&str, bool, &str)] = &[
     ("bar.clockFormat", true, "how the time is written"),
     ("bar.hourNames", true, "how the hour is written"),
     (
+        "bar.tray",
+        true,
+        "whether apps' status items fold into a drawer",
+    ),
+    (
         "desktop.scene",
         true,
         "a drawn scene; an image: names a file of the person's and is dropped",

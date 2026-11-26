@@ -246,11 +246,12 @@ final class NewTabHostTests: XCTestCase {
         XCTAssertEqual(Set(m.keys), ["name", "description", "path", "type", "allowed_origins"])
     }
 
-    func testTargetsAreOnlyFoldersThatExistHeliumFirst() {
+    func testTargetsAreOnlyFoldersThatExistPolycarpBrowserFirst() {
         let home = URL(fileURLWithPath: "/Users/someone", isDirectory: true)
         let support = "/Users/someone/Library/Application Support"
-        let all: Set<String> = ["\(support)/Chromium", "\(support)/Google/Chrome", "\(support)/net.imput.helium"]
+        let all: Set<String> = ["\(support)/Chromium", "\(support)/Google/Chrome", "\(support)/net.imput.helium", "\(support)/Polycarp/Browser"]
         XCTAssertEqual(NewTabHost.targets(home: home, existing: all).map(\.path), [
+            "\(support)/Polycarp/Browser/NativeMessagingHosts/com.polycarp.newtab.json",
             "\(support)/net.imput.helium/NativeMessagingHosts/com.polycarp.newtab.json",
             "\(support)/Google/Chrome/NativeMessagingHosts/com.polycarp.newtab.json",
             "\(support)/Chromium/NativeMessagingHosts/com.polycarp.newtab.json",

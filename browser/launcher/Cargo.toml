@@ -1,0 +1,19 @@
+[package]
+name = "polycarp-browser-launcher"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+description = "Starts Polycarp Browser with Polycarp's built-in pages"
+publish = false
+
+[[bin]]
+name = "polycarp-browser-launcher"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "z"
+lto = true
+panic = "abort"
+strip = true
+
+[workspace]
