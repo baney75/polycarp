@@ -138,3 +138,8 @@ main > .compose { padding: var(--s5) var(--s6); }
 .later .pick { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-top: var(--s4); font-size: var(--t-sm); }
 .later .pick input { font: inherit; padding: var(--s1) var(--s2); border: var(--bw) solid var(--line); border-radius: var(--r-md); background: var(--bg); color: var(--ink); }
 .later .err { margin: var(--s2) 0 0; color: var(--warn); min-height: 1lh; }
+
+/* Leaving a list: the exact request is shown before anything is sent. */
+.thread .leave { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin: 0 0 var(--s3); padding: var(--s1) var(--s1) var(--s1) var(--s3); border: var(--bw) solid var(--line); border-radius: var(--r-md); color: var(--muted); font-size: var(--t-sm); }
+.leave pre { margin: 0 0 var(--s3); padding: var(--s3); border-radius: var(--r-md); background: var(--bg); color: var(--ink); font: var(--t-xs)/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+dialog.leave { width: min(560px, calc(100vw - 32px)); }

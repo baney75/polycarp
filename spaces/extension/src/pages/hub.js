@@ -6,6 +6,7 @@
   const A = globalThis.PolycarpHubAdapter;
   const O = globalThis.PolycarpHubOrganize;
   const L = globalThis.PolycarpHubLater;
+  const U = globalThis.PolycarpHubUnsubscribe;
   const I = globalThis.PolycarpIcons;
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -317,6 +318,8 @@
     act("mail", t.unread ? "Mark read" : "Mark unread", "U", () => unread(t));
     head.append(h, acts);
     wrap.append(back, head);
+    const leave = leaveBar(t, messages);
+    if (leave) wrap.append(leave);
     for (const m of messages) {
       const sec = el("section", "msg");
       const mh = el("div", "mh");
@@ -530,6 +533,66 @@
     await refresh();
   }
 
+  // ---------- Leaving a list ----------
+
+  // The newest message from the list says how to leave it. One-click requests go once per list and account; the page
+  // remembers. Each account's address is on the list separately, so leaving with one says nothing about another.
+  const listOf = (messages) => { const m = messages.filter((x) => x.folder !== "sent").at(-1); const p = m && U.plan(m); return p && { m, p }; };
+  const leftKey = (m) => "unsub:" + m.account + ":" + (m.headers.listId || m.from.addr).toLowerCase();
+  const hostOf = (u) => new URL(u).hostname;
+  function leaveBar(t, messages) {
+    const got = listOf(messages);
+    if (!got) return null;
+    const bar = el("div", "leave");
+    bar.append(el("span", "", "From a mailing list."));
+    const b = el("button", "btn quiet", "Unsubscribe");
+    b.type = "button";
+    b.addEventListener("click", () => openLeave(t, got));
+    bar.append(b);
+    S.getMeta(leftKey(got.m)).then((r) => {
+      if (!r || !b.isConnected) return;
+      b.disabled = true;
+      b.textContent = "Unsubscribe request sent " + when(r.at);
+    });
+    return bar;
+  }
+  let leaving = null;
+  function openLeave(t, got) {
+    if (!t || !got) return;
+    const { p } = got;
+    leaving = { t, got };
+    const req = p.kind === "post" ? "POST " + p.url + "\n\n" + p.body
+      : p.kind === "mail" ? "To: " + p.to + "\nSubject: " + p.subject + (p.body ? "\n\n" + p.body : "") : p.url;
+    $("leaveWhat").textContent = p.kind === "post"
+      ? "The list asks for this one request. Polycarp sends it for you, with no cookies, sign-in or referrer. The mail is signed by " + p.signer + "."
+      : p.kind === "mail" ? "The list asks for an email. It opens as a draft, and you send it." : "The list asks you to leave on its own page, which opens in a new tab.";
+    $("leaveReq").textContent = req;
+    $("leaveGo").textContent = p.kind === "post" ? "Send the request" : p.kind === "mail" ? "Write it" : "Open the page";
+    $("leave").showModal();
+    $("leaveGo").focus();
+  }
+  async function leave() {
+    const f = leaving;
+    leaving = null;
+    $("leave").close();
+    if (!f) return;
+    const { t, got: { m, p } } = f;
+    if (p.kind === "page") return void window.open(p.url, "_blank", "noopener,noreferrer");
+    if (p.kind === "mail") {
+      closeThread(true);
+      document.body.classList.add("reading");
+      return compose.open({ account: t.account, to: [{ addr: p.to }], subject: p.subject, text: p.body }, $("pane"));
+    }
+    const a = st.accounts.get(t.account);
+    try {
+      const r = a && a.adapter && a.adapter.unsubscribe ? await a.adapter.unsubscribe(p) : await U.send(p);
+      if (!r.ok) return toast(hostOf(p.url) + " answered " + r.status + ", so you may still be on the list.");
+      await S.setMeta(leftKey(m), { at: Date.now(), url: p.url });
+      toast("Asked " + hostOf(p.url) + " to take you off the list. Mail already on its way can still arrive.");
+      if (st.open === t.id) { const g = await S.thread(t.id); if (g) paint(g); }
+    } catch (e) { toast("Couldn't reach " + hostOf(p.url) + ": " + e.message); }
+  }
+
   // ---------- Later: snooze, and back if no one replies ----------
 
   const clearLater = (messages) => S.update(messages.map((m) => m.id), { snoozeUntil: 0, remindAt: 0 });
@@ -688,6 +751,12 @@
       { label: "Mark read or unread", key: "U", run: () => { const t = current(); if (t) unread(t); } },
       { label: "Snooze", key: "H", run: () => openLater("snooze", current()) },
       { label: "Remind me if no reply", key: "W", run: () => openLater("remind", current()) },
+      { label: "Unsubscribe from this list", key: "", run: async () => {
+        const t = current();
+        const g = t && (await S.thread(t.id));
+        const l = g && listOf(g.messages);
+        if (l) openLeave(t, l); else toast(t ? "This conversation doesn't say how to leave a list." : "Pick a conversation from a list first.");
+      } },
       { label: "Undo", key: "Z", run: undo }
     ];
     if (!st.accounts.has(MADE_UP)) list.push({ label: "Try it with made-up mail", key: "", run: tryMadeUp });
@@ -761,7 +830,7 @@
   let gPending = 0;
   function onKey(e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCmd(); return; }
-    if ($("cmd").open || $("rules").open || $("later").open || e.metaKey || e.ctrlKey || e.altKey) return;
+    if ($("cmd").open || $("rules").open || $("later").open || $("leave").open || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
     const k = e.key;
     if (gPending) {
@@ -841,6 +910,9 @@
     $("rulesText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveRules(e); });
     $("rulesCancel").addEventListener("click", () => $("rules").close());
     $("laterForm").addEventListener("submit", setLater);
+    $("leaveForm").addEventListener("submit", (e) => { e.preventDefault(); leave(); });
+    $("leaveCancel").addEventListener("click", () => $("leave").close());
+    $("leave").addEventListener("close", () => { leaving = null; });
     $("laterCancel").addEventListener("click", () => $("later").close());
     $("later").addEventListener("close", () => { laterFor = null; });
     $("later").addEventListener("keydown", (e) => {
