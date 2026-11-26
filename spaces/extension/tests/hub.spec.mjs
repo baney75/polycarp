@@ -135,8 +135,9 @@ try {
   const rowBefore = await p.evaluate(() => document.querySelector('#rows .row.sel')?.dataset.thread);
   await p.keyboard.press('Meta+k');
   await p.fill('#cmdIn', away.subject);
-  await p.waitForFunction((s) => Array.from(document.querySelectorAll('#cmdList li span')).some((x) => x.textContent.endsWith(s)), away.subject);
-  const at = await p.$$eval('#cmdList li span:first-child', (s, want) => s.findIndex((x) => x.textContent.endsWith(want)), away.subject);
+  // The conversation's own row, "Name: subject", not the line that lists every match.
+  await p.waitForFunction((s) => Array.from(document.querySelectorAll('#cmdList li span')).some((x) => x.textContent.endsWith(': ' + s)), away.subject);
+  const at = await p.$$eval('#cmdList li span:first-child', (s, want) => s.findIndex((x) => x.textContent.endsWith(': ' + want)), away.subject);
   await p.click(`#c-${at}`);
   await p.waitForFunction((s) => document.getElementById('subject')?.textContent === s, away.subject);
   await p.keyboard.press('s');
@@ -146,6 +147,20 @@ try {
   const rowFlag = await flagged(rowBefore);
   check(awayFlag && !rowFlag, 'S flags the conversation opened from search, not the highlighted row', { awayFlag, rowFlag, rowBefore });
   await p.keyboard.press('Escape');
+
+  // Search: / opens the bar, matches come from the index over every message, Return shows them all as a list.
+  await p.keyboard.press('/');
+  await p.waitForSelector('#cmd[open]');
+  await p.fill('#cmdIn', 'from:almanac');
+  await p.waitForFunction(() => /every match/.test(document.querySelector('#cmdList li span')?.textContent || ''));
+  const sopts = await p.$$eval('#cmdList li span:first-child', (s) => s.map((x) => x.textContent));
+  check(sopts.length > 1 && sopts.slice(1).every((s) => s.startsWith('Garden Almanac:')), 'the bar shows matching mail under the search line', sopts);
+  await p.keyboard.press('Enter');
+  await p.waitForFunction(() => document.getElementById('where').textContent === 'Search: from:almanac');
+  const found = await rows(p);
+  check(found.length > 1 && found.every((r) => /Garden Almanac/.test(r.label)), 'Return lists every match, bundled mail included', found.length);
+  await p.keyboard.press('Escape');
+  await p.waitForFunction(() => document.getElementById('where').textContent === 'Inbox');
 
   // HTML-only mail: shown as text, nothing in it runs or loads.
   await p.evaluate(async () => {

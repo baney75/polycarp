@@ -63,6 +63,8 @@
       put: (s, list) => run(s, "readwrite", (st) => { for (const v of list) st.put(v); }),
       del: (s, keys) => run(s, "readwrite", (st) => { for (const k of keys) st.delete(k); }),
       byIndex: (s, i, v) => run(s, "readonly", (st) => st.index(i).getAll(v)).then((v2) => v2 || []),
+      // Up to `limit` records after key `after` ("" for the start), in key order.
+      after: (s, after, limit) => run(s, "readonly", (st) => st.getAll(after ? IDBKeyRange.lowerBound(after, true) : null, limit)).then((v) => v || []),
       // Newest first from just below `upper` down to `lower` on a compound index, at most `limit`.
       page: (s, i, lower, upper, limit) => run(s, "readonly", (st, set) => {
         const out = [];
@@ -91,6 +93,7 @@
       put: async (s, list) => { for (const v of list) stores[s].set(keyOf(s, v), copy(v)); },
       del: async (s, keys) => { for (const k of keys) stores[s].delete(k); },
       byIndex: async (s, i, val) => Array.from(stores[s].values()).filter((v) => v[i] === val).map(copy),
+      after: async (s, after, limit) => Array.from(stores[s].keys()).filter((k) => !after || k > after).sort(cmp).slice(0, limit).map((k) => copy(stores[s].get(k))),
       page: async (s, i, lower, upper, limit) => {
         const fields = i === "folderDate" ? ["folder", "lastDate", "id"] : i === "sentDate" ? ["sentAt", "id"] : [i];
         return Array.from(stores[s].values())
@@ -258,6 +261,7 @@
   }
 
   const message = (id) => backend().get("messages", id);
+  const summary = (id) => backend().get("threads", id);
 
   async function thread(id) {
     const summary = await backend().get("threads", id);
@@ -291,6 +295,9 @@
   }
 
   const allMessages = () => backend().all("messages");
+  // A page of messages in id order after `after` (pass the last id of the page before), so a reader of every message
+  // never holds them all at once.
+  const messagesAfter = (after, limit) => backend().after("messages", after || "", limit);
   const allThreads = () => backend().all("threads");
 
   // ---------- Drafts ----------
@@ -346,7 +353,7 @@
   globalThis.PolycarpHubStore = {
     DB_NAME, useMemoryStore, open: () => backend().open().then(() => true), onChange,
     putAccount, accounts, removeAccount,
-    upsert, remove, update, restore, message, thread, threads, after, allMessages, allThreads,
+    upsert, remove, update, restore, message, summary, thread, threads, after, allMessages, messagesAfter, allThreads,
     saveDraft, draft, drafts, setSendAt, deleteDraft,
     getMeta, setMeta, cursor, setCursor
   };
