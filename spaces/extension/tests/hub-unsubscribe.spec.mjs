@@ -116,6 +116,25 @@ try {
   await p.keyboard.press('Enter');
   check(/doesn't say how to leave/.test(await until(async () => { const t = await p.textContent('#toastText'); return /leave/.test(t) && t; })) && !(await p.isVisible('#leave')), 'the command bar says it has no way to leave', await p.textContent('#toastText'));
   check(web.length === 0, 'still nothing went to the network', web);
+
+  // Unsubscribing while a reply is open keeps the reply where it was.
+  await p.keyboard.press('Escape');
+  await deliver(p, { remoteId: 'weekly-1', messageId: '<weekly-1@x>', from: { name: 'Weekly', addr: 'news@almanac.example' }, subject: 'Weekly notes', headers: { listId: 'Weekly <weekly.almanac.example>', listUnsubscribe: '<https://go.almanac.example/leave?w=1>', listUnsubscribePost: 'List-Unsubscribe=One-Click', authResults: 'mx; dkim=pass header.d=almanac.example' } });
+  await p.keyboard.press('Meta+k');
+  await p.fill('#cmdIn', 'Weekly notes');
+  await p.waitForFunction(() => [...document.querySelectorAll('#cmdList li span')].some((s) => s.textContent === 'Weekly: Weekly notes'));
+  const at3 = await p.$$eval('#cmdList li span:first-child', (s) => s.findIndex((x) => x.textContent === 'Weekly: Weekly notes'));
+  await p.click(`#c-${at3}`);
+  await p.waitForFunction(() => document.getElementById('subject')?.textContent === 'Weekly notes');
+  await p.keyboard.press('r');
+  await p.waitForSelector('#pane form.compose');
+  await p.fill('#pane form.compose [name=text]', 'Half a reply.');
+  await p.click('#pane .leave button');
+  await p.waitForSelector('#leave[open]');
+  await p.click('#leaveGo');
+  check(!!(await until(() => p.evaluate(() => { const b = document.querySelector('#pane .leave button'); return b && b.disabled && /^Unsubscribe request sent/.test(b.textContent); }))), 'the button says it went', null);
+  const kept = await p.evaluate(() => { const f = document.querySelector('#pane form.compose'); return f && f.isConnected && f.querySelector('[name=text]').value; });
+  check(kept === 'Half a reply.', 'a reply being written stays open with its text', kept);
   check(errors.length === 0, 'no page errors', errors);
 } catch (e) {
   check(false, 'the run finished', String(e && e.stack || e));

@@ -40,9 +40,12 @@
     try { to = decodeURIComponent(addr); } catch (e) { return null; }
     if (!/^[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+$/.test(to)) return null;
     const q = new URLSearchParams(query || "");
-    return { to: to.toLowerCase(), subject: (q.get("subject") || "unsubscribe").slice(0, 200), body: (q.get("body") || "").slice(0, 2000) };
+    // Only the domain is case-free: a list may put a case-sensitive token before the @.
+    const at = to.lastIndexOf("@");
+    return { to: to.slice(0, at) + to.slice(at).toLowerCase(), subject: (q.get("subject") || "unsubscribe").slice(0, 200), body: (q.get("body") || "").slice(0, 2000) };
   }
 
+  const under = (host, d) => host === d || host.endsWith("." + d);
   // The DKIM domain that passed, when it is the sender's own domain or one above it.
   function signer(authResults, fromAddr) {
     const domain = String(fromAddr || "").split("@")[1];
@@ -50,7 +53,7 @@
     for (const part of String(authResults || "").toLowerCase().split(";")) {
       if (!/^\s*dkim=pass\b/.test(part)) continue;
       const d = (/header\.d=([a-z0-9.-]+)/.exec(part) || [])[1];
-      if (d && d.includes(".") && (domain.toLowerCase() === d || domain.toLowerCase().endsWith("." + d))) return d;
+      if (d && d.includes(".") && under(domain.toLowerCase(), d)) return d;
     }
     return "";
   }
@@ -67,7 +70,9 @@
     const pages = list.map(https).filter(Boolean);
     const oneClick = String(h.listUnsubscribePost || "").trim().toLowerCase() === BODY.toLowerCase();
     const d = signer(h.authResults, m.from && m.from.addr);
-    if (pages.length && oneClick && d) return { kind: "post", url: pages[0].href, body: BODY, signer: d };
+    // A pass can't show the signature covered List-Unsubscribe (RFC 8058 asks it to), and anyone can add an unsigned
+    // header to a signed mail. So the signer vouches only for an address on its own domain.
+    if (pages.length && oneClick && d && under(pages[0].hostname, d)) return { kind: "post", url: pages[0].href, body: BODY, signer: d };
     const mail = list.map(mailto).find(Boolean);
     if (mail) return Object.assign({ kind: "mail" }, mail);
     if (pages.length) return { kind: "page", url: pages[0].href };

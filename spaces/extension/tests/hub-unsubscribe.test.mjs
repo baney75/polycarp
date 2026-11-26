@@ -19,7 +19,11 @@ test("a signed list with List-Unsubscribe-Post gets one click to its https addre
   const p = U.plan(mail({ listUnsubscribe: "<mailto:leave@almanac.example>, <https://almanac.example/u?id=1>" }));
   assert.deepEqual(p, { kind: "post", url: "https://almanac.example/u?id=1", body: "List-Unsubscribe=One-Click", signer: "almanac.example" });
   const sub = U.plan(mail({ listUnsubscribe: "<https://lists.esp.example/x>", authResults: "mx; dkim=pass header.d=almanac.example" }, "news@mail.almanac.example"));
-  assert.equal(sub.kind, "post", "a sender under the signing domain is aligned; the address may be another host");
+  assert.equal(sub.kind, "page", "a signature for almanac.example doesn't vouch for an address on another host");
+  const esp = U.plan(mail({ listUnsubscribe: "<mailto:Unsub-Xk9QaB2@Lists.Almanac.Example>, <https://lists.esp.example/x>" }));
+  assert.deepEqual(esp, { kind: "mail", to: "Unsub-Xk9QaB2@lists.almanac.example", subject: "unsubscribe", body: "" }, "another host falls back to email, keeping the token's case");
+  assert.equal(U.plan(mail({ listUnsubscribe: "<https://go.almanac.example/u>" })).kind, "post", "an address under the signing domain gets one click");
+  assert.equal(U.plan(mail({ listUnsubscribe: "<https://evilalmanac.example/u>" })).kind, "page", "a name that only ends in the signer's doesn't count");
   assert.equal(U.plan(mail({ listUnsubscribe: "<https://almanac.example/u>", listUnsubscribePost: "  list-unsubscribe=one-click " })).kind, "post");
 });
 
