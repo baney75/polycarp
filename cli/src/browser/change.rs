@@ -196,13 +196,15 @@ pub fn theme_icon_path(home: &Path) -> PathBuf {
 
 /// That icon, when it is a whole `.icns`: its header, then a length that is the file's, at most 8 MB.
 pub fn theme_icon(home: &Path) -> Option<Vec<u8>> {
+    const MOST: usize = 8 << 20;
     let file = theme_icon_path(home);
-    if fs::metadata(&file).ok()?.len() > 8 << 20 {
+    let meta = fs::metadata(&file).ok()?;
+    if !meta.is_file() || meta.len() > MOST as u64 {
         return None;
     }
     let bytes = fs::read(file).ok()?;
     let length = u32::from_be_bytes(bytes.get(4..8)?.try_into().ok()?) as usize;
-    (bytes.starts_with(b"icns") && length == bytes.len()).then_some(bytes)
+    (bytes.starts_with(b"icns") && length == bytes.len() && length <= MOST).then_some(bytes)
 }
 
 /// Puts the theme's icon where `apply` put the shipped one, so the build is signed with it. Without one, or one that is
@@ -474,6 +476,14 @@ mod tests {
             assert!(!put_theme_icon(&app, &home, &changes).unwrap());
             assert_eq!(fs::read(&main).unwrap(), shipped);
         }
+        // Whole but over 8 MB.
+        let mut big = vec![0u8; (8 << 20) + 16];
+        big[..4].copy_from_slice(b"icns");
+        let length = (big.len() as u32).to_be_bytes();
+        big[4..8].copy_from_slice(&length);
+        fs::write(&file, &big).unwrap();
+        assert!(!put_theme_icon(&app, &home, &changes).unwrap());
+        assert_eq!(fs::read(&main).unwrap(), shipped);
         let mut whole = b"icns\0\0\0\0ic07 a png".to_vec();
         let length = (whole.len() as u32).to_be_bytes();
         whole[4..8].copy_from_slice(&length);
