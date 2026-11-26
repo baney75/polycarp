@@ -232,7 +232,7 @@ pub fn clone(
     pages::first_run(&place.data).map_err(refuse(CHECK, "making the data folder"))?;
     let part = place.data.join(".import");
     let copied = clear(&part)
-        .and_then(|_| copy(&profile.folder, &part))
+        .and_then(|_| copy(&profile.folder, &part, true))
         .map_err(refuse(CHECK, "copying the profile"));
     // Opened while it was copied, the copy may be half of two states.
     let done = copied
@@ -247,12 +247,15 @@ pub fn clone(
 pub fn place_profile(place: &Place, part: &Path, name: &str) -> Result<String, Refused> {
     let dir = target(&place.data);
     let to = place.data.join(&dir);
+    // The folder first: one that is there but not listed is harmless, a listed one that isn't there is not.
     let put = || -> io::Result<()> {
-        add_to_list(&place.data, &dir, name)?;
         if dir == "Default" {
             clear(&to)?;
         }
-        fs::rename(part, &to)
+        fs::rename(part, &to)?;
+        add_to_list(&place.data, &dir, name).inspect_err(|_| {
+            let _ = clear(&to);
+        })
     };
     put().map_err(refuse(CHECK, "placing the copy"))?;
     Ok(dir)
@@ -279,25 +282,41 @@ fn add_to_list(data: &Path, dir: &str, name: &str) -> io::Result<()> {
         dir.into(),
         json!({ "name": name, "is_using_default_name": false }),
     );
+    // The browser names the folder of the next profile it makes from this count, and never looks whether it is taken.
+    if let Some(n) = dir
+        .strip_prefix("Profile ")
+        .and_then(|n| n.parse::<u64>().ok())
+    {
+        let made = profile_count(profile).max(n + 1);
+        if let Some(p) = profile.as_object_mut() {
+            p.insert("profiles_created".into(), made.into());
+        }
+    }
     let part = data.join("Local State.part");
     fs::write(&part, serde_json::to_vec(&state)?)?;
     fs::rename(part, file)
 }
 
-/// Plain files and folders only.
-fn copy(from: &Path, to: &Path) -> io::Result<()> {
+fn profile_count(profile: &Value) -> u64 {
+    profile["profiles_created"].as_u64().unwrap_or(1)
+}
+
+/// Plain files and folders only. What is left out is left out only at the top: an extension may hold a folder named `Cache`.
+fn copy(from: &Path, to: &Path, top: bool) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     fs::DirBuilder::new().mode(0o700).create(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
-        if LEFT_OUT.iter().any(|l| *l == name) || name.to_string_lossy().starts_with("Singleton") {
+        let spare =
+            LEFT_OUT.iter().any(|l| *l == name) || name.to_string_lossy().starts_with("Singleton");
+        if top && spare {
             continue;
         }
         let kind = entry.file_type()?;
         let to = to.join(&name);
         if kind.is_dir() {
-            copy(&entry.path(), &to)?;
+            copy(&entry.path(), &to, false)?;
         } else if kind.is_file() {
             // A clone, where the disk can make one.
             fs::copy(entry.path(), to)?;
@@ -325,6 +344,8 @@ mod tests {
             fs::create_dir_all(data.join(dir).join("Extensions/abc")).unwrap();
             fs::write(data.join(dir).join("Cache/page"), "x").unwrap();
             fs::write(data.join(dir).join("Extensions/abc/manifest.json"), "{}").unwrap();
+            fs::create_dir_all(data.join(dir).join("Extensions/abc/Cache")).unwrap();
+            fs::write(data.join(dir).join("Extensions/abc/Cache/x"), "kept").unwrap();
             fs::write(data.join(dir).join("Cookies"), format!("cookies of {dir}")).unwrap();
         }
         symlink("/etc/hosts", data.join("Default/out")).unwrap();
@@ -401,11 +422,14 @@ mod tests {
             .join("Default/Extensions/abc/manifest.json")
             .exists());
         assert!(!place.data.join("Default/Cache").exists());
+        assert_eq!(read("Default/Extensions/abc/Cache/x"), "kept");
         assert!(fs::symlink_metadata(place.data.join("Default/out")).is_err());
         assert!(!place.data.join(".import").exists());
         let state: Value = serde_json::from_str(&read("Local State")).unwrap();
         assert_eq!(state["profile"]["info_cache"]["Default"]["name"], "Home");
         assert!(state["profile"]["info_cache"]["Profile 1"]["name"].is_string());
+        // The next profile made in the browser goes to Profile 2, not into the copy.
+        assert_eq!(state["profile"]["profiles_created"], 2);
         assert_eq!(
             state["helium"]["browser"]["default_browser_infobar_rejected"],
             true
