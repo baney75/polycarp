@@ -15,7 +15,10 @@
   //   code         a List-Id, sent by a notifications or no-reply address, with a "[project]" subject
   //   newsletters  a List-Id or List-Unsubscribe, or Precedence bulk or list
   //   receipts     Auto-Submitted auto-generated (a vacation reply, auto-replied, is a person's)
-  function bundleOf(t) {
+  // `decide` is the person's own rules (rules.js): when it names a bundle, or "" for people, that wins.
+  function bundleOf(t, decide) {
+    const own = typeof decide === "function" ? decide(t) : undefined;
+    if (own !== undefined) return own;
     if (t.replied) return "";
     const h = t.headers || {};
     if (/text\/calendar/.test(h.contentType)) return "calendar";
@@ -31,11 +34,11 @@
 
   // Groups for the inbox: unread mail from people first ("Needs you"), then the rest by day, each day closing with one
   // line per bundle that got mail that day. `fold` false lists bundled threads in place (a folder or a bundle's own view).
-  function groups(threads, now, fold) {
+  function groups(threads, now, fold, decide) {
     const today = dayStart(now);
     const spans = [["Today", today], ["Yesterday", today - DAY], ["This week", today - 6 * DAY], ["Earlier", -Infinity]];
     const out = [];
-    const needs = fold ? threads.filter((t) => !bundleOf(t) && t.unread > 0) : [];
+    const needs = fold ? threads.filter((t) => !bundleOf(t, decide) && t.unread > 0) : [];
     if (needs.length) out.push({ name: "Needs you", threads: needs, bundles: [] });
     const rest = threads.filter((t) => !needs.includes(t));
     let i = 0;
@@ -44,7 +47,7 @@
       const counts = new Map();
       while (i < rest.length && rest[i].lastDate >= from) {
         const t = rest[i++];
-        const b = fold ? bundleOf(t) : "";
+        const b = fold ? bundleOf(t, decide) : "";
         if (!b) { g.threads.push(t); continue; }
         const c = counts.get(b) || { id: b, name: BUNDLES.find((x) => x.id === b).name, count: 0, unread: 0 };
         c.count++;

@@ -34,6 +34,16 @@
   <form method="dialog" role="search"><label class="sr" for="cmdIn">Search mail or type a command</label><input id="cmdIn" type="text" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="cmdList" aria-autocomplete="list" placeholder="Search mail or type a command"></form>
   <ul id="cmdList" role="listbox" aria-label="Results"></ul>
 </dialog>
+<dialog class="rules" id="rules" aria-labelledby="rulesTitle">
+  <form method="dialog" id="rulesForm">
+    <h2 id="rulesTitle">Rules</h2>
+    <p id="rulesHelp">One rule a line: a search, then what to do. <code>list:almanac then bundle newsletters</code>, <code>from:boss@work.example then flag</code>, <code>from:shop.example then mark read, archive</code>. Bundles change only this page; mark read, flag and archive act on mail that arrives after you save. Lines starting with # are notes.</p>
+    <label class="sr" for="rulesText">Rules</label>
+    <textarea id="rulesText" rows="10" spellcheck="false" aria-describedby="rulesHelp rulesErr"></textarea>
+    <ul id="rulesErr" aria-live="polite"></ul>
+    <div class="cbar"><button class="btn primary" id="rulesSave" type="submit">Save rules</button><button class="btn quiet" id="rulesCancel" type="button">Cancel</button></div>
+  </form>
+</dialog>
 <div class="toast" id="toast" role="status" hidden><span id="toastText"></span><button class="btn quiet" id="toastUndo" type="button">Undo <kbd>Z</kbd></button></div>
 <script src="../shared/core.js"></script>
 <script src="../shared/icons.js"></script>
@@ -45,6 +55,7 @@
 <script src="../hub/fake.js"></script>
 <script src="../hub/organize.js"></script>
 <script src="../hub/search.js"></script>
+<script src="../hub/rules.js"></script>
 <script src="../hub/outbox.js"></script>
 <script src="hub-compose.js"></script>
 <script src="hub.js"></script>
