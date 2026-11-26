@@ -2,6 +2,7 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 import "ui"
+import "lib/Bar.js" as Bar
 
 // One place on the bar. `show` picks what is in it: the mark, the workspaces and the agents together, or one part alone.
 // Everything the parts share is in Service.qml.
@@ -16,6 +17,17 @@ BarWidget {
   implicitHeight: parts.implicitHeight
 
   readonly property bool still: service ? service.still : false
+  // One tray on the bar: where Omarchy's own is placed, the tray part steps aside. 1 when it is, 0 when not, -1 before the
+  // first read. Read, not bound: the bar hands out a new copy of its layout when a widget's click targets change, as the
+  // tray part's do when it loads, and a binding would be asked again while it is still giving its answer.
+  property int omarchyTray: -1
+  function readLayout() { omarchyTray = Bar.has(bar ? bar.layoutConfig : null, "omarchy.tray") ? 1 : 0 }
+  Component.onCompleted: readLayout()
+  Connections {
+    target: root.bar
+    // A place the bar is taking down can still hear this, after its id is gone.
+    function onLayoutConfigChanged() { if (root) Qt.callLater(root.readLayout) }
+  }
 
   function ms(duration) {
     return service ? service.ms(duration) : 0
@@ -90,7 +102,7 @@ BarWidget {
     }
 
     Loader {
-      active: root.service !== null && root.has("tray")
+      active: root.service !== null && root.has("tray") && root.omarchyTray === 0
       visible: active && item !== null && item.any
       sourceComponent: TrayPart { host: root }
     }
