@@ -149,9 +149,13 @@ impl Fake {
         path
     }
 
-    /// A self-signed code signing certificate in a keychain of its own. Only for CI: `security` may add the keychain
-    /// to the person's list.
+    /// A self-signed code signing certificate in a keychain of its own, put on the user's keychain list. Only for CI.
     pub fn throwaway_identity(&self) -> (String, PathBuf) {
+        assert_eq!(
+            std::env::var("CI").as_deref(),
+            Ok("true"),
+            "only CI makes a keychain"
+        );
         let name = "Polycarp Browser Test";
         let keychain = self.root.join("test.keychain-db");
         let config = format!(
@@ -185,6 +189,24 @@ impl Fake {
         run(security, import, &[&p12, &keychain]);
         let partitions = "set-key-partition-list -S apple-tool:,apple: -s -k test @";
         run(security, partitions, &[&keychain]);
+        // codesign finds the key only on the search list, even when it is told the keychain, as in ci-signing.sh.
+        let listed = System
+            .run(&Call::new(security, &[&"list-keychains", &"-d", &"user"]))
+            .unwrap()
+            .out;
+        let mut call = Call::new(
+            security,
+            &[&"list-keychains", &"-d", &"user", &"-s", &keychain],
+        );
+        call.args
+            .extend(listed.lines().map(|l| l.trim().trim_matches('"').into()));
+        assert!(System.run(&call).unwrap().ok(), "list-keychains");
+        let find = Call::new(
+            security,
+            &[&"find-identity", &"-p", &"codesigning", &keychain],
+        );
+        let found = System.run(&find).unwrap();
+        assert!(found.out.contains(name), "{}{}", found.out, found.err);
         (name.into(), keychain)
     }
 
