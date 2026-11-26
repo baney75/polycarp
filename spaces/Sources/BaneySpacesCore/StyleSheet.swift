@@ -72,6 +72,8 @@ public struct StyleInsets: Equatable, Sendable {
     public init(top: Double, right: Double, bottom: Double, left: Double) {
         self.top = top; self.right = right; self.bottom = bottom; self.left = left
     }
+    /// The same on every side.
+    public init(side: Double) { self.init(top: side, right: side, bottom: side, left: side) }
 }
 
 /// A border: `none`, or a solid line.
@@ -145,7 +147,7 @@ public struct StyleProblem: Equatable, Hashable, Sendable, CustomStringConvertib
 // MARK: What a selector can name
 
 public enum StyleSurface: String, CaseIterable, Sendable {
-    case bar, launcher, tiling
+    case bar, launcher, tiling, switcher
     /// Surfaces an older build had. A rule that names one reads with a warning and is ignored.
     static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
 }
@@ -165,6 +167,8 @@ public enum StyleTarget: String, CaseIterable, Sendable {
          launcherTitle = "launcher title", launcherSubtitle = "launcher subtitle", launcherBadge = "launcher badge",
          launcherIcon = "launcher icon", launcherFooter = "launcher footer"
     case tiling
+    case switcher, switcherItem = "switcher item", switcherNumber = "switcher number", switcherLabel = "switcher label",
+         switcherIcon = "switcher icon", switcherHint = "switcher hint"
 
     /// The first word of its name.
     public var surface: StyleSurface { Self.names[self]!.surface }
@@ -197,17 +201,19 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .barWorkspace: [.current, .hover]
         case .launcherRow: [.selected, .hover]
         case .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherIcon: [.selected]
+        case .switcherItem, .switcherNumber, .switcherLabel, .switcherIcon: [.selected]
         default: []
         }
     }
 
     /// The target it inherits from. A bar module inherits from its region when the caller names one, else from the bar; a
-    /// workspace number from the workspaces module; what a launcher row holds, from the row in the same state.
+    /// workspace number from the workspaces module; what a launcher row or a switcher tile holds, from it in the same state.
     var parent: StyleTarget? {
         switch self {
         case .barIsland: .barRegion
         case .barWorkspace: .barModule
         case .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherIcon: .launcherRow
+        case .switcherNumber, .switcherLabel, .switcherIcon: .switcherItem
         // A surface inherits from nothing, its other parts from it.
         default: parts.isEmpty ? nil : StyleTarget.of(surface, part: nil)
         }
@@ -231,6 +237,12 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .launcherIcon: "A result's picture, and the color of a symbol; .selected while its row is."
         case .launcherFooter: "The key hints along the bottom. border takes the place of the line over it."
         case .tiling: "The outline of where a dragged tiled window would go."
+        case .switcher: "The ⌘Tab panel. gap is the space between tiles."
+        case .switcherItem: "One app, window or workspace in it; .selected is the one letting go lands on."
+        case .switcherNumber: "A workspace's number, when ⌘Tab steps through workspaces; .selected while its tile is."
+        case .switcherLabel: "The name under an app, a window's title or a workspace's window count; .selected while its tile is."
+        case .switcherIcon: "An app's icon; .selected while its tile is."
+        case .switcherHint: "The line under the apps, and the words beside a window bar's heading."
         }
     }
 
@@ -326,12 +338,18 @@ public struct StyleProperty: Sendable {
 
     /// Everything that draws text, with letters the view spaces and cases itself.
     static let texts: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace,
-                                       .launcher, .launcherSection, .launcherRow, .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherFooter]
+                                       .launcher, .launcherSection, .launcherRow, .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherFooter,
+                                       .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint]
+    /// Text with letters in it.
+    static let letters = texts.filter { $0 != .switcherNumber }
     /// A font too, but the system's text field draws it.
     static let fonts = texts + [.launcherField]
     /// Everything with a fill of its own.
     static let boxes: [StyleTarget] = [.bar, .barRegion, .barIsland, .barModule, .barWorkspace,
-                                       .launcher, .launcherField, .launcherSection, .launcherRow, .launcherBadge, .launcherFooter]
+                                       .launcher, .launcherField, .launcherSection, .launcherRow, .launcherBadge, .launcherFooter,
+                                       .switcher, .switcherItem]
+    /// The fills whose size is their own: nothing to pad.
+    static let padded = boxes.filter { $0 != .switcherItem }
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, fonts + [.launcherIcon], inherited: true, "Text and symbol color.", example: "var(--foreground)"),
@@ -343,7 +361,7 @@ public struct StyleProperty: Sendable {
         StyleProperty("font-weight", .fontWeight, fonts, inherited: true, "Text weight.", example: "500"),
         StyleProperty("font-style", .keywords(StyleFontStyle.allCases.map(\.rawValue)), fonts, inherited: true, "Upright or italic text.", example: "normal"),
         StyleProperty("letter-spacing", .spacing(-2...10), texts, inherited: true, "Extra space between letters.", example: "normal"),
-        StyleProperty("text-transform", .keywords(StyleTextTransform.allCases.map(\.rawValue)), texts, inherited: true,
+        StyleProperty("text-transform", .keywords(StyleTextTransform.allCases.map(\.rawValue)), letters, inherited: true,
                       "Letter case, whatever the text says.", example: "none"),
         StyleProperty("font-variant-numeric", .keywords(StyleNumerals.allCases.map(\.rawValue)), texts, inherited: true,
                       "`tabular-nums` gives every digit the same width, so a clock doesn't jiggle.", example: "tabular-nums"),
@@ -351,19 +369,21 @@ public struct StyleProperty: Sendable {
         StyleProperty("height", .length(18...64), [.bar, .launcherRow],
                       "The bar's height (on a screen with a notch the bar fills the strip beside it), or a row's: its icon shrinks to fit, and a subtitle with no room goes.",
                       example: "28px"),
-        StyleProperty("padding", .padding, boxes, "Space inside the edge.", example: "0 8px"),
-        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow],
-                      "Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows (launcher) or between an icon and its text (row).",
+        StyleProperty("padding", .padding, padded, "Space inside the edge.", example: "0 8px"),
+        StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow, .switcher],
+                      "Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows or tiles (a panel) or between an icon and its text (a row).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), boxes + [.launcherIcon, .tiling], "Corner radius.", example: "6px"),
+        StyleProperty("border-radius", .length(0...40), boxes + [.launcherIcon, .tiling, .switcherIcon], "Corner radius.", example: "6px"),
         StyleProperty("border", .line, boxes + [.tiling], "A line all around.", example: "1px solid var(--border)"),
-        StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .launcher, .launcherField, .launcherSection, .launcherRow],
+        StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .launcher, .launcherField, .launcherSection, .launcherRow,
+                                              .switcher, .switcherItem],
                       "A line along the bottom edge only.", example: "1px solid var(--border)"),
         StyleProperty("box-shadow", .shadow, [.barIsland], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
         StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)),
-                      [.barRegion, .barIsland, .barModule, .barWorkspace, .launcherSection, .launcherSubtitle, .launcherBadge, .launcherIcon, .launcherFooter],
+                      [.barRegion, .barIsland, .barModule, .barWorkspace, .launcherSection, .launcherSubtitle, .launcherBadge, .launcherIcon, .launcherFooter,
+                       .switcherLabel, .switcherIcon, .switcherHint],
                       "`none` hides it; `flex` (the default) shows it.", example: "flex"),
-        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow],
+        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow, .switcherItem],
                       "How long a change of state (hover, current, selected) fades its colors and lines.", example: "150ms"),
     ]
 

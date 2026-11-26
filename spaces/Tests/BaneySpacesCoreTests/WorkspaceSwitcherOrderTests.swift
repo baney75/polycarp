@@ -232,12 +232,12 @@ final class SwitcherWiringTests: XCTestCase {
         XCTAssertEqual(switcher.components(separatedBy: "SwitcherPanelFrame.center(").count - 1, 2, "show and relayout")
         XCTAssertTrue(switcher.contains("SwitcherPanelFrame.activeVisibleFrame("))
         XCTAssertFalse(switcher.contains("frame.midX"), "centered on the whole screen, not its visible frame")
-        let row = try XCTUnwrap(switcher.range(of: "private var workspaceRow").flatMap { start in
+        let row = try XCTUnwrap(switcher.range(of: "private func workspaceRow").flatMap { start in
             switcher.range(of: "private func workspaceTile").map { String(switcher[start.lowerBound..<$0.lowerBound]) }
         })
         XCTAssertFalse(row.contains("LazyVGrid"), "a lazy grid measured far taller than its one row")
         XCTAssertTrue(row.contains("SwitcherLayout.rows(") && row.contains("maxWidth: model.maxWidth"))
-        XCTAssertTrue(switcher.contains("SwitcherLayout.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)"))
+        XCTAssertTrue(switcher.contains("Styles.shared.book.switcher.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)"))
     }
 
     func testSameAppFocusStampsBeforeTheDockReloads() throws {
@@ -300,7 +300,7 @@ final class SwitcherWiringTests: XCTestCase {
         XCTAssertTrue(cards.contains("Windows.stacking(of: windows).filter { saved.frames[$0.id] == nil"), "a parked window is never in front")
         let s = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
         XCTAssertTrue(s.contains("if model.mode == .windows { return model.grid.size }"), "the panel is framed from WindowGrid")
-        let rows = try XCTUnwrap(SourceText.block(after: "private var windowRows: some View", in: s))
+        let rows = try XCTUnwrap(SourceText.block(after: "private func windowRows<D: Dress>(_ d: D.Type) -> some View", in: s))
         XCTAssertTrue(rows.contains("windowCard(") && !rows.contains("LazyVGrid"))
         let keys = try SourceText.code("Sources/BaneySpaces/MissionControlKeys.swift")
         XCTAssertTrue(keys.contains("CmdTabMode.resolve(stored:"))

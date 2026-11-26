@@ -297,7 +297,7 @@ final class WorkspaceSwitcher {
     private func contentSize(_ host: NSHostingView<SwitcherView>) -> CGSize {
         if model.mode == .windows { return model.grid.size }
         if model.mode == .workspaces, model.windowBar == nil {
-            return SwitcherLayout.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)
+            return Styles.shared.book.switcher.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)
         }
         // Lay out the new tiles first; otherwise fittingSize still reports the last gesture's size.
         host.layoutSubtreeIfNeeded()
@@ -457,7 +457,7 @@ final class SwitcherModel: ObservableObject {
     /// The display the panel opens on, for how many cards fit on a row and how many rows.
     @Published var maxWidth = SwitcherLayout.narrowScreen
     @Published var maxHeight = 700.0
-    var grid: WindowGrid { .fit(count: windows.count, maxWidth: maxWidth, maxHeight: maxHeight) }
+    var grid: WindowGrid { Styles.shared.book.switcher.grid(count: windows.count, maxWidth: maxWidth, maxHeight: maxHeight) }
     var count: Int { switch mode { case .windows: windows.count; case .apps: apps.count; case .workspaces: tiles.count } }
 }
 
@@ -465,124 +465,152 @@ struct SwitcherView: View {
     @ObservedObject var model: SwitcherModel
     /// Redraws when Settings › Appearance changes.
     @ObservedObject private var appearance = Appearance.shared
+    @ObservedObject private var styles = Styles.shared
+
+    /// Every part's style, worked out once for the sheet in force (`StyleBook.switcher`).
+    private var sheet: SwitcherStyles { styles.book.switcher }
+    /// Between app and window tiles.
+    private var gap: CGFloat { sheet.panel.gap.map { CGFloat($0) } ?? 8 }
 
     var body: some View {
         Group {
-            if let bar = model.windowBar { windowRow(bar) } else {
-                switch model.mode {
-                case .windows: windowRows
-                case .apps: appRow
-                case .workspaces: workspaceRow
-                }
+            if sheet.plain { rows(Bare.self) } else { rows(Dressed.self) }
+        }
+        .padding(Styled.insets(sheet.padding))
+        .background(Chrome.panelBackground(.switcherPanel, style: sheet.panel))
+        .opacity(sheet.panel.opacity ?? 1)
+        .environment(\.colorScheme, Chrome.scheme)
+    }
+
+    @ViewBuilder private func rows<D: Dress>(_ d: D.Type) -> some View {
+        if let bar = model.windowBar { windowRow(d, bar) } else {
+            switch model.mode {
+            case .windows: windowRows(d)
+            case .apps: appRow(d)
+            case .workspaces: workspaceRow(d)
             }
         }
-        .padding(14)
-        .background(Chrome.panelBackground(.switcherPanel))
-        .environment(\.colorScheme, Chrome.scheme)
+    }
+
+    private func label(_ text: String, _ c: ComputedStyle, _ size: Double, _ weight: TextWeight, _ own: Color) -> some View {
+        Text(c.cased(text)).spaced(c).font(Styled.font(c, .ui, size, weight)).foregroundStyle(c.ink(own))
     }
 
     /// Long lists wrap onto more rows instead of running off the screen. An app on two
     /// workspaces shows twice, each copy in its workspace's color with the number on it.
-    private var appRow: some View {
-        let columns = Array(repeating: GridItem(.fixed(104), spacing: 8), count: min(max(model.apps.count, 1), 8))
+    private func appRow<D: Dress>(_ d: D.Type) -> some View {
+        let sheet = sheet
+        let columns = Array(repeating: GridItem(.fixed(104), spacing: gap), count: sheet.appColumns(count: model.apps.count, maxWidth: model.maxWidth))
         return VStack(spacing: 10) {
-            LazyVGrid(columns: columns, spacing: 8) {
+            LazyVGrid(columns: columns, spacing: gap) {
                 ForEach(Array(model.apps.enumerated()), id: \.element.id) { i, app in
                     let on = i == model.selected
+                    let c = sheet.item(selected: on)
                     let tint = Chrome.workspace(app.workspace)
                     VStack(spacing: 6) {
                         ZStack(alignment: .topTrailing) {
                             Image(nsImage: app.icon).resizable().frame(width: 64, height: 64)
+                                .modifier(D.cut(c.icon)).modifier(D.part(c.icon))
                             WorkspaceBadge(n: app.workspace).offset(x: 8, y: -4)
                             if app.windows > 1 {
                                 Text("×\(app.windows)").font(Chrome.font(10, .bold, rounded: true)).foregroundStyle(Chrome.wash())
                                     .padding(.horizontal, 5).frame(minHeight: 17)
                                     .background(Chrome.pill().fill(Chrome.shade(0.75)))
-                                    .offset(x: 8, y: 50)
+                                    .offset(x: 8, y: c.icon.isHidden ? 18 : 50)
                             }
                         }
-                        Text(app.name).font(Chrome.font(12, .medium)).foregroundStyle(Chrome.wash(on ? 1 : 0.7))
-                            .lineLimit(1).frame(maxWidth: 92)
+                        label(app.name, c.label, 12, .medium, Chrome.wash(on ? 1 : 0.7)).lineLimit(1).frame(maxWidth: 92)
+                            .modifier(D.part(c.label))
                     }
-                    .frame(width: 104, height: 108)
+                    // A tile grows with the sheet's text.
+                    .frame(width: 104, height: c.label.fontSize == nil ? 108 : nil).frame(minHeight: 108)
                     // A split app's copies are told apart at a glance by their workspace's color.
-                    .background(Chrome.shape(.switcherTile)
-                        .fill(on ? Chrome.lit(tint, 0.28) : app.isSplit ? tint.opacity(0.10) : .clear))
-                    .overlay(Chrome.shape(.switcherTile)
-                        .strokeBorder(on ? Chrome.focusEdge(tint) : app.isSplit ? tint.opacity(0.35) : Chrome.edge(0),
-                                      lineWidth: Chrome.width(.switcherTile, focused: on)))
+                    .background(D.back(c.box, .switcherTile)
+                        .fill(on ? Chrome.lit(tint, 0.28) : app.isSplit ? tint.opacity(0.10) : .clear).marking(on && !c.marked))
+                    .overlay(D.edge(c.box, .switcherTile, on ? Chrome.focusEdge(tint) : app.isSplit ? tint.opacity(0.35) : Chrome.edge(0),
+                                    focused: on, marking: on && !c.marked))
+                    .modifier(D.part(c.box))
                     .accessibilityLabel("\(app.name), workspace \(app.workspace), \(app.windows) windows\(on ? ", selected" : "")")
                 }
             }
-            if model.apps.indices.contains(model.selected) {
+            if model.apps.indices.contains(model.selected), !sheet.hint.isHidden {
+                let hint = sheet.hint
                 let app = model.apps[model.selected]
                 let title = app.titles.first { !$0.isEmpty }
                 HStack(spacing: 6) {
                     Chrome.mark().fill(Chrome.workspace(app.workspace)).frame(width: 7, height: 7)
-                    Text(["Workspace \(app.workspace)", app.windows > 1 ? "\(app.windows) windows" : title].compactMap { $0 }.joined(separator: " · "))
-                        .lineLimit(1)
+                    Text(hint.cased(["Workspace \(app.workspace)", app.windows > 1 ? "\(app.windows) windows" : title].compactMap { $0 }.joined(separator: " · ")))
+                        .spaced(hint).lineLimit(1)
                     if model.apps.filter({ $0.pid == app.pid }).reduce(0, { $0 + $1.windows }) > 1 {
-                        Text("Hold Tab to pick a window").foregroundStyle(Chrome.wash(0.4))
+                        Text(hint.cased("Hold Tab to pick a window")).spaced(hint).foregroundStyle(hint.ink(Chrome.wash(0.4), dim: 0.7))
                     }
                 }
-                .font(Chrome.font(11, .semibold)).foregroundStyle(Chrome.wash(0.6))
+                .font(Styled.font(hint, .ui, 11, .semibold)).foregroundStyle(hint.ink(Chrome.wash(0.6)))
                 .frame(maxWidth: 600)
+                .opacity(hint.opacity ?? 1)
             }
         }
     }
 
     /// One app's windows, each with its title and workspace color. Wraps after four.
-    private func windowRow(_ bar: SwitcherModel.WindowBar) -> some View {
-        let columns = Array(repeating: GridItem(.fixed(200), spacing: 8), count: min(bar.windows.count, 4))
+    private func windowRow<D: Dress>(_ d: D.Type, _ bar: SwitcherModel.WindowBar) -> some View {
+        let sheet = sheet, heading = sheet.panel, hint = sheet.hint
+        let columns = Array(repeating: GridItem(.fixed(200), spacing: gap), count: min(bar.windows.count, 4))
         return VStack(spacing: 12) {
             HStack(spacing: 8) {
                 Image(nsImage: bar.icon).resizable().frame(width: 22, height: 22)
-                Text("\(bar.name) windows").font(Chrome.font(13, .semibold)).foregroundStyle(Chrome.wash())
-                Text("Hold Tab to go back").font(Chrome.font(11, .medium)).foregroundStyle(Chrome.wash(0.45))
+                Text(heading.cased("\(bar.name) windows")).spaced(heading).font(Styled.font(heading, .ui, 13, .semibold)).foregroundStyle(heading.ink(Chrome.wash()))
+                label("Hold Tab to go back", hint, 11, .medium, Chrome.wash(0.45)).modifier(D.part(hint))
             }
-            LazyVGrid(columns: columns, spacing: 8) {
+            LazyVGrid(columns: columns, spacing: gap) {
                 ForEach(Array(bar.windows.enumerated()), id: \.element.id) { i, w in
-                    windowCard(w, icon: bar.icon, title: w.title.isEmpty ? "Untitled window" : w.title, on: i == bar.selected, width: 200)
+                    windowCard(d, w, icon: bar.icon, title: w.title.isEmpty ? "Untitled window" : w.title, on: i == bar.selected, width: 200)
                 }
             }
         }
     }
 
     /// Every window in even rows sized from `WindowGrid`, which the panel is framed from too.
-    private var windowRows: some View {
+    private func windowRows<D: Dress>(_ d: D.Type) -> some View {
         let grid = model.grid
         let card = CGSize(width: grid.cardWidth, height: grid.cardHeight)
-        return VStack(alignment: .leading, spacing: WindowGrid.spacing) {
+        return VStack(alignment: .leading, spacing: grid.gap) {
             ForEach(SwitcherLayout.rows(tileCount: model.windows.count, columns: grid.columns), id: \.lowerBound) { row in
-                HStack(spacing: WindowGrid.spacing) {
+                HStack(spacing: grid.gap) {
                     ForEach(row, id: \.self) { i in
                         let w = model.windows[i]
-                        windowCard(w, icon: w.icon, title: w.title.isEmpty ? w.app : w.title, on: i == model.selected,
+                        windowCard(d, w, icon: w.icon, title: w.title.isEmpty ? w.app : w.title, on: i == model.selected,
                                    width: card.width, height: card.height, stacked: grid.isStacked)
                     }
                 }
             }
             if model.windows.isEmpty {
-                Text("No windows").font(Chrome.font(12, .medium)).foregroundStyle(Chrome.wash(0.6)).frame(width: card.width, height: card.height)
+                let c = sheet.item(selected: false).label
+                label("No windows", c, 12, .medium, Chrome.wash(0.6)).frame(width: card.width, height: card.height)
             }
         }
-        .frame(width: grid.size.width - WindowGrid.padding, height: grid.size.height - WindowGrid.padding, alignment: .topLeading)
+        .frame(width: grid.size.width - grid.across, height: grid.size.height - grid.down, alignment: .topLeading)
     }
 
     /// A window's icon, title and workspace badge: the title under the other two on two lines, or all on one line.
-    private func windowCard(_ w: SwitcherModel.WindowTile, icon: NSImage?, title: String, on: Bool,
-                            width: CGFloat, height: CGFloat? = nil, stacked: Bool = true) -> some View {
+    private func windowCard<D: Dress>(_ d: D.Type, _ w: SwitcherModel.WindowTile, icon: NSImage?, title: String, on: Bool,
+                                      width: CGFloat, height: CGFloat? = nil, stacked: Bool = true) -> some View {
+        let c = sheet.item(selected: on)
         let tint = Chrome.workspace(w.workspace)
-        let text = Text(title).font(Chrome.font(12, .medium)).foregroundStyle(Chrome.wash(on ? 1 : 0.75)).multilineTextAlignment(.leading)
+        let text = label(title, c.label, 12, .medium, Chrome.wash(on ? 1 : 0.75)).multilineTextAlignment(.leading)
+        // The sheet shapes the app's icon; a browser window's site icon sits over it, uncut.
         let image = { (size: CGFloat) in
-            Image(nsImage: icon ?? NSImage()).resizable().frame(width: size, height: size).overlay(alignment: .bottomTrailing) {
-                if let site = w.site {
-                    Image(nsImage: site).resizable().interpolation(.high).frame(width: size * 0.5, height: size * 0.5)
-                        .padding(1.5).background(Chrome.shape(.launcherKey).fill(Chrome.panel()))
-                        .offset(x: 4, y: 4)
+            Image(nsImage: icon ?? NSImage()).resizable().frame(width: size, height: size).modifier(D.cut(c.icon)).modifier(D.part(c.icon))
+                .overlay(alignment: .bottomTrailing) {
+                    if let site = w.site {
+                        Image(nsImage: site).resizable().interpolation(.high).frame(width: size * 0.5, height: size * 0.5)
+                            .padding(1.5).background(Chrome.shape(.launcherKey).fill(Chrome.panel()))
+                            .offset(x: 4, y: 4)
+                    }
                 }
-            }
         }
+        // A card the grid doesn't size grows with the sheet's text.
+        let lines = height == nil ? max(32, (c.label.fontSize.map { CGFloat($0) } ?? 0) * 2.5) : 32
         return Group {
             if stacked {
                 VStack(alignment: .leading, spacing: 8) {
@@ -591,60 +619,63 @@ struct SwitcherView: View {
                         Spacer()
                         WorkspaceBadge(n: w.workspace)
                     }
-                    text.lineLimit(2).frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                    text.lineLimit(2).frame(maxWidth: .infinity, minHeight: lines, alignment: .topLeading).modifier(D.part(c.label))
                 }
                 .padding(12)
             } else {
                 HStack(spacing: 8) {
                     image(22)
-                    text.lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                    text.lineLimit(1).frame(maxWidth: .infinity, alignment: .leading).modifier(D.part(c.label))
                     WorkspaceBadge(n: w.workspace, size: 18)
                 }
                 .padding(.horizontal, 10)
             }
         }
         .frame(width: width, height: height)
-        .background(Chrome.shape(.switcherWindow).fill(on ? Chrome.lit(tint, 0.28) : Chrome.cell(0.06)))
-        .overlay(Chrome.shape(.switcherWindow).strokeBorder(on ? Chrome.focusEdge(tint) : Chrome.edge(0.08),
-                                                            lineWidth: Chrome.width(.switcherWindow, focused: on)))
+        .background(D.back(c.box, .switcherWindow).fill(on ? Chrome.lit(tint, 0.28) : Chrome.cell(0.06)).marking(on && !c.marked))
+        .overlay(D.edge(c.box, .switcherWindow, on ? Chrome.focusEdge(tint) : Chrome.edge(0.08), focused: on, marking: on && !c.marked))
+        .modifier(D.part(c.box))
         .accessibilityLabel("\(w.app.isEmpty ? "" : "\(w.app), ")\(title), workspace \(w.workspace)\(on ? ", selected" : "")")
     }
 
     /// Rows of tiles sized from `SwitcherLayout`, not a lazy grid: a LazyVGrid's fitting size
     /// came out far taller than one row, and the panel is framed from the same numbers.
-    private var workspaceRow: some View {
-        let cols = SwitcherLayout.workspaceColumns(tileCount: model.tiles.count, maxWidth: model.maxWidth)
-        let size = SwitcherLayout.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)
-        let pad = SwitcherLayout.padding / 2
-        return VStack(alignment: .leading, spacing: SwitcherLayout.spacing) {
+    private func workspaceRow<D: Dress>(_ d: D.Type) -> some View {
+        let sheet = sheet, pad = sheet.padding
+        let cols = sheet.columns(tileCount: model.tiles.count, maxWidth: model.maxWidth)
+        let size = sheet.panelSize(tileCount: model.tiles.count, maxWidth: model.maxWidth)
+        return VStack(alignment: .leading, spacing: sheet.gap) {
             ForEach(SwitcherLayout.rows(tileCount: model.tiles.count, columns: cols), id: \.lowerBound) { row in
-                HStack(spacing: SwitcherLayout.spacing) {
-                    ForEach(row, id: \.self) { i in workspaceTile(model.tiles[i], on: i == model.selected) }
+                HStack(spacing: sheet.gap) {
+                    ForEach(row, id: \.self) { i in workspaceTile(d, model.tiles[i], on: i == model.selected) }
                 }
             }
         }
-        .frame(width: size.width - 2 * pad, height: size.height - 2 * pad, alignment: .topLeading)
+        .frame(width: size.width - pad.left - pad.right, height: size.height - pad.top - pad.bottom, alignment: .topLeading)
     }
 
-    private func workspaceTile(_ tile: SwitcherModel.Tile, on: Bool) -> some View {
-        VStack(spacing: 8) {
-            Text("\(tile.n)")
-                .font(Chrome.font(34, .bold, rounded: true))
-                .foregroundStyle(Chrome.wash())
+    private func workspaceTile<D: Dress>(_ d: D.Type, _ tile: SwitcherModel.Tile, on: Bool) -> some View {
+        let c = sheet.item(selected: on)
+        return VStack(spacing: 8) {
+            Text("\(tile.n)").spaced(c.number)
+                .font(Styled.font(c.number, .ui, 34, .bold, rounded: true))
+                .foregroundStyle(c.number.ink(Chrome.wash())).modifier(D.part(c.number))
             HStack(spacing: -6) {
-                ForEach(Array(tile.icons.prefix(4).enumerated()), id: \.offset) { _, icon in
-                    Image(nsImage: icon).resizable().frame(width: 26, height: 26)
+                ForEach(Array(tile.icons.prefix(4).enumerated()), id: \.offset) { _, image in
+                    Image(nsImage: image).resizable().frame(width: 26, height: 26).modifier(D.cut(c.icon))
                 }
             }
             .frame(height: 26)
-            Text(SwitcherTileText.caption(count: tile.count, isCurrent: tile.isCurrent))
-                .font(Chrome.font(10, tile.isCurrent ? .semibold : .regular))
-                .foregroundStyle(Chrome.wash(tile.isCurrent ? 0.9 : 0.65))
+            .modifier(D.part(c.icon))
+            label(SwitcherTileText.caption(count: tile.count, isCurrent: tile.isCurrent), c.label, 10, tile.isCurrent ? .semibold : .regular,
+                  Chrome.wash(tile.isCurrent ? 0.9 : 0.65))
+                .lineLimit(c.label.hasFont ? 1 : nil)
+                .modifier(D.part(c.label))
         }
-        .frame(width: SwitcherLayout.tileWidth, height: SwitcherLayout.tileHeight)
-        .background(Chrome.shape(.switcherTile).fill(on ? Chrome.cell(0.16) : Chrome.cell(0.05)))
-        .overlay(Chrome.shape(.switcherTile).strokeBorder(on ? Chrome.wash(0.55) : Chrome.edge(0),
-                                                          lineWidth: Chrome.width(.switcherTile, focused: on)))
+        .frame(width: SwitcherLayout.tileWidth, height: sheet.tileHeight)
+        .background(D.back(c.box, .switcherTile).fill(on ? Chrome.cell(0.16) : Chrome.cell(0.05)).marking(on && !c.marked))
+        .overlay(D.edge(c.box, .switcherTile, on ? Chrome.wash(0.55) : Chrome.edge(0), focused: on, marking: on && !c.marked))
+        .modifier(D.part(c.box))
         // The workspace you're on carries its own color along the top edge, selected or not.
         .overlay(alignment: .top) {
             if tile.isCurrent {

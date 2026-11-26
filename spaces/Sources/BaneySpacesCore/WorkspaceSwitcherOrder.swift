@@ -133,11 +133,13 @@ public enum SwitcherLayout: Sendable {
         return stride(from: 0, to: tileCount, by: cols).map { $0..<min($0 + cols, tileCount) }
     }
 
-    /// The whole panel for `tileCount` workspace tiles laid out inside `maxWidth`.
-    public static func panelSize(tileCount: Int, maxWidth: Double = narrowScreen) -> CGSize {
-        let cols = workspaceColumns(tileCount: tileCount, maxWidth: maxWidth)
-        return CGSize(width: rowWidth(columns: cols),
-                      height: height(rows: rowCount(tileCount: tileCount, columns: cols)))
+    /// The whole panel for `tileCount` workspace tiles laid out inside `maxWidth`. `across` and `down` are its padding,
+    /// both sides together.
+    public static func panelSize(tileCount: Int, maxWidth: Double = narrowScreen, tileHeight: Double = tileHeight,
+                                 spacing: Double = spacing, across: Double = padding, down: Double = padding) -> CGSize {
+        let cols = workspaceColumns(tileCount: tileCount, maxWidth: maxWidth, spacing: spacing, padding: across)
+        return CGSize(width: rowWidth(columns: cols, spacing: spacing, padding: across),
+                      height: height(rows: rowCount(tileCount: tileCount, columns: cols), tileHeight: tileHeight, spacing: spacing, padding: down))
     }
 }
 

@@ -693,15 +693,67 @@ final class StyleSheetTests: XCTestCase {
         XCTAssertFalse(view.contains("lookup") || view.contains("computed("), "no row asks the cascade")
     }
 
-    /// The launcher opens no slower where no rule names it: its rows are the theme's pieces alone.
+    func testTheSwitcherBookHoldsEveryPartAndSizesThePanel() {
+        let book = StyleBook(sheet("""
+        switcher { color: #010101; padding: 4px 6px 8px 10px; gap: 20px; }
+        switcher .item.selected { color: #020202; }
+        switcher .label.selected { color: #030303; font-size: 20px; }
+        switcher .number { font-size: 39px; }
+        switcher .icon { display: none; }
+        """), dark: true, roles: [:])
+        func hex(_ c: ComputedStyle) -> String? { c.color?.hex }
+        let s = book.switcher
+        XCTAssertEqual(hex(s.hint), "#010101")
+        XCTAssertEqual([s.item(selected: false).box, s.item(selected: false).number, s.item(selected: false).label].map(hex), ["#010101", "#010101", "#010101"])
+        XCTAssertEqual([s.item(selected: true).box, s.item(selected: true).number, s.item(selected: true).label].map(hex), ["#020202", "#020202", "#030303"])
+        XCTAssertTrue(s.item(selected: true).icon.isHidden)
+        XCTAssertTrue(book.switcher.item(selected: true) === s.item(selected: true), "worked out once")
+        // Four tiles of 108 with 20 between and 16 of padding; 5 of number and 10 of label more, at 1.2 a point, and 12 of padding.
+        XCTAssertEqual(s.panelSize(tileCount: 4, maxWidth: 1024).width, 4 * 108 + 3 * 20 + 16)
+        XCTAssertEqual(s.panelSize(tileCount: 4, maxWidth: 1024).height, 128 + 5 * 1.2 + 10 * 1.2 + 12, accuracy: 0.001)
+        XCTAssertEqual(s.columns(tileCount: 8, maxWidth: 1024), 8)
+        XCTAssertEqual(StyleBook(sheet("switcher { gap: 40px; }"), dark: true, roles: [:]).switcher.columns(tileCount: 8, maxWidth: 1024), 7, "a wider gap wraps sooner")
+        // Window cards: 20 between, 16 and 12 of padding, and a title 8 points larger on each of two lines.
+        let grid = s.grid(count: 7, maxWidth: 1512, maxHeight: 900)
+        XCTAssertEqual([grid.gap, grid.across, grid.down], [20, 16, 12])
+        XCTAssertTrue(grid.isStacked)
+        XCTAssertEqual(grid.cardHeight, 100 + 2 * 8 * 1.2, accuracy: 0.001)
+        XCTAssertEqual(grid.size.width, Double(grid.columns) * (grid.cardWidth + 20) - 20 + 16, accuracy: 0.001)
+        XCTAssertEqual(grid.size.height, Double(grid.rows) * (grid.cardHeight + 20) - 20 + 12, accuracy: 0.001)
+        let none = StyleBook(sheet("bar { color: red; }"), dark: true, roles: [:]).switcher
+        XCTAssertEqual(none.grid(count: 7, maxWidth: 1512, maxHeight: 900), WindowGrid.fit(count: 7, maxWidth: 1512, maxHeight: 900), "the theme's cards")
+        // App tiles: eight fit on a small screen, until a wide gap wraps the eighth.
+        XCTAssertEqual([3, 8, 12].map { none.appColumns(count: $0, maxWidth: 1024) }, [3, 8, 8])
+        XCTAssertEqual(StyleBook(sheet("switcher { gap: 40px; }"), dark: true, roles: [:]).switcher.appColumns(count: 8, maxWidth: 1024), 7)
+        for n in 1...9 {
+            XCTAssertEqual(none.panelSize(tileCount: n, maxWidth: 1024), SwitcherLayout.panelSize(tileCount: n, maxWidth: 1024))
+            XCTAssertEqual(none.columns(tileCount: n, maxWidth: 1024), SwitcherLayout.workspaceColumns(tileCount: n, maxWidth: 1024))
+        }
+    }
+
+    func testTheSwitcherDrawsFromTheSheet() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
+        let view = try XCTUnwrap(SourceText.block(after: "struct SwitcherView", in: code))
+        for part in ["@ObservedObject private var styles = Styles.shared", "sheet.panel", "sheet.padding", "sheet.gap", "sheet.tileHeight", "sheet.hint", "c.box",
+                     "c.number", "c.label", "c.icon"] {
+            XCTAssertTrue(view.contains(part), part)
+        }
+        XCTAssertFalse(view.contains("lookup") || view.contains("computed("), "no tile asks the cascade")
+    }
+
+    /// The launcher and the switcher open no slower where no rule names them: their rows are the theme's pieces alone.
     func testAPanelNoRuleNamesIsDrawnBare() throws {
         func book(_ css: String) -> StyleBook { StyleBook(sheet(css), dark: true, roles: [:]) }
-        XCTAssertTrue(StyleBook.empty.launcher.plain)
-        XCTAssertTrue(book("bar { color: #010101; }").launcher.plain)
+        XCTAssertTrue(StyleBook.empty.launcher.plain && StyleBook.empty.switcher.plain)
         for css in ["launcher .badge.selected { color: #010101; }", "launcher { gap: 4px; }", "launcher .row:hover { color: #010101; }"] {
             XCTAssertFalse(book(css).launcher.plain, css)
+            XCTAssertTrue(book(css).switcher.plain, css)
         }
-        for (file, view, name) in [("Launcher", "struct LauncherView", "list")] {
+        for css in ["switcher .icon { display: none; }", "switcher .item.selected { color: #010101; }"] {
+            XCTAssertFalse(book(css).switcher.plain, css)
+            XCTAssertTrue(book(css).launcher.plain, css)
+        }
+        for (file, view, name) in [("Launcher", "struct LauncherView", "list"), ("WorkspaceSwitcher", "struct SwitcherView", "rows")] {
             let code = try XCTUnwrap(SourceText.block(after: view, in: try SourceText.code("Sources/BaneySpaces/\(file).swift")))
             let body = try XCTUnwrap(SourceText.block(after: "var body: some View", in: code))
             XCTAssertTrue(body.contains("if sheet.plain { \(name)(Bare.self) } else { \(name)(Dressed.self) }"), file)
@@ -728,16 +780,20 @@ final class StyleSheetTests: XCTestCase {
     func testAStateTheSheetSaysNothingAboutKeepsTheThemesMark() throws {
         func book(_ css: String) -> StyleBook { StyleBook(sheet(css), dark: true, roles: [:]) }
         for plain in ["background: #222222;", "border: 1px solid #333333;", "border-bottom: 1px solid #333333;"] {
-            let b = book("launcher .row { \(plain) } launcher .row.selected { color: #ffffff; }")
+            let b = book("launcher .row { \(plain) } switcher .item { \(plain) } launcher .row.selected { color: #ffffff; }")
             XCTAssertFalse(b.launcher.row(selected: true).marked, plain)
             XCTAssertFalse(b.launcher.row(selected: true, hover: true).marked, plain)
-            let own = book("launcher .row.selected { \(plain) }")
+            XCTAssertFalse(b.switcher.item(selected: true).marked, plain)
+            let own = book("launcher .row.selected { \(plain) } switcher .item.selected { \(plain) }")
             XCTAssertTrue(own.launcher.row(selected: true).marked, plain)
             XCTAssertTrue(own.launcher.row(selected: true, hover: true).marked, plain)
+            XCTAssertTrue(own.switcher.item(selected: true).marked, plain)
         }
         XCTAssertFalse(book("launcher .row:hover { background: #222222; }").launcher.row(selected: true, hover: true).marked, "hover's fill is not the selection's")
-        let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift"), switcher = try SourceText.code("Sources/BaneySpaces/WorkspaceSwitcher.swift")
         XCTAssertTrue(launcher.contains(".marking(selected && !c.marked)") && launcher.contains("if selected, !c.marked ||"))
+        XCTAssertEqual(switcher.components(separatedBy: ".marking(on && !c.marked)").count, 4, "apps, windows and workspaces")
+        XCTAssertEqual(switcher.components(separatedBy: "marking: on && !c.marked)").count, 4, "their edges too")
     }
 
     func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {

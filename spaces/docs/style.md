@@ -78,6 +78,12 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | `launcher .icon` | `.selected` | A result's picture, and the color of a symbol; .selected while its row is. |
 | `launcher .footer` | none | The key hints along the bottom. border takes the place of the line over it. |
 | `tiling` | none | The outline of where a dragged tiled window would go. |
+| `switcher` | none | The ⌘Tab panel. gap is the space between tiles. |
+| `switcher .item` | `.selected` | One app, window or workspace in it; .selected is the one letting go lands on. |
+| `switcher .number` | `.selected` | A workspace's number, when ⌘Tab steps through workspaces; .selected while its tile is. |
+| `switcher .label` | `.selected` | The name under an app, a window's title or a workspace's window count; .selected while its tile is. |
+| `switcher .icon` | `.selected` | An app's icon; .selected while its tile is. |
+| `switcher .hint` | none | The line under the apps, and the words beside a window bar's heading. |
 
 States join with no space: `bar .workspace.current`, `bar .workspace:hover`, `bar .workspace.current:hover`. A
 `custom:<name>` bar module has no class yet.
@@ -86,26 +92,26 @@ States join with no space: `bar .workspace.current`, `bar .workspace:hover`, `ba
 
 | Property | Takes | Applies to | Inherited | What it does |
 | --- | --- | --- | --- | --- |
-| `color` | a color | bar, bar region, bar module, bar workspace; all of launcher | yes | Text and symbol color. |
-| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; all of tiling | no | What is drawn behind it. |
+| `color` | a color | bar, bar region, bar module, bar workspace; all of launcher; switcher, switcher item, switcher number, switcher label, switcher hint | yes | Text and symbol color. |
+| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; all of tiling; switcher, switcher item | no | What is drawn behind it. |
 | `opacity` | a number from 0 to 1, or a percentage | everything | no | How opaque the whole thing is. |
-| `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
-| `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | Text size in points. |
-| `font-weight` | 100 to 900, `normal` (400) or `bold` (700) | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | Text weight. |
-| `font-style` | `normal` or `italic` | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | Upright or italic text. |
-| `letter-spacing` | `normal` or a length from -2 to 10 (`px` or `pt`) | bar, bar region, bar module, bar workspace; launcher, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | Extra space between letters. |
-| `text-transform` | `none`, `uppercase`, `lowercase` or `capitalize` | bar, bar region, bar module, bar workspace; launcher, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | Letter case, whatever the text says. |
-| `font-variant-numeric` | `normal` or `tabular-nums` | bar, bar region, bar module, bar workspace; launcher, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | `tabular-nums` gives every digit the same width, so a clock doesn't jiggle. |
+| `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher number, switcher label, switcher hint | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
+| `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher number, switcher label, switcher hint | yes | Text size in points. |
+| `font-weight` | 100 to 900, `normal` (400) or `bold` (700) | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher number, switcher label, switcher hint | yes | Text weight. |
+| `font-style` | `normal` or `italic` | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher number, switcher label, switcher hint | yes | Upright or italic text. |
+| `letter-spacing` | `normal` or a length from -2 to 10 (`px` or `pt`) | bar, bar region, bar module, bar workspace; launcher, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher number, switcher label, switcher hint | yes | Extra space between letters. |
+| `text-transform` | `none`, `uppercase`, `lowercase` or `capitalize` | bar, bar region, bar module, bar workspace; launcher, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher label, switcher hint | yes | Letter case, whatever the text says. |
+| `font-variant-numeric` | `normal` or `tabular-nums` | bar, bar region, bar module, bar workspace; launcher, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer; switcher, switcher item, switcher number, switcher label, switcher hint | yes | `tabular-nums` gives every digit the same width, so a clock doesn't jiggle. |
 | `width` | a length from 480 to 1200 (`px` or `pt`) | launcher | no | The panel's width (never wider than the screen). |
 | `height` | a length from 18 to 64 (`px` or `pt`) | bar; launcher row | no | The bar's height (on a screen with a notch the bar fills the strip beside it), or a row's: its icon shrinks to fit, and a subtitle with no room goes. |
-| `padding` | 1 to 4 lengths from 0 to 40, in CSS order (top, right, bottom, left) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer | no | Space inside the edge. |
-| `gap` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module; launcher, launcher row | no | Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows (launcher) or between an icon and its text (row). |
-| `border-radius` | a length from 0 to 40 (`px` or `pt`) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher icon, launcher footer; all of tiling | no | Corner radius. |
-| `border` | `none` or `<width 0 to 8> solid <color>` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; all of tiling | no | A line all around. |
-| `border-bottom` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row | no | A line along the bottom edge only. |
+| `padding` | 1 to 4 lengths from 0 to 40, in CSS order (top, right, bottom, left) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; switcher | no | Space inside the edge. |
+| `gap` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module; launcher, launcher row; switcher | no | Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows or tiles (a panel) or between an icon and its text (a row). |
+| `border-radius` | a length from 0 to 40 (`px` or `pt`) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher icon, launcher footer; all of tiling; switcher, switcher item, switcher icon | no | Corner radius. |
+| `border` | `none` or `<width 0 to 8> solid <color>` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; all of tiling; switcher, switcher item | no | A line all around. |
+| `border-bottom` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row; switcher, switcher item | no | A line along the bottom edge only. |
 | `box-shadow` | `none` or `<x> <y> <blur> <color>` (x and y -40 to 40, blur 0 to 64) | bar island | no | A drop shadow. |
-| `display` | `flex` or `none` | bar region, bar island, bar module, bar workspace; launcher section, launcher subtitle, launcher badge, launcher icon, launcher footer | no | `none` hides it; `flex` (the default) shows it. |
-| `transition-duration` | 0 to 2000 `ms`, or the same in `s` | bar module, bar workspace; launcher row | no | How long a change of state (hover, current, selected) fades its colors and lines. |
+| `display` | `flex` or `none` | bar region, bar island, bar module, bar workspace; launcher section, launcher subtitle, launcher badge, launcher icon, launcher footer; switcher label, switcher icon, switcher hint | no | `none` hides it; `flex` (the default) shows it. |
+| `transition-duration` | 0 to 2000 `ms`, or the same in `s` | bar module, bar workspace; launcher row; switcher item | no | How long a change of state (hover, current, selected) fades its colors and lines. |
 
 A property used on a selector it doesn't apply to is a problem, not silently ignored. To turn the whole bar off, use
 `bar.enabled` in surfaces.json.

@@ -154,7 +154,7 @@ enum Render {
             .init(n: 3, icons: [icon("/System/Applications/Music.app")], count: 1, isCurrent: false),
         ]
         switcher.selected = 1
-        guard save(SwitcherView(model: switcher), "switcher.png", CGSize(width: 520, height: 0)) else { return 1 }
+        guard save(SwitcherView(model: switcher), "switcher.png", CGSize(width: max(520, Styles.shared.book.switcher.panelSize(tileCount: 4, maxWidth: 1512).width), height: 0)) else { return 1 }
 
         // The ⌘Tab app switcher across workspaces, Mail selected.
         let appSwitcher = SwitcherModel()
