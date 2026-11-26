@@ -54,7 +54,13 @@ const scenario = async (memory) => {
   let pg = await S.threads({ limit: 3 });
   while (pg.length && ties.length < 20) { ties.push(...pg.filter((x) => x.account === 'ties').map((x) => x.id)); if (ties.length >= 7) break; pg = await S.threads({ limit: 3, before: S.after(pg[pg.length - 1]) }); }
   await S.removeAccount('ties');
+  // Every message, a page at a time in id order, with none repeated or missed.
+  const every = (await S.allMessages()).map((m) => m.id).sort();
+  const walked = [];
+  let walkMax = 0;
+  for (let last = '', pg; (pg = await S.messagesAfter(last, 37)).length; last = pg[pg.length - 1].id) { walked.push(...pg.map((m) => m.id)); walkMax = Math.max(walkMax, pg.length); }
   return {
+    walk: walked.length, walkSame: walked.join() === every.join(), walkMax,
     ties: ties.length, tiesUnique: new Set(ties).size,
     top: top.map((x) => x.id), older: older.map((x) => x.id), work: work.map((x) => x.id), sent: sent.length, sentPaged, sentSorted,
     sorted: top.every((x, i) => i === 0 || top[i - 1].lastDate >= x.lastDate),
@@ -74,6 +80,7 @@ try {
   check(idb.left, 'removing an account removes its mail', idb);
   check(idb.sent > 20 && idb.sentSorted && idb.sentPaged, 'Sent lists every thread you wrote in, by when you wrote, and pages', idb);
   check(idb.ties === 7 && idb.tiesUnique === 7, 'threads with the same date page without a gap or a repeat', idb);
+  check(idb.walk >= 300 && idb.walkSame && idb.walkMax === 37, 'messages page in id order, each once, 37 at a time', { walk: idb.walk, same: idb.walkSame, max: idb.walkMax });
   check(JSON.stringify(idb) === JSON.stringify(mem), 'IndexedDB and the memory store give the same answers', { idb, mem });
   await p.close();
   const again = await page();

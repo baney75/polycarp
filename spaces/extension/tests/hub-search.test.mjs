@@ -132,8 +132,35 @@ test("a word new since the last prefix search is found by its start", () => {
   assert.deepEqual(ix.query("zeb").map((h) => h.threadId), ["tb"]);
 });
 
-// A store that only lists messages, for the index's own build.
-const listing = (msgs) => ({ allMessages: async () => msgs, onChange() {}, thread: async () => null });
+// A store that only pages through messages in id order, for the index's own build. It records each page asked for and
+// refuses to hand over every message at once.
+function listing(msgs) {
+  const sorted = msgs.slice().sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const at = new Map(sorted.map((m, i) => [m.id, i]));
+  const asked = [];
+  return {
+    asked,
+    allMessages: async () => { throw new Error("read every message at once"); },
+    messagesAfter: async (after, limit) => { asked.push(limit); const i = after ? at.get(after) + 1 : 0; return sorted.slice(i, i + limit); },
+    onChange() {}, thread: async () => null
+  };
+}
+
+test("the build reads the store a page at a time and still indexes every message", async () => {
+  const store = listing(bigCorpus(5000, 3));
+  const L = X.live(store);
+  await L.warm();
+  assert.equal(L.index.size, 5000);
+  assert.ok(store.asked.length >= 5 && store.asked.every((n) => n <= 1000), "pages asked: " + store.asked.join());
+});
+
+test("an HTML-only message is found by the words in its body, not its markup", async () => {
+  S.useMemoryStore();
+  await S.upsert("home", [mk("h", { subject: "Receipt", text: "", html: '<html><head><title>headword</title><style>.pricey{}</style></head><body><p>Your <b>pumpkin</b>&nbsp;order &amp; caf&eacute; &#x6b;iwi</p><script>scriptword()</script></body></html>' })]);
+  const L = X.live(S);
+  for (const q of ["pumpkin ", "order ", "kiwi "]) assert.deepEqual(await subjects(L, q), ["Receipt"], q);
+  for (const q of ["scriptword ", "headword ", "pricey ", "nbsp ", "amp "]) assert.deepEqual(await subjects(L, q), [], q);
+});
 
 test("the first build gives the page back between chunks, and queries wait for it whole", async () => {
   const msgs = bigCorpus(10000, 7);
@@ -195,6 +222,7 @@ test("the page's first build of 100,000 messages never holds the page more than 
   const worst = Math.max(...slices);
   console.log(`# first build: ${slices.length} chunks in ${total.toFixed(0)} ms, longest ${worst.toFixed(0)} ms`);
   assert.ok(slices.length >= 50, "built in chunks");
+  assert.ok(L.index.size === 100000);
   // Relative to the whole build, so a loaded machine slows both alike.
   assert.ok(worst < total / 10, `a chunk held the page ${worst.toFixed(0)} ms of ${total.toFixed(0)}`);
 });

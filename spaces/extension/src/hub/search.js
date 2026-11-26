@@ -17,6 +17,21 @@
     const out = String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
     return out.filter((w) => w.length > 1 || /\d/.test(w));
   }
+  // The words of an HTML-only body, for the index: scripts, styles and the head dropped, tags removed, the common
+  // entities read. Linear in the text, which is cut first; the page shows such mail through its own DOM parser.
+  const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: "\"", apos: "'", nbsp: " " };
+  function htmlText(html) {
+    if (!html) return "";
+    return String(html).slice(0, MAX_TEXT * 5)
+      .replace(/<(script|style|head|title|template|noscript)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, " ")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (all, e) => {
+        if (e[0] !== "#") return ENTITIES[e.toLowerCase()] || " ";
+        const n = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return n > 0 && n < 0x110000 ? String.fromCodePoint(n) : " ";
+      })
+      .slice(0, MAX_TEXT);
+  }
   const addrWords = (a) => (a && a.addr ? [String(a.addr).toLowerCase(), ...words(a.name), ...words(a.addr)] : []);
 
   // A query into terms (each a token or a prefix to look up) and filters.
@@ -73,7 +88,7 @@
       for (const w of addrWords(m.from)) { put(w); put("f:" + w); }
       for (const a of [...(m.to || []), ...(m.cc || [])]) for (const w of addrWords(a)) { put(w); put("t:" + w); }
       for (const w of words(m.subject)) { put(w); put("s:" + w); }
-      for (const w of words(String(m.text || "").slice(0, MAX_TEXT))) put(w);
+      for (const w of words(m.text ? String(m.text).slice(0, MAX_TEXT) : htmlText(m.html))) put(w);
       let set = byThread.get(m.threadId);
       if (!set) byThread.set(m.threadId, (set = []));
       set.push(d);
@@ -171,10 +186,11 @@
   }
 
   // An index kept up to date with the store. `warm` builds it ahead of the first search (the page calls it at start),
-  // in chunks that give the page back between them, so typing and scrolling go on while it reads 100,000 messages.
+  // reading CHUNK messages at a time and giving the page back between them, so it never holds every message at once
+  // and typing and scrolling go on while it reads 100,000.
   // After that each changed thread is read again. Updates run one at a time and every query waits for them, so a
   // query never sees an index half built.
-  const CHUNK = 2000;
+  const CHUNK = 500;
   function live(store, o) {
     const S = store || globalThis.PolycarpHubStore;
     const pause = (o && o.pause) || (() => new Promise((ok) => setTimeout(ok, 0)));
@@ -187,11 +203,14 @@
     async function build() {
       building = true;
       try {
-        const all = await S.allMessages();
         ix.clear();
-        for (let i = 0; i < all.length; i += CHUNK) {
-          ix.setThreads([], all.slice(i, i + CHUNK));
-          if (i + CHUNK < all.length) await pause();
+        for (let last = "";;) {
+          const page = await S.messagesAfter(last, CHUNK);
+          if (!page.length) break;
+          ix.setThreads([], page);
+          if (page.length < CHUNK) break;
+          last = page[page.length - 1].id;
+          await pause();
         }
       } catch (e) {
         full = true;
@@ -230,5 +249,5 @@
     };
   }
 
-  globalThis.PolycarpHubSearch = { words, parse, create, live };
+  globalThis.PolycarpHubSearch = { words, htmlText, parse, create, live };
 })();
