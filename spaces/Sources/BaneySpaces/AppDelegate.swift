@@ -880,8 +880,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if AXIsProcessTrusted() { keysHold.start(modifier: Modifier.current) }
         // ⌃` drops the quick terminal down, from any app (in builds with the terminal, while Settings has it on).
         TerminalFeature.registerQuickKey(hotkeys)
-        // The default apps' keys (`RoleKeys`): the ones Polycarp comes with, moved by [keys.bindings] in config.toml.
-        RoleHotkeys.register(hotkeys)
         let mods = Modifier.current.carbon
         for (i, code) in Hotkeys.digitKeyCodes.enumerated() {
             let n = i + 1
@@ -895,6 +893,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         registerTilingKeys()
+        // The default apps' keys (`RoleKeys`): the ones Polycarp comes with, moved by [keys.bindings] in config.toml.
+        // Last, so a chord one of Polycarp's other keys has costs the job's key and never that one.
+        RoleHotkeys.register(hotkeys)
     }
 
     private func registerTilingKeys() {

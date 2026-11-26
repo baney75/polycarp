@@ -34,7 +34,7 @@ final class DefaultAppsStore {
     func start(log: @escaping (String) -> Void) {
         self.log = log
         let home = NSHomeDirectory()
-        stops = [DefaultAppsFile.path(), "/Applications", home + "/Applications"].map { path in
+        stops = [DefaultAppsFile.path(), SurfacesFile.path(), "/Applications", home + "/Applications"].map { path in
             PolycarpThemeWatcher.fileEvents(queue, path) { [weak self] in self?.look(after: 0.3) }
         }
         refresh()

@@ -158,14 +158,23 @@ public enum RoleKeys {
 
     // MARK: This Mac
 
-    /// Reads the file and macOS's shortcuts. `modifier` is the app's setting. Not for the main thread.
+    /// Reads the file, this person's other Polycarp keys and macOS's shortcuts. `modifier` is the app's setting. Not for
+    /// the main thread.
     public static func now(modifier: String?) -> Plan {
         let domain = "com.apple.symbolichotkeys" as CFString
         CFPreferencesAppSynchronize(domain)
         let hotkeys = CFPreferencesCopyAppValue("AppleSymbolicHotKeys" as CFString, domain) as? [String: Any] ?? [:]
         let text = (try? DefaultAppsFile.text(at: DefaultAppsFile.path())) ?? ""
         let mod = self.mod(setting: modifier)
-        return plan(text, mod: mod) { polycarpOwner($0, mod: mod) ?? systemOwner($0, hotkeys: hotkeys) }
+        let mine = Keymap.rows(surfaces())
+        return plan(text, mod: mod) { polycarpOwner($0, mod: mod, in: mine) ?? systemOwner($0, hotkeys: hotkeys) }
+    }
+
+    /// surfaces.json, which holds the tiling keys as this person has them; as Polycarp comes when there is none or it
+    /// doesn't read, as the app does.
+    static func surfaces() -> Surfaces {
+        if case .document(let d) = SurfacesFile.load(path: SurfacesFile.path()) { return d.surfaces }
+        return .defaults
     }
 
     /// `Keymap.modifierSymbol`'s setting as modifiers.
@@ -180,9 +189,10 @@ public enum RoleKeys {
 
     // MARK: Who has a chord
 
-    /// Polycarp's other keys that work anywhere.
-    public static func polycarpOwner(_ chord: Chord, mod: Set<Chord.Mod>) -> String? {
-        Keymap.all.first { b in
+    /// Polycarp's other keys that work anywhere. `table` is them as this person has them (`Keymap.rows(_ s: Surfaces)`):
+    /// a tiling key moved onto a job's chord keeps it.
+    public static func polycarpOwner(_ chord: Chord, mod: Set<Chord.Mod>, in table: [KeyBinding] = Keymap.all) -> String? {
+        table.first { b in
             b.scope == .global && !b.id.hasPrefix(Self.rowPrefix) && chords(b.keys, mod: mod).contains(chord)
         }.map { "Polycarp, for \($0.title.prefix(1).lowercased() + $0.title.dropFirst())" }
     }

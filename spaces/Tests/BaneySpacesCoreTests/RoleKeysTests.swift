@@ -103,11 +103,29 @@ final class RoleKeysTests: XCTestCase {
         XCTAssertNil(p.of(.browser).first?.taken)
     }
 
+    /// A tiling key this person moved onto a job's chord keeps it: the plan reads their keys, not the ones Polycarp comes with.
+    func testATilingKeyMovedOntoAJobsChordKeepsIt() throws {
+        guard case .success(let v) = SurfaceValue.parse(Data(#"{"tiling":{"keys":{"toggle":"ctrl+shift+cmd+B"}}}"#.utf8)) else {
+            return XCTFail("surfaces.json didn't parse")
+        }
+        let mine = Keymap.rows(try Surfaces.check(v).get().surfaces)
+        let p = plan(owner: { RoleKeys.polycarpOwner($0, mod: [.cmd], in: mine) })
+        XCTAssertEqual(p.of(.browser).map(\.taken), ["Polycarp, for tile this workspace, or stop"])
+        XCTAssertNil(active(p)["ctrl+shift+cmd+b"])
+        XCTAssertNotNil(active(p)["ctrl+cmd+return"])
+        XCTAssertNil(RoleKeys.polycarpOwner(Chord("ctrl+shift+cmd+b", mod: [])!, mod: [.cmd]), "free among the keys Polycarp comes with")
+    }
+
     func testTheAppTakesOnlyWhatThePlanGivesIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         let keys = try XCTUnwrap(SourceText.block(after: "func registerShortcuts()", in: app))
         let gate = try XCTUnwrap(keys.range(of: "guard started else { return }")), call = try XCTUnwrap(keys.range(of: "RoleHotkeys.register(hotkeys)"))
         XCTAssertLessThan(gate.lowerBound, call.lowerBound, "no key is taken before Polycarp works")
+        let tiling = try XCTUnwrap(keys.range(of: "registerTilingKeys()"))
+        XCTAssertLessThan(tiling.lowerBound, call.lowerBound, "a chord another Polycarp key has costs the job's key")
+        let plan = try SourceText.code("Sources/BaneySpacesCore/RoleKeys.swift")
+        XCTAssertTrue(plan.contains("let mine = Keymap.rows(surfaces())"))
+        XCTAssertTrue(plan.contains("polycarpOwner($0, mod: mod, in: mine)"))
         let code = try SourceText.code("Sources/BaneySpaces/DefaultApps/RoleHotkeys.swift")
         XCTAssertTrue(code.contains("for b in store.now.keys.active {"))
         XCTAssertTrue(code.contains("if !given { store.refused.insert(b.chord) }"))
