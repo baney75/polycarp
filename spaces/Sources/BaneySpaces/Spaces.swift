@@ -1576,6 +1576,8 @@ final class Spaces {
     /// the space and then give it back. With one of its app's windows on that workspace not drawn, the scan decides.
     private func mayBeTab(_ id: WindowID) -> Bool {
         guard let pid = windows[id]?.pid, let n = model.workspace(of: id) else { return false }
+        // A tab behind another looks closed to a scan, so it waits in `dormant`, not in the model.
+        if dormant.contains(where: { $0.value.pid == pid && $0.value.workspace == n }) { return true }
         let mates = Set(model.windows(on: n).filter { $0 != id && windows[$0]?.pid == pid && !isMinimized($0) })
         guard !mates.isEmpty else { return false }
         let places = WindowMoves.places(of: mates)

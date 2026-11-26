@@ -37,6 +37,8 @@ final class LeaveNowWiringTests: XCTestCase {
         XCTAssertTrue(note.contains("if mayBeTab(id) { onWindowsLeft([id], \"destroyed\", at) } else { leaveNow("))
         let tab = try body(code, from: "private func mayBeTab(", to: "private func focusMovedWithin(")
         XCTAssertTrue(tab.contains("places[$0]?.onScreen != true"))
+        // Review of #881, first-F1: the hidden tab a scan dropped as closed waits in `dormant`.
+        XCTAssertTrue(tab.contains("dormant.contains(where: { $0.value.pid == pid && $0.value.workspace == n })"))
     }
 
     /// Case 26: an app quits; every one of its windows leaves.
