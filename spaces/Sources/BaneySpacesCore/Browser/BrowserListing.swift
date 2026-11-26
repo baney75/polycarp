@@ -17,7 +17,7 @@ public enum BrowserListing {
             let r = h.row, name = app(h.peer.bundleID), place = URLDisplay.short(r.url)
             func line(_ parts: String...) -> String { parts.filter { !$0.isEmpty }.joined(separator: " · ") }
             switch r.source {
-            case .tabs: return Row(hit: h, title: r.title, subtitle: line(name, r.site), badge: r.audible ? "Playing" : "Tab", symbol: nil)
+            case .tabs: return Row(hit: h, title: r.title, subtitle: line(name, r.site), badge: r.audible ? "Playing" : r.app != nil ? "App" : "Tab", symbol: nil)
             case .groups: return Row(hit: h, title: r.title, subtitle: line("Tab group", name, "add a workspace's number to send it there"), badge: "", symbol: "rectangle.stack")
             case .bookmarks: return Row(hit: h, title: r.title, subtitle: line("Bookmark", place, "opens in \(name)"), badge: "", symbol: "bookmark")
             case .history: return Row(hit: h, title: r.title, subtitle: line("Visited", place, "opens in \(name)"), badge: "", symbol: "clock")
@@ -25,6 +25,12 @@ public enum BrowserListing {
                 return Row(hit: h, title: r.title, subtitle: line("Download", r.site, "shows it in Finder"), badge: progress(r.progress), symbol: "arrow.down.circle")
             }
         }
+    }
+
+    /// The browser's own row behind each session row (`listed`, their ids), by id: the session row keeps that row's
+    /// second action and its "App" badge, since only one of the two is listed.
+    public static func behind(_ hits: [BrowserHit], listed: Set<String>) -> [String: BrowserHit] {
+        Dictionary(hits.filter { listed.contains($0.id) }.map { ($0.id, $0) }) { first, _ in first }
     }
 
     /// "42%" while the size is known, else how much has come.

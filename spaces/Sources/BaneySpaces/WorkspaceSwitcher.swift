@@ -21,8 +21,8 @@ final class WorkspaceSwitcher {
     var windowNumber: Int? { panel?.windowNumber }
     private var watchdog: Timer?
     /// The page in front in each of a browser's windows (pid, its windows), where its extension says: its title and its
-    /// site's icon, if there is one yet.
-    var pages: (pid_t, [(id: UInt32, title: String)]) -> [UInt32: (title: String, icon: NSImage?)] = { _, _ in [:] }
+    /// site's icon, if there is one yet, and whether the window is a web app's.
+    var pages: (pid_t, [(id: UInt32, title: String)]) -> [UInt32: (title: String, icon: NSImage?, app: Bool)] = { _, _ in [:] }
     /// Apps in the order they were last brought forward, most recent first.
     private var appOrder: [pid_t] = []
     private var hold = TabHold()
@@ -188,6 +188,7 @@ final class WorkspaceSwitcher {
             guard let page = said[tiles[i].id] else { continue }
             if !page.title.isEmpty, page.title != tiles[i].title { tiles[i].title = page.title }
             if page.icon !== tiles[i].site { tiles[i].site = page.icon }
+            if page.app != tiles[i].own { tiles[i].own = page.app }
         }
     }
 
@@ -439,6 +440,8 @@ final class SwitcherModel: ObservableObject {
         var icon: NSImage?
         /// A browser window's front page's site icon.
         var site: NSImage?
+        /// A web app's window: the site's icon is its own, in place of the browser's.
+        var own = false
     }
     /// The window bar: one app's windows, open while Tab was held on it.
     struct WindowBar {
@@ -598,11 +601,11 @@ struct SwitcherView: View {
         let c = sheet.item(selected: on)
         let tint = Chrome.workspace(w.workspace)
         let text = label(title, c.label, 12, .medium, Chrome.wash(on ? 1 : 0.75)).multilineTextAlignment(.leading)
-        // The sheet shapes the app's icon; a browser window's site icon sits over it, uncut.
+        // The sheet shapes the app's icon (a web app's is its site's); a browser window's site icon sits over it, uncut.
         let image = { (size: CGFloat) in
-            Image(nsImage: icon ?? NSImage()).resizable().frame(width: size, height: size).modifier(D.cut(c.icon)).modifier(D.part(c.icon))
+            Image(nsImage: (w.own ? w.site : nil) ?? icon ?? NSImage()).resizable().frame(width: size, height: size).modifier(D.cut(c.icon)).modifier(D.part(c.icon))
                 .overlay(alignment: .bottomTrailing) {
-                    if let site = w.site {
+                    if let site = w.site, !w.own {
                         Image(nsImage: site).resizable().interpolation(.high).frame(width: size * 0.5, height: size * 0.5)
                             .padding(1.5).background(Chrome.shape(.launcherKey).fill(Chrome.panel()))
                             .offset(x: 4, y: 4)

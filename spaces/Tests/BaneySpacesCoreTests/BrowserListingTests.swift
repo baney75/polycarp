@@ -43,6 +43,12 @@ final class BrowserListingTests: XCTestCase {
         let engine = Build.scripted(spec, snap, numbers: [:], front: false, frontWindowNumber: 0).map(\.id)
         XCTAssertEqual(engine, ["tab:org.example.browser:2:4"])
         XCTAssertNil(row(.tabs, tab, listed: Set(engine)))
+        // The session row listed in its place is still that tab: it can be made an app.
+        let hits = book(.tabs, tab).search("knit")
+        let behind = BrowserListing.behind(hits, listed: Set(engine))
+        XCTAssertEqual(behind.keys.sorted(), engine)
+        XCTAssertEqual(behind[engine[0]].map { WebApps.fits($0.row) }, true)
+        XCTAssertEqual(BrowserListing.behind(hits, listed: ["tab:org.example.other:2:4"]), [:], "another browser's tab is another tab")
         // Off, the tabs switch stops what the extension sends; the engine's own tab still shows.
         let items = Build.scripted(spec, snap, numbers: [:], front: false, frontWindowNumber: 0)
         XCTAssertEqual(BrowserListing.sessionItems(items, on: []).map(\.id), engine)

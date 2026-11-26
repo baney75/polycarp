@@ -17,12 +17,18 @@ final class BrowserHub {
     /// A download finished.
     var onDone: (BrowserWindows.Front) -> Void = { _ in }
     private var saying = false
+    /// A web app waiting for its browser to start, until then.
+    private var waiting: (app: WebApp, until: Date)?
 
     func start() {
         server.joined = { [weak self] link in
             guard let self else { return }
             self.links[link.peer] = link
             self.want(link)
+            if let w = self.waiting, w.app.browser == link.peer.bundleID {
+                self.waiting = nil
+                if w.until > Date() { self.open(w.app) }
+            }
         }
         server.message = { [weak self] m, link in
             guard let self, self.links[link.peer] != nil else { return }
@@ -125,6 +131,29 @@ final class BrowserHub {
         guard let link = links[peer] else { return false }
         link.send(what.merging(["op": "browser.open", "window": window as Any?].compactMapValues { $0 }) { $1 })
         return true
+    }
+
+    /// A web app's tab, when its window is open.
+    func tab(of app: WebApp) -> BrowserWindows.Front? {
+        book.rows(.tabs).first { $0.peer.bundleID == app.browser && $0.row.app == app.id }.map { .init($0.peer, $0.row) }
+    }
+
+    /// Opens a web app's window in its browser. False when that browser isn't on the line.
+    @discardableResult
+    func open(_ app: WebApp) -> Bool {
+        guard let peer = peers(of: app.browser).first else { return false }
+        links[peer]?.send(["op": "browser.app", "id": app.id, "url": app.url])
+        return true
+    }
+
+    /// Opens it once its browser, which is starting, is on the line; `orElse` when that takes too long.
+    func open(_ app: WebApp, within seconds: Double, orElse: @escaping () -> Void) {
+        waiting = (app, Date().addingTimeInterval(seconds))
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard self?.waiting?.app == app else { return }
+            self?.waiting = nil
+            orElse()
+        }
     }
 
     /// Asks the row's browser for what it can only do itself. False when that browser is gone.

@@ -21,6 +21,9 @@ public enum WebApps {
         (1...40).contains(s.utf8.count) && s.utf8.allSatisfy { (0x61...0x7a).contains($0) || (0x30...0x39).contains($0) || $0 == 0x2d }
     }
 
+    /// Whether a row can be made an app: a web page, and not an app's own window.
+    public static func fits(_ r: BrowserRow) -> Bool { [.tabs, .bookmarks, .history].contains(r.source) && r.app == nil && BrowserMessage.web(r.url) }
+
     /// What to call it, for the person to change: the last part of a title ("Inbox - Mail"), else the site.
     public static func name(title: String, site: String) -> String {
         var last = Substring(title)
