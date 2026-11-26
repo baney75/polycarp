@@ -65,4 +65,11 @@ final class TileCausesTests: XCTestCase {
         c.add(C(.close, at: 10.1, workspace: 2))
         XCTAssertEqual(c.answer(now: 10.2, wrote: [wrote(7, 2, new: true)]).count, 2)
     }
+
+    /// Review of #859 (first-F1): switches with nothing tiling leave nothing behind.
+    func testStaleCausesLeaveAsNewOnesCome() {
+        var c = TileCauses()
+        for i in 0..<100 { c.add(C(.switch, at: Double(i) * 2)) }
+        XCTAssertEqual(c.pending.count, 1)
+    }
 }

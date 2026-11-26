@@ -37,12 +37,20 @@ public struct TileCauses: Equatable, Sendable {
 
     public init() {}
 
-    public mutating func add(_ cause: Cause) { pending.append(cause) }
+    /// Stale causes leave as each comes, so a day of switches with nothing tiling keeps none.
+    public mutating func add(_ cause: Cause) {
+        prune(now: cause.at)
+        pending.append(cause)
+    }
+
+    private mutating func prune(now: Double) {
+        pending.removeAll { now - $0.at > ($0.kind == .switch ? Self.switchKeep : Self.keep) }
+    }
 
     /// The causes a look at `now` answers by asking for `wrote` (or, with `focus`, by moving the focus alone), taken off
     /// the list. Causes no look answered in time leave it with no answer.
     public mutating func answer(now: Double, wrote: [Wrote], focus: Bool = false) -> [Cause] {
-        pending.removeAll { now - $0.at > ($0.kind == .switch ? Self.switchKeep : Self.keep) }
+        prune(now: now)
         var answered: [Cause] = []
         pending.removeAll { c in
             let yes: Bool

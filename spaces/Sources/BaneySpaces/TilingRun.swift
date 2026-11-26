@@ -11,21 +11,21 @@ extension Tiling {
             guard spaces.active else { return done("Polycarp isn't placing windows now") }
             let n = spaces.model.current
             look()
-            if let pressed { cause(TileCauses.Cause(.key, at: pressed)) }
+            // Timed only where the key's own look writes (R-TS2): a key that writes nothing leaves no cause behind.
+            let key = { if let pressed { self.cause(TileCauses.Cause(.key, at: pressed)) } }
             switch engine.run(command, on: n, focused: spaces.front()) {
-            case .nothing(let why):
-                if pressed != nil { _ = causes.answer(now: Self.uptime, wrote: [], focus: true) }
-                done(why)
+            case .nothing(let why): done(why)
             case .changed:
+                key()
                 look()
                 done(nil)
             case .focus(let id):
                 engine.focused(id)
                 drawStrips()
                 spaces.focus(id, on: n, announce: false)
-                if pressed != nil {
+                if let pressed {
                     let now = Self.uptime
-                    Timed(causes: causes.answer(now: now, wrote: [], focus: true), looked: now, asked: now).log(landed: nil)
+                    Timed(causes: [TileCauses.Cause(.key, at: pressed)], looked: now, asked: now).log(landed: nil)
                 }
                 done(nil)
             case .cross(let d, let id): done(cross(d, from: n, carrying: id))
