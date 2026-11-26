@@ -69,6 +69,43 @@ before. The window server's list and the retry timers stay as the backstop, not 
 rest. No window ends off its tile: the `TilingEngine`, `TilingRequest` and `Tiling*` tests pass unchanged unless a
 rule here changes them.
 
+### R-TS8 A window that leaves fills its space at once
+Donovan, 2026-11-26, the second report: "when a window's closed tiling doesn't auto fill like it should, is still
+often slow and janky as well." A window leaves its workspace's layout the moment Polycarp hears it went:
+
+- its app says `kAXUIElementDestroyed` for it: the close button, ⌘W, a tab merged into another window;
+- its app says `kAXWindowMiniaturized` for it: minimize;
+- its app quits (`NSWorkspace.didTerminateApplicationNotification`): every window of that app;
+- Polycarp moves it to another workspace.
+
+Spaces takes it out of the model then, without waiting for the window server to drop it or for a scan. It is kept as
+dormant, so a window whose app still lists it at the next scan goes back to its workspace and is tiled again. Tiling
+looks at once: no `lookSoon` delay, no scan and no settle first. The note still starts a scan of the app (R-TS6),
+which only confirms. A sheet or panel closing is not a window leaving: nothing is written.
+
+### R-TS9 One frame per window, sent so it never shows a frame in between
+- A close or a move asks each window for at most one frame. A window is asked again only when it didn't land
+  (R-TS5's tries), and that write counts.
+- A frame goes to its app in the fewest Accessibility messages that never show the window clamped by the display's
+  edge or outside both its old and its new frame. Same size: the position alone. Same position: the size alone.
+  Otherwise the position first when the window at its new position and old size stays inside the display, else the
+  size first when it does at its old position and new size, else size, position and size again (the old way). When
+  both fit, the order whose frame in between lies inside the new frame. Animation stays off while it is sent.
+
+### R-TS10 Every close and move writes its time and its writes
+    <epoch s> close fill=<ms> writes=<n> windows=<k> how=<destroyed|minimized|quit|workspace>
+    <epoch s> move fill=<ms> writes=<n> windows=<k> how=<key|drag>
+
+`fill` is from the cause (the note's arrival, the key's event time, the drop, the move) to the last frame write that
+returned for it, `-` when nothing was written in 3 s. `writes` is the most frames asked of any one window for it and
+`windows` how many windows got one. The line is written once 0.5 s pass with no write for it, or 3 s after the cause.
+A close counts only when the window was tiled and another tiled window stays on its workspace; a move key only when
+it moved a window. Nothing else is written.
+
+### R-TS11 Budgets
+`spec/speed.json` `close-fill` and `move-fill`, judged on `fill` by `scripts/speed-report.sh`: p90 50 ms each, over at
+least 20 real tries. `writes` is 1 on every line but one whose window didn't land.
+
 ## Measuring
 
 - In real use: the `tile=` lines in timing.log, read by `scripts/speed-report.sh`.
@@ -106,5 +143,22 @@ Each row is a test; the test names it.
 | 21 | R-TS6 | `kAXWindowCreated` from pid 7 | a scan asking pid 7 starts at once |
 | 22 | R-TS6 | `kAXUIElementDestroyed` from a window of pid 7 | a scan asking pid 7 starts at once |
 | 23 | R-TS7 | `BANEYSPACES_RENDER_TILE_TIMING=20 Polycarp --render <dir>` | exit 0 |
-
-Cases 21 and 22 have no safe pure test: they are a wiring test that reads `Spaces.swift`, plus the probe live.
+| 24 | R-TS8 | `kAXUIElementDestroyed` for a tiled window the window server still lists | the window leaves the model and the layout at once; the look that follows plans its neighbours |
+| 25 | R-TS8 | the same from ⌘W or a tab merge (the same note) | the same as 24 |
+| 26 | R-TS8 | an app that isn't in front quits | its windows leave at once; the neighbours fill |
+| 27 | R-TS8 | `kAXWindowMiniaturized` for a tiled window | it leaves the layout at once |
+| 28 | R-TS8 | a window moved to another workspace | its old workspace looks at once, not in 20 ms |
+| 29 | R-TS8 | a sheet or panel closes | no window leaves, nothing is written |
+| 30 | R-TS8 | a destroyed window its app lists again at the next scan | back on its workspace, tiled again |
+| 31 | R-TS9 | (92,40 744x934) to (8,40 1496x934) on a display 1512 wide | position, then size; between, (8,40 744x934) |
+| 32 | R-TS9 | (8,40 744x934) to (760,40 744x934) | the position alone |
+| 33 | R-TS9 | (8,40 744x934) to (8,40 1496x934) | the size alone |
+| 34 | R-TS9 | (8,40 1496x934) to (760,40 744x934) | size, then position; between, (8,40 744x934) |
+| 35 | R-TS9 | (8,40 300x934) to (1000,40 500x934), display 1512 wide, neither in between fits | size, position, size |
+| 36 | R-TS9 | three tiled windows, the middle one leaves | one move for each of the two left; none in the next plan while they fly or once they landed |
+| 37 | R-TS10 | a close at 10.000; writes of windows 1 and 2 return at 10.010, window 1 again at 10.030; 0.5 s quiet | `close fill=30 writes=2 windows=2 how=destroyed` |
+| 38 | R-TS10 | a close with no write in 3 s | `close fill=- writes=0 windows=0 how=destroyed` |
+| 39 | R-TS10 | a move key at 10.000, two windows written once, back at 10.012 | `move fill=12 writes=1 windows=2 how=key` |
+| 40 | R-TS10 | a close of the last tiled window on its workspace | no line |
+| 41 | R-TS11 | the app's code | `close-fill` and `move-fill` have budgets (`SpeedBudgetTests`) |
+Cases 21, 22 and 24 to 30 have no safe pure test: they are wiring tests that read `Spaces.swift`, plus the probe live.
