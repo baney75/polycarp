@@ -100,6 +100,34 @@ final class TilingPaceTests: XCTestCase {
         XCTAssertEqual(e.roundings[1], 2)
     }
 
+    /// Review of #863 round 2, second-F2: a tab that takes the place of a window in flight is not in flight itself, since
+    /// no settle watches its id; it gets its tile.
+    func testATabThatTakesAFlyingWindowsPlaceIsAskedForItsTile() throws {
+        var (e, shot) = engine([1])
+        let m = try XCTUnwrap(e.plan(shot).first)
+        e.flying([1])
+        shot.windows = [TilingWindow(id: 2, pid: 7, bundle: "app", workspace: 1, frame: shot.windows[0].frame)]
+        let moves = e.plan(shot)
+        XCTAssertEqual(moves.first?.id, 2)
+        XCTAssertEqual(moves.first?.to, m.to)
+    }
+
+    /// Review of #863 round 2: the settle grades before it grounds (grounding first erased that a plan held a window
+    /// back, first-F1), and a write a switch cut off looks again shortly, not at once (second-F3).
+    func testTheSettleGradesFirstAndACutWriteWaits() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/Tiling.swift")
+        let settle = try XCTUnwrap(code.range(of: "private func settle(")).lowerBound
+        let after = try XCTUnwrap(code.range(of: "private func ready()", range: settle..<code.endIndex)).lowerBound
+        let body = String(code[settle..<after])
+        let graded = try XCTUnwrap(body.range(of: "self.engine.landed(now, targets: targets)"))
+        let grounded = try XCTUnwrap(body.range(of: "self.engine.grounded(ids.subtracting(now.keys))"))
+        XCTAssertLessThan(graded.lowerBound, grounded.lowerBound)
+        let write = try XCTUnwrap(code.range(of: "private func write(")).lowerBound
+        let wbody = String(code[write..<settle])
+        XCTAssertFalse(wbody.contains("self.again = true"), "a cut write must not loop back at once")
+        XCTAssertTrue(wbody.contains("else if cut { self.lookSoon(0.03) }"))
+    }
+
     /// Cases 13 to 15, the wiring: tiling is busy only while it asks or writes. The ratchet: a settle that holds `busy`
     /// again (the 2026-11-26 lag, up to 600 ms behind each key) fails here.
     func testCases13To15ASettleNeverHoldsTheNextLook() throws {

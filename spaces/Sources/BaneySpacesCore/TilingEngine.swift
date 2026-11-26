@@ -610,6 +610,9 @@ public struct TilingEngine: Equatable, Sendable {
         if before[old] == nil { before[new] = nil }
         if let s = stowed.removeValue(forKey: old) { stowed[new] = s }
         carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&roundings); carry(&asked); carry(&landing)
+        // The old tab's settle watches the old id: no settle ends the new one's flight, so it isn't in flight (R-TS5).
+        asked[new]?.flying = false
+        asked[new]?.heldBack = false
         recent = recent.map { $0 == old ? new : $0 }
     }
 

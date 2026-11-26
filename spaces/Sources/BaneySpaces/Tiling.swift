@@ -250,9 +250,11 @@ final class Tiling {
                 var timed = timed
                 (timed.asked, timed.moves) = (Self.uptime, moves.count)
                 // One a switch or a press got in front of was never asked; one whose app didn't answer is asked later.
+                // Cut off by a switch or a press: looked at again shortly, not at once, so a closed gate isn't spun on.
+                var cut = false
                 for (id, whole) in wrote where !whole {
                     self.engine.touched(id)
-                    if gate.open(pass), !Tiling.pressed { self.silent[id] = Date().addingTimeInterval(2) } else { self.again = true }
+                    if gate.open(pass), !Tiling.pressed { self.silent[id] = Date().addingTimeInterval(2) } else { cut = true }
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
                 let ids = Set(wrote.filter(\.1).map(\.0))
@@ -260,7 +262,7 @@ final class Tiling {
                 self.engine.flying(ids)
                 let again = self.ready()
                 self.settle(ids, Dictionary(uniqueKeysWithValues: moves.map { ($0.id, $0.to) }), pass, serial, timed)
-                if again { self.look() }
+                if again { self.look() } else if cut { self.lookSoon(0.03) }
             }
         }
     }
@@ -289,8 +291,10 @@ final class Tiling {
             }
             timed.log(landed: ids.count == all.count ? Self.uptime : nil)
             self.writes.done(ids, serial)
-            self.engine.grounded(ids)
-            if self.engine.landed(now, targets: targets) { self.look() }
+            // Graded first: grading reads whether a plan held a window back, and ends the flight of each it grades.
+            let look = self.engine.landed(now, targets: targets)
+            self.engine.grounded(ids.subtracting(now.keys))
+            if look { self.look() }
         }
     }
 
