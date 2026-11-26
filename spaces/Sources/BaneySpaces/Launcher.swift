@@ -1144,7 +1144,7 @@ final class LauncherModel: ObservableObject {
     private static let symbols: [AppRole: String] = [
         .agent: "sparkle", .browser: "globe", .terminal: "terminal", .editor: "chevron.left.forwardslash.chevron.right",
         .files: "folder", .mail: "envelope", .messages: "message", .calendar: "calendar", .notes: "note.text",
-        .music: "music.note", .passwords: "key",
+        .music: "music.note", .video: "play.rectangle", .passwords: "key",
     ]
 
     /// "claude" or "codex": that agent, started in your terminal.

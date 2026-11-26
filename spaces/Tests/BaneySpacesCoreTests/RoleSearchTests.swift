@@ -21,6 +21,10 @@ final class RoleSearchTests: XCTestCase {
         let row = RoleSearch.rows("browser", resolved, folder: nil)[0]
         XCTAssertEqual([row.title, row.subtitle], ["Firefox", "Your browser · You chose it"])
         XCTAssertEqual(row.action, .open(.browser))
+        XCTAssertEqual(Set(RoleSearch.names.keys), Set(AppRole.allCases), "every job has its words")
+        var withVideo = resolved
+        withVideo[.video] = ResolvedDefault(role: .video, app: c(.app(DefaultAppCatalog.quickTime), "QuickTime Player"), source: .firstInstalled, gone: nil, candidates: [])
+        XCTAssertEqual(RoleSearch.rows("movies", withVideo, folder: nil).map(\.id), ["role:video"])
     }
 
     func testChoosingIsSettings() {
@@ -72,6 +76,7 @@ final class RoleSearchTests: XCTestCase {
         let main = try XCTUnwrap(SourceText.block(after: "static func mainBrowser(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> String? ", in: session))
         XCTAssertTrue(main.contains("if case .app(let yours)? = DefaultAppsStore.shared.now.resolved[.browser]?.app?.app { return yours }"))
         XCTAssertTrue(launcher.contains("let terminal = DefaultAppsStore.shared.now.programs"))
+        for role in AppRole.allCases { XCTAssertTrue(launcher.contains(".\(role.rawValue): \""), "\(role.rawValue) has a mark") }
         XCTAssertTrue(launcher.contains("RoleOpener.start(a.command, at: path, in: NSHomeDirectory())"))
     }
 

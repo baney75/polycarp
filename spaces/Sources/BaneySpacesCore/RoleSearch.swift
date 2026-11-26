@@ -33,7 +33,7 @@ public enum RoleSearch {
     static let names: [AppRole: [String]] = [
         .agent: ["agent", "ai"], .browser: ["browser", "web"], .terminal: ["terminal", "shell"], .editor: ["editor", "code"],
         .files: ["files", "file manager"], .mail: ["mail", "email"], .messages: ["messages", "texts"], .calendar: ["calendar"],
-        .notes: ["notes"], .music: ["music"], .passwords: ["passwords", "password manager"],
+        .notes: ["notes"], .music: ["music"], .video: ["video", "movies"], .passwords: ["passwords", "password manager"],
     ]
 
     /// "> fix the build" or "> agent fix the build". A ">" alone is the Do room's mark (`Room.mark`), so it needs words.
