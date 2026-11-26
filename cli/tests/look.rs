@@ -1408,7 +1408,12 @@ fn each_field_is_listed_once() {
     // Two branches can each add the same row in different places and still merge clean.
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let table = fs::read_to_string(root.join("cli/src/look/fields.rs")).unwrap();
-    let tight: String = table.split_whitespace().collect();
+    // Comments go first, so a row with one between its fields is still read. No row's text holds a `//`.
+    let code: String = table
+        .lines()
+        .map(|l| l.split("//").next().unwrap_or(l))
+        .collect();
+    let tight: String = code.split_whitespace().collect();
     let mut seen = std::collections::HashSet::new();
     for row in tight.split("(\"").skip(1) {
         let Some((path, rest)) = row.split_once('"') else {
