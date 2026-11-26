@@ -82,7 +82,10 @@ final class Spaces {
     private var heal: DispatchWorkItem?
     /// Windows that ignored every request to leave macOS full screen. Asking again only stalls.
     private var refusedFullScreen = Set<WindowID>()
-    private lazy var watcher = FocusWatcher { [weak self] pid in self?.focusMovedWithin(pid) }
+    private lazy var watcher = FocusWatcher(onChange: { [weak self] pid in self?.focusMovedWithin(pid) },
+                                            onWindow: { [weak self] pid, note, element in self?.windowNote(pid, note, element) })
+    /// A window opened or closed, as its app said: tiling times its look from here (spec/tiling-speed.md R-TS2).
+    var onWindowNote: (TileCauses.Cause) -> Void = { _ in }
     private let hud = SwitchHUD()
     /// Saved workspaces for windows not seen yet this launch. A hidden or busy app may not answer
     /// at startup; when its window shows up later it goes back where it was, and until then its
@@ -457,6 +460,7 @@ final class Spaces {
         lastScanWindows = snap.offscreen.merging(snap.onScreen) { a, _ in a }
         details = details.filter { windows[$0.key] != nil }
         watcher.sync(snap.owners)
+        watcher.watchWindows(windows.values.map { ($0.pid, $0.id, $0.element) })
         if !unsure.isEmpty || watcher.missing { scheduleRetry() }
         let screens = Windows.screens()
         // A window from the saved layout that only now answered goes back to its workspace.
@@ -1503,6 +1507,27 @@ final class Spaces {
     /// the window you were in closed (⌘W), and the app picked its next window on its own; or you
     /// chose a window yourself (the Window menu, ⌘`). A closed window keeps you on this workspace,
     /// so typing never lands in a hidden window. A window you chose takes you to its workspace.
+    /// An app said one of its windows opened, closed, minimized or came back (R-TS6): that app is scanned now, and a
+    /// window the window server already dropped leaves the model at once.
+    private func windowNote(_ pid: pid_t, _ note: FocusWatcher.WindowNote, _ element: AXUIElement) {
+        guard active else { return }
+        let at = ProcessInfo.processInfo.systemUptime
+        switch note {
+        case .created: onWindowNote(TileCauses.Cause(.new, at: at, pid: pid))
+        case .destroyed:
+            if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key, let n = model.workspace(of: id) {
+                onWindowNote(TileCauses.Cause(.close, at: at, workspace: n))
+            }
+        case .minimized, .restored: break
+        }
+        let before = model
+        refresh(full: false, asking: [pid], then: nil)
+        if !switching, model != before {
+            persist()
+            onChange?()
+        }
+    }
+
     private func focusMovedWithin(_ pid: pid_t) {
         guard active else { return }
         // Another window or tab in front has another title.
