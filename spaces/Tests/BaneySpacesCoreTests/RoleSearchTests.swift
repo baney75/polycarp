@@ -68,8 +68,11 @@ final class RoleSearchTests: XCTestCase {
         let browser = try XCTUnwrap(SourceText.block(after: "static var browser: URL? ", in: launcher))
         XCTAssertTrue(browser.contains("resolved[.browser]?.app?.path"))
         XCTAssertEqual(launcher.components(separatedBy: #"urlForApplication(toOpen: URL(string: "https:"#).count, 2, "asked of macOS only there")
+        // On this workspace when the browser can, else your browser as it opens a page.
         let open = try XCTUnwrap(SourceText.block(after: "static func openInBrowser(_ url: URL) ", in: launcher))
-        XCTAssertTrue(open.contains("let browser else {") && open.contains("withApplicationAt: browser"))
+        XCTAssertTrue(open.contains("openHere(url, { openAnyway(url) })"))
+        let anyway = try XCTUnwrap(SourceText.block(after: "private static func openAnyway(_ url: URL) ", in: launcher))
+        XCTAssertTrue(anyway.contains("let browser else {") && anyway.contains("withApplicationAt: browser"))
         XCTAssertTrue(launcher.contains(#"RoleSearch.webAgent(DefaultAppsStore.shared.now.resolved[.agent]?.app?.app) ?? "claude""#))
         let session = try SourceText.code("Sources/BaneySpaces/Session/SessionController.swift")
         XCTAssertTrue(session.contains("resolved[.browser]?.source == .you { Launcher.openInBrowser(url) }"))
