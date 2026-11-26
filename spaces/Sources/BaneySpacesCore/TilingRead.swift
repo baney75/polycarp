@@ -14,6 +14,8 @@ public struct TilingFacts: Equatable, Sendable {
     public var minimized = false
     /// Out of sight with its workspace, or held there.
     public var parked = false
+    /// It is over the workspace and not in it.
+    public var over: TilingOver?
     /// Polycarp filled the screen with it.
     public var filled = false
     /// Its frame is one macOS gives a full-screen window.
@@ -66,7 +68,7 @@ public enum TilingRead {
     public static func shot(_ facts: [TilingFacts], shown: [Int: TilingShot.Place], focused: WindowID?) -> TilingShot {
         let windows = facts.map { f in
             TilingWindow(id: f.id, pid: f.pid, bundle: f.bundle, workspace: f.workspace, frame: f.frame ?? .zero,
-                         fixed: f.answer.map { !$0.resizable } ?? false, away: !f.here)
+                         fixed: f.answer.map { !$0.resizable } ?? false, away: !f.here, over: f.over)
         }
         let seen = shown.filter { n, _ in
             let here = facts.filter { $0.workspace == n && !$0.minimized && !$0.parked }

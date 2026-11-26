@@ -8,7 +8,7 @@ import BaneySpacesCore
 /// happens to sit, decides what to show, so a display change or an app nudging its own window
 /// can't make BaneySpaces lose track of it.
 final class Spaces {
-    private(set) var model = Workspaces()
+    var model = Workspaces()
     private var saved: SavedFrames
     private var windows: [WindowID: Window] = [:]
     private(set) var switching = false { didSet { Window.gate.set(shut: switching) } }
@@ -464,14 +464,14 @@ final class Spaces {
                 // the window lives now (it may have been moved since) and holds its parked frame.
                 let sibling = closed.compactMap { dormant[$0] }.first { $0.pid == d.pid }
                 let home = sibling?.workspace ?? d.workspace
-                model.assign(id, to: home, focus: false)
+                model.putBack(id, on: home)
                 if !model.isShown(home), let frame = sibling?.frame ?? d.frame { saved.frames[id] = frame }
                 fromLayout.insert(id)
                 returned = returned || !model.isShown(home)
                 continue
             }
             guard let entry = pendingLayout.removeValue(forKey: id), windows[id]?.pid == entry.pid else { continue }
-            model.assign(id, to: entry.workspace, focus: false)
+            model.putBack(id, on: entry.workspace)
             // A held window is a new one: a claim or an agent's app may still send it elsewhere. A saved one isn't.
             if heldWindows.remove(id) == nil { fromLayout.insert(id) }
             // Its app hidden while it waited (it had windows elsewhere), the window landing here must come back.
@@ -828,6 +828,7 @@ final class Spaces {
     /// viewer while it holds the keyboard. `announce` flashes the workspace HUD, only when
     /// `showSwitchHUD` is on (off by default, `SwitchHUDPolicy`).
     func switchTo(_ n: Int, takeFocus moveFocus: Bool = true, announce: Bool = true) {
+        if active, n == Workspaces.scratchpad { return showScratchpad() }
         guard active, Workspaces.range.contains(n) else { return }
         if switching {
             // Presses keep their order; only back-to-back switches collapse to the last one.
@@ -1133,7 +1134,7 @@ final class Spaces {
     /// Runs `body` once the window list is fresh, holding every other request meanwhile (they queue as during a
     /// switch), so key presses keep their order though the scan runs in the background. Whatever queued runs after
     /// `body`, or after the switch it starts.
-    private func holdUntilFresh(full: Bool = false, asking: Set<pid_t> = [], _ body: @escaping () -> Void) {
+    func holdUntilFresh(full: Bool = false, asking: Set<pid_t> = [], _ body: @escaping () -> Void) {
         switching = true
         holding = true
         let gen = generation
@@ -1204,7 +1205,7 @@ final class Spaces {
     }
 
     /// The window in focus on its workspace, and its app the one used there last.
-    private func noteFocus(_ id: WindowID) {
+    func noteFocus(_ id: WindowID) {
         model.noteFocus(id)
         windowOrder.note(id)
         onFocus(id)
@@ -1297,6 +1298,7 @@ final class Spaces {
                                         minimized: minimized(w.id), fullScreen: look.fullScreen,
                                         onScreen: !Windows.allOffscreen([w.id])) {
             Trace.log("followFocus stayed: \(w.appName) showed a window it had put away; it comes here")
+            if n == Workspaces.scratchpad { return showScratchpad() }
             saved.frames[w.id] = nil
             model.assign(w.id, to: model.current, focus: true)
             lastKey[pid] = w.id
@@ -1786,7 +1788,7 @@ final class Spaces {
 
     /// A window on another workspace will come back at `frame`: a parked one's record says so,
     /// and one whose app is hidden moves there unseen.
-    private func placeAway(_ id: WindowID, at frame: CGRect) {
+    func placeAway(_ id: WindowID, at frame: CGRect) {
         guard active, let n = model.workspace(of: id), !model.isShown(n) else { return }
         if saved.frames[id] != nil {
             saved.frames[id] = frame
@@ -2133,7 +2135,7 @@ final class Spaces {
         }
     }
 
-    private func enqueue(_ action: @escaping () -> Void) { queued.append(.action(action)) }
+    func enqueue(_ action: @escaping () -> Void) { queued.append(.action(action)) }
 
     /// Ends a switch and runs what queued up during it, in order, then one check of an
     /// activation BaneySpaces didn't cause.
@@ -2606,7 +2608,7 @@ final class Spaces {
                 (String(n), model.windows(on: n).map { ["id": $0, "app": windows[$0]?.appName ?? ""] as [String: Any] })
             }),
         ]
-        let known = model.home.compactMap { id, ws in windows[id].map { SavedLayout.Entry(window: id, pid: $0.pid, workspace: ws) } }
+        let known = model.home.compactMap { id, ws in windows[id].map { SavedLayout.Entry(window: id, pid: $0.pid, workspace: model.isScratch(id) ? Workspaces.scratchpad : ws) } }
         let layout = SavedLayout(current: model.current,
                                  entries: known + pendingLayout.values.filter { model.workspace(of: $0.window) == nil },
                                  lastFocused: model.lastFocused, displays: model.shown)

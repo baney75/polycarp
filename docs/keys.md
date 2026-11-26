@@ -85,6 +85,8 @@ only while a Settings switch is on; Always means it always works there.
 | ⌃⌥Tab | Focus the next window of the group | Anywhere | While this workspace tiles |
 | ⌃⌥⇧Tab | Focus the previous window of the group | Anywhere | While this workspace tiles |
 | ⌃⌥N | Send the window to the next display | Anywhere | While this workspace tiles |
+| ⌃⌥- | Show the scratchpad, or put it away | Anywhere | While this workspace tiles |
+| ⌃⌥⇧- | Send the window to the scratchpad, or take it out | Anywhere | While this workspace tiles |
 
 ## Terminal
 

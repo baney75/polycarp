@@ -16,6 +16,14 @@ final class TilingShortcutsTests: XCTestCase {
         XCTAssertEqual(TilingShortcuts(settings { $0.keys["toggle"] = nil }, voiceOver: false).keys, [], "no key, none taken")
     }
 
+    func testTheScratchpadsKeysStayWhileItHoldsAWindow() {
+        let off = TilingShortcuts(settings(), voiceOver: false, scratch: true)
+        XCTAssertEqual(off.keys.map(\.name), ["toggle", "scratchpad", "scratchpad-send"])
+        XCTAssertEqual(off.keys[1].chord, KeyChord("ctrl+opt+-"))
+        XCTAssertEqual(TilingShortcuts(settings { $0.enabled = true }, voiceOver: false, scratch: true),
+                       TilingShortcuts(settings { $0.enabled = true }, voiceOver: false))
+    }
+
     func testVoiceOverKeepsItsKeys() {
         let t = settings { $0.enabled = true; $0.keys["float"] = KeyChord("ctrl+shift+F") }
         let s = TilingShortcuts(t, voiceOver: true)
@@ -50,7 +58,7 @@ final class TilingShortcutsTests: XCTestCase {
         XCTAssertEqual(on["tile.focus-next"], "⌃⌥]")
         XCTAssertNil(on["tile.focus-left"])
         XCTAssertNil(on["tile.style-main"], "it comes with no key")
-        XCTAssertEqual(on.count, 17)
+        XCTAssertEqual(on.count, 19)
         let changed = rows(settings { $0.enabled = true; $0.keys["focus-left"] = KeyChord("ctrl+opt+H"); $0.keys["balance"] = nil })
         XCTAssertNil(changed["tile.focus"], "the four no longer go together")
         XCTAssertEqual(changed["tile.focus-left"], "⌃⌥H")

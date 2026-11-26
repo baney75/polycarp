@@ -121,6 +121,8 @@ public enum TilingKeys {
         add("group-next", "Focus the next window of the group", "ctrl+opt+Tab")
         add("group-previous", "Focus the previous window of the group", "ctrl+opt+shift+Tab")
         add("next-display", "Send the window to the next display", "ctrl+opt+N")
+        add("scratchpad", "Show the scratchpad, or put it away", "ctrl+opt+-")
+        add("scratchpad-send", "Send the window to the scratchpad, or take it out", "ctrl+opt+shift+-")
         for style in ["dwindle", "columns", "main", "scrolling", "floating"] { add("style-" + style, "Tile in the " + style + " style", "") }
         return rows
     }()

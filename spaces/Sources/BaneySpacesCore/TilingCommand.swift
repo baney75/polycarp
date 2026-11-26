@@ -18,6 +18,10 @@ public enum TilingCommand: Equatable, Sendable {
     case style(TileStyle?)
     /// The window goes to the next display's workspace.
     case nextDisplay
+    /// The scratchpad comes over the workspace or goes away.
+    case scratchpad
+    /// The window goes to the scratchpad, or becomes one of this workspace's again.
+    case toScratchpad
 
     /// Every command a key can have, by the name the settings, the command line and the docs use.
     public static let named: [(name: String, title: String, command: TilingCommand)] = {
@@ -41,6 +45,8 @@ public enum TilingCommand: Equatable, Sendable {
         add("group-next", "Focus the next window of the group", .groupCycle(backward: false))
         add("group-previous", "Focus the previous window of the group", .groupCycle(backward: true))
         add("next-display", "Send the window to the next display", .nextDisplay)
+        add("scratchpad", "Show the scratchpad, or put it away", .scratchpad)
+        add("scratchpad-send", "Send the window to the scratchpad, or take it out", .toScratchpad)
         for s in TileStyle.allCases { add("style-\(s.rawValue)", "Tile in the \(s.rawValue) style", .style(s)) }
         return all
     }()
@@ -72,6 +78,8 @@ public enum TilingOutcome: Equatable, Sendable {
     /// At the edge: the focus, or the window, crosses to the display that way.
     case cross(TileDirection, carrying: WindowID?)
     case nextDisplay(WindowID)
+    case scratchpad
+    case toScratchpad(WindowID)
     /// Turn this workspace on or off.
     case toggle
     /// Nothing to do, and why.
@@ -84,6 +92,11 @@ extension TilingEngine {
 
     public mutating func run(_ command: TilingCommand, on workspace: Int, focused: WindowID?) -> TilingOutcome {
         if command == .toggle { return workspace == options.agentWorkspace ? .nothing("the agent workspace never tiles") : .toggle }
+        if command == .scratchpad { return .scratchpad }
+        if command == .toScratchpad {
+            if workspace == options.agentWorkspace { return .nothing("the agent workspace has no scratchpad") }
+            return focused.map { .toScratchpad($0) } ?? .nothing("no window is in front")
+        }
         guard options.tiles(workspace) else { return .nothing("this workspace isn't tiled") }
         if case .style(let s) = command { return restyle(s, workspace) }
         // Without a tiled window in focus the one used last answers, so a key after a click on the desktop still works.
@@ -117,7 +130,7 @@ extension TilingEngine {
         case .full: layout.full.toggle()
         case .nextDisplay: return isTiled ? .nextDisplay(id) : .nothing("the window in front isn't tiled")
         case .group, .join, .groupCycle: return group(command, isTiled ? id : nil, key)
-        case .toggle, .style, .float: break
+        case .toggle, .style, .float, .scratchpad, .toScratchpad: break
         }
         guard layout != slot.layout else { return .nothing("there is nothing to change") }
         slots[key]!.layout = layout
@@ -184,6 +197,7 @@ extension TilingEngine {
     private mutating func float(_ focused: WindowID?, _ slot: Slot) -> TilingOutcome {
         guard let id = focused, let w = seen[id] else { return .nothing("no window is in front") }
         if w.fixed { return .nothing("a window that can't be resized always floats") }
+        if w.over == .scratchpad { return .nothing("it is on the scratchpad") }
         setFloating(id, !floats(w))
         return .changed
     }
@@ -193,6 +207,15 @@ extension TilingEngine {
         guard let w = seen[id], !w.fixed else { return }
         choice[id] = options.floatApps.contains(w.bundle) == floating ? nil : floating
         asked[id] = nil
+    }
+
+    /// Lets go of a window that leaves for the scratchpad; its frame from before tiling, when it had a tile.
+    public mutating func release(_ id: WindowID) -> CGRect? {
+        asked[id] = nil
+        stowed[id] = nil
+        for key in slots.keys where slots[key]!.holds(id) { slots[key]!.take(id) }
+        for key in slots.keys { slots[key]!.away[id] = nil }
+        return before.removeValue(forKey: id)
     }
 
     /// A window got the focus between two looks: the next window opened goes beside it.

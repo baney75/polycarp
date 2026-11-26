@@ -365,6 +365,8 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.keys.group-next` | `"ctrl+opt+Tab"` | Focus the next window of the group. |
 | `tiling.keys.group-previous` | `"ctrl+opt+shift+Tab"` | Focus the previous window of the group. |
 | `tiling.keys.next-display` | `"ctrl+opt+N"` | Send the window to the next display. |
+| `tiling.keys.scratchpad` | `"ctrl+opt+-"` | Show the scratchpad, or put it away. |
+| `tiling.keys.scratchpad-send` | `"ctrl+opt+shift+-"` | Send the window to the scratchpad, or take it out. |
 | `tiling.keys.style-dwindle` | `""` | Tile in the dwindle style. |
 | `tiling.keys.style-columns` | `""` | Tile in the columns style. |
 | `tiling.keys.style-main` | `""` | Tile in the main style. |

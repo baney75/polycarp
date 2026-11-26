@@ -165,6 +165,51 @@ final class TilingCommandTests: XCTestCase {
         XCTAssertFalse(f.engine.resized(2, to: short.offsetBy(dx: 200, dy: 0), from: short))
     }
 
+    // MARK: The scratchpad
+
+    func testTheScratchpadWorksWhetherTheWorkspaceTilesOrNot() {
+        var f = three()
+        XCTAssertEqual(f.engine.run(.scratchpad, on: 1, focused: nil), .scratchpad)
+        XCTAssertEqual(f.engine.run(.toScratchpad, on: 1, focused: 2), .toScratchpad(2))
+        XCTAssertEqual(f.engine.run(.toScratchpad, on: 1, focused: nil), .nothing("no window is in front"))
+        f.engine.apply(FakeWindows.options { $0.everywhere = false; $0.agentWorkspace = 9 })
+        XCTAssertEqual(f.engine.run(.scratchpad, on: 1, focused: nil), .scratchpad)
+        XCTAssertEqual(f.engine.run(.toScratchpad, on: 1, focused: 77), .toScratchpad(77))
+        XCTAssertEqual(f.engine.run(.toScratchpad, on: 9, focused: 77), .nothing("the agent workspace has no scratchpad"))
+    }
+
+    func testAWindowSentAwayLeavesItsTileAndComesBackAtItsOwnSize() {
+        var f = three(.columns)
+        let was = CGRect(x: 40 + 2 * 12, y: 60 + 2 * 9, width: 700, height: 500)
+        XCTAssertEqual(f.engine.release(2), was)
+        XCTAssertNil(f.engine.release(2))
+        XCTAssertEqual(f.tiled(1), [1, 3])
+        f.wins[2]!.w.workspace = Workspaces.scratchpad
+        f.wins[2]!.w.over = .scratchpad
+        f.rest()
+        XCTAssertEqual(f.tiled(1), [1, 3])
+        f.wins[2]!.w.workspace = 1
+        f.wins[2]!.w.frame = was
+        f.writes = 0
+        f.rest()
+        XCTAssertEqual(f.writes, 0, "it floats over the tiles")
+        XCTAssertEqual(f.engine.run(.float, on: 1, focused: 2), .nothing("it is on the scratchpad"))
+        f.wins[2]!.w.over = nil
+        f.rest()
+        XCTAssertEqual(f.tiled(1).sorted(), [1, 2, 3], "taken out of the scratchpad it has a tile again")
+    }
+
+    func testOneReleasedInTheDockHasNoPlaceToComeBackTo() {
+        var f = three(.columns)
+        f.wins[2]!.w.away = true
+        f.rest()
+        XCTAssertNotNil(f.engine.release(2))
+        f.wins[2]!.w.away = false
+        f.wins[1]!.w.away = true
+        f.rest()
+        XCTAssertEqual(f.tiled(1).sorted(), [2, 3])
+    }
+
     func testAWindowCarriedToAnotherDisplayLandsWhereItWasLetGo() {
         var f = three(.columns)
         f.shown[2] = .init(display: "D2", area: CGRect(x: 1728, y: 0, width: 1600, height: 1000))
