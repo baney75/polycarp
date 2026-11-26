@@ -18,6 +18,7 @@ mod look;
 mod mail;
 mod mcp;
 mod retire;
+mod sync;
 mod theme;
 mod update;
 mod version;
