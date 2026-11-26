@@ -30,7 +30,7 @@ is after that. Your profile is in `~/Library/Application Support/Polycarp/Browse
 ## While it works
 
 `install` and `update` show each step as it runs: Download, Verify, Build, Sign, Check and Swap in, each as "step N of 6"
-with the time it took. In a terminal the download has a bar with the percent, bytes over the total and the speed. Piped
+with the time it took (a dry run stops after Check, step 5). In a terminal the download has a bar with the percent, bytes over the total and the speed. Piped
 or in a log, each step is a plain line.
 
 ## Updates

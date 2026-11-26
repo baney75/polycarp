@@ -64,8 +64,17 @@ const BAR: usize = 24;
 /// Clears the line the cursor is on and goes back to its start.
 const CLEAR: &str = "\r\x1b[2K";
 
-/// The line that redraws. A total of zero is an unknown one: a spinner and bytes, no percent.
-pub fn live(step: Step, bytes: Option<Bytes>, frame: usize, elapsed: Duration) -> String {
+/// The line that redraws, never wider than `width` less one column, so it can't wrap and leave half of itself behind
+/// on the row above. A total of zero is an unknown one: a spinner and bytes, no percent. When it is too wide the speed
+/// goes first, then the bar shrinks, then the total goes, then the bar.
+pub fn live(
+    step: Step,
+    bytes: Option<Bytes>,
+    frame: usize,
+    elapsed: Duration,
+    width: usize,
+) -> String {
+    let room = width.saturating_sub(1);
     let head = format!(
         "{} {:<8} {}",
         SPIN[frame % SPIN.len()],
@@ -73,19 +82,54 @@ pub fn live(step: Step, bytes: Option<Bytes>, frame: usize, elapsed: Duration) -
         step.of()
     );
     let Some(b) = bytes else {
-        return format!("{head}  {}", time(elapsed));
+        return fit(format!("{head}  {}", time(elapsed)), room);
     };
-    let speed = format!("{}/s", size(b.speed));
-    match b.total.filter(|t| *t > 0) {
-        Some(total) => {
-            let got = b.got.min(total);
-            let filled = (u128::from(got) * BAR as u128 / u128::from(total)) as usize;
-            let bar = format!("{}{}", "█".repeat(filled), "░".repeat(BAR - filled));
-            let percent = u128::from(got) * 100 / u128::from(total);
-            let (got, total) = (size(got), size(total));
-            format!("{head}  {bar} {percent:>3}%  {got} of {total}  {speed}")
+    let speed = format!("  {}/s", size(b.speed));
+    let Some(total) = b.total.filter(|t| *t > 0) else {
+        let full = format!("{head}  {}{speed}", size(b.got));
+        let short = format!("{head}  {}", size(b.got));
+        return fit(first_that_fits([full, short], room), room);
+    };
+    let got = b.got.min(total);
+    let percent = u128::from(got) * 100 / u128::from(total);
+    let bar = |cells: usize| {
+        let filled = (u128::from(got) * cells as u128 / u128::from(total)) as usize;
+        format!("  {}{} ", "█".repeat(filled), "░".repeat(cells - filled))
+    };
+    let amount = format!("  {} of {}", size(got), size(total));
+    let mut tries = vec![format!("{head}{}{percent:>3}%{amount}{speed}", bar(BAR))];
+    for cells in (8..=BAR).rev().step_by(4) {
+        tries.push(format!("{head}{}{percent:>3}%{amount}", bar(cells)));
+    }
+    tries.push(format!("{head}{}{percent:>3}%  {}", bar(8), size(got)));
+    tries.push(format!("{head}  {percent:>3}%"));
+    fit(first_that_fits(tries, room), room)
+}
+
+fn first_that_fits(tries: impl IntoIterator<Item = String>, room: usize) -> String {
+    let mut last = String::new();
+    for line in tries {
+        if line.chars().count() <= room {
+            return line;
         }
-        None => format!("{head}  {}  {speed}", size(b.got)),
+        last = line;
+    }
+    last
+}
+
+/// Every character here takes one column.
+fn fit(line: String, room: usize) -> String {
+    line.chars().take(room).collect()
+}
+
+/// The terminal's width in columns, or 80 when it can't be read.
+fn columns() -> usize {
+    // SAFETY: TIOCGWINSZ fills a winsize, which outlives the call.
+    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
+    let ok = unsafe { libc::ioctl(libc::STDERR_FILENO, libc::TIOCGWINSZ, &mut size) } == 0;
+    match ok && size.ws_col > 0 {
+        true => usize::from(size.ws_col),
+        false => 80,
     }
 }
 
@@ -156,12 +200,22 @@ struct Shared {
     generation: u64,
     /// A live line is on screen.
     drawn: bool,
+    /// The terminal's width now: a window can be resized while it runs.
+    width: fn() -> usize,
+    /// When the bytes began to come, for the speed.
+    flowing: Instant,
 }
 
 impl Shared {
     fn draw(&mut self) {
         let Some(step) = self.step else { return };
-        let line = live(step, self.bytes, self.frame, self.began.elapsed());
+        let line = live(
+            step,
+            self.bytes,
+            self.frame,
+            self.began.elapsed(),
+            (self.width)(),
+        );
         let _ = write!(self.out, "{CLEAR}{line}");
         let _ = self.out.flush();
         self.drawn = true;
@@ -186,10 +240,10 @@ impl Progress {
         let err = io::stderr();
         let dumb = std::env::var_os("TERM").is_some_and(|t| t == "dumb");
         let tty = err.is_terminal() && !dumb;
-        Progress::to(Box::new(err), tty)
+        Progress::to(Box::new(err), tty, columns)
     }
 
-    pub fn to(out: Box<dyn Write + Send>, tty: bool) -> Progress {
+    pub fn to(out: Box<dyn Write + Send>, tty: bool, width: fn() -> usize) -> Progress {
         let shared = Shared {
             out,
             step: None,
@@ -198,6 +252,8 @@ impl Progress {
             frame: 0,
             generation: 0,
             drawn: false,
+            width,
+            flowing: Instant::now(),
         };
         Progress {
             shared: Arc::new(Mutex::new(shared)),
@@ -207,7 +263,7 @@ impl Progress {
 
     /// Says nothing: for tests and for the commands that build nothing.
     pub fn silent() -> Progress {
-        Progress::to(Box::new(io::sink()), false)
+        Progress::to(Box::new(io::sink()), false, || 80)
     }
 
     fn lock(&self) -> MutexGuard<'_, Shared> {
@@ -219,6 +275,7 @@ impl Progress {
             let mut shared = self.lock();
             shared.step = Some(step);
             shared.began = Instant::now();
+            shared.flowing = shared.began;
             shared.bytes = None;
             shared.generation += 1;
             if !self.tty {
@@ -241,10 +298,15 @@ impl Progress {
         });
     }
 
+    /// The bytes start to come now: what came before (checking a cached image) is not download time.
+    pub fn flowing(&self) {
+        self.lock().flowing = Instant::now();
+    }
+
     /// How far the download is.
     pub fn bytes(&self, got: u64, total: Option<u64>) {
         let mut shared = self.lock();
-        let seconds = shared.began.elapsed().as_secs_f64();
+        let seconds = shared.flowing.elapsed().as_secs_f64();
         let speed = if seconds > 0.0 {
             (got as f64 / seconds) as u64
         } else {
@@ -296,7 +358,7 @@ pub mod tests {
     /// Progress that writes to a screen a test reads.
     pub fn screen(tty: bool) -> (Screen, Progress) {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), tty);
+        let progress = Progress::to(Box::new(screen.clone()), tty, || 120);
         (screen, progress)
     }
 
@@ -327,13 +389,13 @@ pub mod tests {
             total: Some(mb(150)),
             speed: 12_300_000,
         };
-        let line = live(Step::Download, Some(b), 0, Duration::ZERO);
+        let line = live(Step::Download, Some(b), 0, Duration::ZERO, 120);
         assert_eq!(
             line,
             "⠋ Download step 1 of 6  █████████░░░░░░░░░░░░░░░  40%  60.0 MB of 150.0 MB  12.3 MB/s"
         );
         let full = Bytes { got: mb(151), ..b };
-        let line = live(Step::Download, Some(full), 3, Duration::ZERO);
+        let line = live(Step::Download, Some(full), 3, Duration::ZERO, 120);
         assert!(line.contains(&"█".repeat(BAR)), "{line}");
         assert!(line.contains("100%  150.0 MB of 150.0 MB"), "{line}");
     }
@@ -346,10 +408,41 @@ pub mod tests {
                 total,
                 speed: 900,
             };
-            let line = live(Step::Download, Some(b), 2, Duration::ZERO);
+            let line = live(Step::Download, Some(b), 2, Duration::ZERO, 120);
             assert_eq!(line, "⠹ Download step 1 of 6  4.2 KB  900 B/s");
             assert!(!line.contains('%') && !line.contains('█'));
         }
+    }
+
+    /// Wider than the terminal, a line would wrap, and clearing one row would leave the other behind on every redraw.
+    #[test]
+    fn the_live_line_never_reaches_the_terminals_last_column() {
+        let b = Bytes {
+            got: mb(61),
+            total: Some(mb(119)),
+            speed: 12_300_000,
+        };
+        let full = live(Step::Download, Some(b), 0, Duration::ZERO, 200);
+        assert!(
+            full.ends_with("12.3 MB/s") && full.contains(&"░".repeat(11)),
+            "{full}"
+        );
+        for width in [0, 1, 20, 40, 60, 79, 80, 81, 100] {
+            for total in [Some(mb(119)), None] {
+                let b = Bytes { total, ..b };
+                for line in [
+                    live(Step::Download, Some(b), 0, Duration::ZERO, width),
+                    live(Step::SwapIn, None, 0, Duration::from_secs(4000), width),
+                ] {
+                    let cols = line.chars().count();
+                    assert!(cols < width.max(1), "{width}: {cols} {line}");
+                }
+            }
+        }
+        // In Terminal's 80 columns the speed goes and the rest stays.
+        let line = live(Step::Download, Some(b), 0, Duration::ZERO, 80);
+        assert!(line.contains("51%  61.0 MB of 119.0 MB"), "{line}");
+        assert!(!line.contains("/s"), "{line}");
     }
 
     #[test]
@@ -366,7 +459,7 @@ pub mod tests {
                 "Step 6 of 6: Swap in",
             ]
         );
-        let line = live(Step::Sign, None, 1, Duration::from_millis(3_250));
+        let line = live(Step::Sign, None, 1, Duration::from_millis(3_250), 120);
         assert_eq!(line, "⠙ Sign     step 4 of 6  3.2s");
         let took = Duration::from_secs(65);
         assert_eq!(
@@ -404,7 +497,7 @@ pub mod tests {
     #[test]
     fn a_terminal_gets_one_line_that_redraws_and_a_line_per_finished_step() {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), true);
+        let progress = Progress::to(Box::new(screen.clone()), true, || 120);
         run_all(&progress);
         drop(progress);
         let text = screen.text();
@@ -426,7 +519,7 @@ pub mod tests {
     #[test]
     fn anything_else_gets_plain_lines_and_no_escape_codes() {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), false);
+        let progress = Progress::to(Box::new(screen.clone()), false, || 120);
         run_all(&progress);
         drop(progress);
         let text = screen.text();
@@ -441,7 +534,7 @@ pub mod tests {
     #[test]
     fn a_step_that_did_not_finish_is_marked_in_a_terminal() {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), true);
+        let progress = Progress::to(Box::new(screen.clone()), true, || 120);
         progress.begin(Step::Download);
         progress.end(None);
         progress.begin(Step::Verify);

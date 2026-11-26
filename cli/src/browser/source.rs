@@ -47,6 +47,7 @@ pub fn fetch(
     let part = cache.join(format!("{}.part", release.name));
     let _ = fs::remove_file(&part);
     let call = curl(1800, &[&"--output", &part, &"--", &release.url]);
+    progress.flowing();
     let done = AtomicBool::new(false);
     let ran = thread::scope(|scope| {
         // Reads how much of the file is there while curl writes it.

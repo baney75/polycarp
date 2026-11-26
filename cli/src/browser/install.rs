@@ -427,7 +427,16 @@ mod tests {
         }
         let downloads = |t: &Fake| t.calls().iter().filter(|c| c.contains("--output")).count();
         assert_eq!(downloads(&t), 0, "it was refused only after the download");
-        assert!(go(&t, WHEN_QUIT).unwrap().waiting);
+        let (screen, progress) = super::super::progress::tests::screen(false);
+        let waits = install(&t, &t.place(), "arm64", WHEN_QUIT, &progress).unwrap();
+        assert!(waits.waiting);
+        let text = screen.text();
+        let last = text.lines().last().unwrap();
+        assert!(last.starts_with("Step 6 of 6: Swap in done in "), "{text}");
+        assert!(
+            last.ends_with(", goes in when you quit the browser"),
+            "{text}"
+        );
         assert_eq!(helium(&t).unwrap(), "0.1.0");
         // Asked again, it is not made again.
         assert!(go(&t, WHEN_QUIT).unwrap().waiting);
