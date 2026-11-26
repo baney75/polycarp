@@ -17,6 +17,7 @@ extension Tiling {
                 done(nil)
             case .focus(let id):
                 engine.focused(id)
+                drawStrips()
                 spaces.focus(id, on: n, announce: false)
                 done(nil)
             case .cross(let d, let id): done(cross(d, from: n, carrying: id))

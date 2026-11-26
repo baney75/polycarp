@@ -34,6 +34,7 @@ final class Tiling {
     var dragTimer: Timer?
     var escape: Any?
     lazy var outline = TilingOutline()
+    var strips: TilingStrips?
 
     init(spaces: Spaces) { self.spaces = spaces }
 
@@ -42,12 +43,14 @@ final class Tiling {
         guard readSettings() else { return }
         onChange()
         look()
+        drawStrips()
     }
 
     /// The layout or its state changed: what is kept, and what the bar shows.
     func changed() {
         saveSoon()
         onChange()
+        drawStrips()
     }
 
     @discardableResult
@@ -105,6 +108,7 @@ final class Tiling {
         forget(facts)
         saveSoon()
         onChange()
+        drawStrips()
         let (later, go) = (moves.filter { silent[$0.id].map { $0 > now } ?? false }, moves.filter { silent[$0.id].map { $0 <= now } ?? true })
         for m in later { engine.touched(m.id) }
         if !go.isEmpty { write(go, view.windows, clock) }
