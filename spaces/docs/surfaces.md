@@ -325,7 +325,7 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.enabled` | `false` | Tile every workspace that isn't in `tiling.off`. A workspace in `tiling.on` tiles either way. |
 | `tiling.on` | `[]` | Workspaces, `"1"` to `"9"`, that tile while `tiling.enabled` is off. |
 | `tiling.off` | `[]` | Workspaces that don't tile while `tiling.enabled` is on. |
-| `tiling.style` | `"dwindle"` | `dwindle` splits the window you are in, `columns` puts windows side by side, `main` keeps one large window beside a stack. |
+| `tiling.style` | `"dwindle"` | `dwindle` splits the window you are in, `columns` puts windows side by side, `main` keeps one large window beside a stack, `scrolling` has columns in a strip wider than the screen, `floating` leaves windows where you put them. |
 | `tiling.gaps.inner` | `8` | Points between tiled windows, 0 to 64. |
 | `tiling.gaps.outer` | `8` | Points around them, 0 to 64. |
 | `tiling.gaps.top` | `0` | Points more at the top edge, 0 to 400, for something that stays there. |
@@ -353,7 +353,7 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.keys.grow-down` | `"ctrl+opt+cmd+Down"` | Move the tiled window's edge down. |
 | `tiling.keys.balance` | `"ctrl+opt+B"` | Even out every split. |
 | `tiling.keys.flip` | `"ctrl+opt+R"` | Turn the window's split. |
-| `tiling.keys.style` | `"ctrl+opt+S"` | Next tiling style: dwindle, columns, main. |
+| `tiling.keys.style` | `"ctrl+opt+S"` | Next layout: dwindle, columns, main, scrolling, floating. |
 | `tiling.keys.promote` | `"ctrl+opt+Return"` | Make the window the main one. |
 | `tiling.keys.float` | `"ctrl+opt+F"` | Float the window, or tile it again. |
 | `tiling.keys.full` | `"ctrl+opt+M"` | Give the window the whole area, or put it back. |
@@ -361,6 +361,8 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.keys.style-dwindle` | `""` | Tile in the dwindle style. |
 | `tiling.keys.style-columns` | `""` | Tile in the columns style. |
 | `tiling.keys.style-main` | `""` | Tile in the main style. |
+| `tiling.keys.style-scrolling` | `""` | Tile in the scrolling style. |
+| `tiling.keys.style-floating` | `""` | Tile in the floating style. |
 
 A key is modifiers and one key joined with `+`: `ctrl`, `opt`, `shift`, `cmd`, then a letter, an arrow, `F1` to `F20`, `Return`, `Space`, `Tab`, `Delete`, `Home`, `End`, `PageUp`, `PageDown` or one of `0 - = [ ] ; ' , . / \` and the backtick. A key takes `ctrl` and another modifier, or `cmd` and `opt`, so none is taken from the app in front; 1 to 9 are the workspaces'. Empty is no key. A key you give one command leaves the command that has it by default without one; two commands in the file can't share a key.
 

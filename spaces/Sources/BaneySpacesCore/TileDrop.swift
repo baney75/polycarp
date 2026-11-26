@@ -22,13 +22,13 @@ extension TileLayout {
     public func drop(_ id: WindowID, at point: CGPoint, area: CGRect, gaps: TileGaps, minimums: [WindowID: CGSize] = [:]) -> TileDrop? {
         guard !full, contains(id), area.contains(point), let root, let box = gaps.inset(area) else { return nil }
         let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums)
-        let cells = solver.cells(root, in: solver.grown(box))
+        let all = cells(solver, in: box)
         // The gaps belong to the nearest cell, so there is no dead strip between tiles or along the area's edges.
         let x = min(max(point.x, box.x0), box.x1 - 1), y = min(max(point.y, box.y0), box.y1 - 1)
         guard let over = windows.first(where: { w in
-            guard let c = cells[w].map(solver.rounded) else { return false }
+            guard let c = all[w].map(solver.rounded) else { return false }
             return x >= c.x0 && x < c.x1 && y >= c.y0 && y < c.y1
-        }), over != id, let cell = cells[over] else { return nil }
+        }), over != id, let cell = all[over] else { return nil }
         let whole = TileBox(area), axis = whole.axis
         let along = axis == .horizontal ? point.x : point.y
         if along - whole.lo(axis) < TileLayout.edgeZone { return .edge(axis == .horizontal ? .left : .up) }
@@ -93,7 +93,7 @@ extension TileLayout {
                 root = tree
                 return
             }
-            if style == .columns {
+            if style.inColumns {
                 relocate(id, area) { $0.admit(id, into: parent, at: d.back ? i : i + 1) }
                 return
             }
@@ -105,15 +105,16 @@ extension TileLayout {
 
     /// A window takes half the area along an edge. In `columns`, or where a person set the direction, a root along it
     /// takes the window in; a dwindle root that chose its own goes inside and chooses again for the half it has left.
-    private mutating func wrap(_ id: WindowID, _ d: TileDirection, _ area: CGRect) {
+    mutating func wrap(_ id: WindowID, _ d: TileDirection, _ area: CGRect) {
         // Two columns are one and a window now; their row still turns with the display.
-        let turns = style == .columns && (root?[split: []].map { $0.automatic && $0.axis == d.axis } ?? false)
+        let turns = style.inColumns && (root?[split: []].map { $0.automatic && $0.axis == d.axis } ?? false)
         remove(id, area: area)
         guard let tree = root else { return }
         var top = TileSplit(d.axis, automatic: turns, [tree])
-        if let s = tree[split: []], s.axis == d.axis, style == .columns || !s.automatic { top = s }
-        top.parts.insert(TilePart(weight: top.total, node: .window(id)), at: d.back ? 0 : top.parts.count)
-        if style == .dwindle { top.rechooseParts(in: TileBox(area)) }
+        if let s = tree[split: []], s.axis == d.axis, style.inColumns || !s.automatic { top = s }
+        let weight = style == .scrolling ? top.total / Double(top.parts.count) : top.total
+        top.parts.insert(TilePart(weight: weight, node: .window(id)), at: d.back ? 0 : top.parts.count)
+        if style.dwindles { top.rechooseParts(in: TileBox(area)) }
         root = .split(top)
     }
 }

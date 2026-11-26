@@ -91,7 +91,7 @@ final class TilingCommandTests: XCTestCase {
     func testTheStyleGoesAroundAndKeepsTheOrder() {
         var f = three()
         let order = f.tiled(1)
-        for s in [TileStyle.columns, .main, .dwindle] {
+        for s in [TileStyle.columns, .main, .scrolling, .floating, .dwindle] {
             XCTAssertEqual(run(&f, .style(nil)), .changed)
             XCTAssertEqual(f.engine.style(of: 1), s)
             XCTAssertEqual(f.tiled(1), order)

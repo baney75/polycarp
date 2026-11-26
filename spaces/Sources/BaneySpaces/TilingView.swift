@@ -9,6 +9,7 @@ extension Spaces {
         var windows: [WindowID: Window]
         var shown: [Int: TilingShot.Place]
         var focused: WindowID?
+        var displays: [CGRect]
     }
 
     /// The workspaces in sight, one for each display.
@@ -46,7 +47,8 @@ extension Spaces {
             }
             facts.append(f)
         }
-        return TilingView(facts: facts, windows: mine, shown: shown, focused: model.lastFocused[model.current])
+        return TilingView(facts: facts, windows: mine, shown: shown, focused: model.lastFocused[model.current],
+                          displays: displays.map(\.frame))
     }
 }
 

@@ -68,7 +68,7 @@ only while a Settings switch is on; Always means it always works there.
 | ⌃⌥⌘←→↑↓ | Move the tiled window's edge that way | Anywhere | While this workspace tiles |
 | ⌃⌥B | Even out every split | Anywhere | While this workspace tiles |
 | ⌃⌥R | Turn the window's split | Anywhere | While this workspace tiles |
-| ⌃⌥S | Next tiling style: dwindle, columns, main | Anywhere | While this workspace tiles |
+| ⌃⌥S | Next layout: dwindle, columns, main, scrolling, floating | Anywhere | While this workspace tiles |
 | ⌃⌥Return | Make the window the main one | Anywhere | While this workspace tiles |
 | ⌃⌥F | Float the window, or tile it again | Anywhere | While this workspace tiles |
 | ⌃⌥M | Give the window the whole area, or put it back | Anywhere | While this workspace tiles |

@@ -112,12 +112,12 @@ public enum TilingKeys {
         for d in sides { add("grow-" + d.name, "Move the tiled window's edge " + d.name, "ctrl+opt+cmd+" + d.key) }
         add("balance", "Even out every split", "ctrl+opt+B")
         add("flip", "Turn the window's split", "ctrl+opt+R")
-        add("style", "Next tiling style: dwindle, columns, main", "ctrl+opt+S")
+        add("style", "Next layout: dwindle, columns, main, scrolling, floating", "ctrl+opt+S")
         add("promote", "Make the window the main one", "ctrl+opt+Return")
         add("float", "Float the window, or tile it again", "ctrl+opt+F")
         add("full", "Give the window the whole area, or put it back", "ctrl+opt+M")
         add("next-display", "Send the window to the next display", "ctrl+opt+N")
-        for style in ["dwindle", "columns", "main"] { add("style-" + style, "Tile in the " + style + " style", "") }
+        for style in ["dwindle", "columns", "main", "scrolling", "floating"] { add("style-" + style, "Tile in the " + style + " style", "") }
         return rows
     }()
 }

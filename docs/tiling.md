@@ -18,6 +18,11 @@ Linux and Windows have no tiling yet.
 | `dwindle` | A new window splits the one you are in, along its long side |
 | `columns` | Windows stand side by side |
 | `main` | One large window, the rest in a stack beside it |
+| `scrolling` | Columns in a strip that can be wider than the screen; going to a window scrolls it in |
+| `floating` | Windows stay where you put them; the focus keys still go from one to the next |
+
+In `scrolling` a window that isn't in view waits in the corner, where Polycarp parks windows of other workspaces. One
+that hangs over the end of the strip by less than half stays in sight, unless it would show on the next display.
 
 Each workspace has its own, on each display. ⌃⌥S goes to the next. A workspace's only window takes a 16:10 shape on a
 wide display and all of any other (`tiling.loneWidth`).

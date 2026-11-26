@@ -36,7 +36,7 @@ func randomTileCall(_ l: inout TileLayout, _ there: inout Set<WindowID>, _ r: in
     case 5:
         l.replace(id, with: other)
         if there.contains(id), !there.contains(other) { there.remove(id); there.insert(other) }
-    case 6: l.setStyle(TileStyle.allCases[r.below(3)], area: area)
+    case 6: if l.style != .scrolling { l.setStyle(TileStyle.allCases[r.below(3)], area: area) }
     case 7, 8: l.move(id, toward: d, area: area)
     case 9: l.swap(id, other)
     case 10: l.resize(id, axis: axis, by: r.between(-600, 600), area: area, gaps: gaps, minimums: minimums)

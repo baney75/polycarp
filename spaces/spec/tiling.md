@@ -34,6 +34,13 @@ in reach of a display there is now.
 A display's usable area, less the Dock, the menu bar and the part of Polycarp's bar that reaches into it. When any of
 those changes the layouts are solved again. A layout is kept for each workspace and display.
 
+### R-T8 Layouts
+Each workspace has one of five on each display, kept across restarts: `dwindle`, `columns`, `main`, `scrolling` and
+`floating`. A `scrolling` column is as wide as it was left, whatever the others are; the one in use is always wholly in
+view, and the strip scrolls no further than that takes. A window out of view waits in the parking corner, never on another
+display, and comes back in reach when Polycarp quits or stops placing windows. `floating` writes no frame after the one
+that puts a window back where it was.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without

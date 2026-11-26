@@ -566,7 +566,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "tiling_status",
-            description: "How window tiling stands on this Mac: the workspace in use, whether it tiles, its style (dwindle, columns or main), whether one window has the whole area (full), its tiled windows' numbers in order, the tiled window in front (focused, or null) and every workspace that tiles. Read-only. Polycarp must be running.",
+            description: "How window tiling stands on this Mac: the workspace in use, whether it tiles, its style (dwindle, columns, main, scrolling or floating), whether one window has the whole area (full), its tiled windows' numbers in order, the tiled window in front (focused, or null) and every workspace that tiles. Read-only. Polycarp must be running.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -1148,6 +1148,8 @@ const TILING_COMMANDS: &[&str] = &[
     "style dwindle",
     "style columns",
     "style main",
+    "style scrolling",
+    "style floating",
 ];
 
 /// Runs one tiling tool through `polycarp-spaces tile ... --json` (no shell) and passes its envelope on (docs/tiling.md).

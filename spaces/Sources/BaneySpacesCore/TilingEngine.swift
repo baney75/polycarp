@@ -33,6 +33,9 @@ public struct TilingShot: Equatable, Sendable {
     /// The workspaces in sight, one a display.
     public var shown: [Int: Place]
     public var focused: WindowID?
+    /// The displays' whole frames, and the corner Spaces parks windows in: what `scrolling` needs to put one out of sight.
+    public var displays: [CGRect] = []
+    public var corner: CGPoint?
     public init(windows: [TilingWindow], shown: [Int: Place], focused: WindowID? = nil) {
         self.windows = windows; self.shown = shown; self.focused = focused
     }
@@ -163,6 +166,8 @@ public struct TilingEngine: Equatable, Sendable {
     /// Saved windows still to turn up, each under a number no window has, and the windows that were (TilingSaved.swift).
     var waiting: [WindowID: Waiting] = [:]
     var claimed: Set<WindowID> = []
+    /// Windows scrolled out of sight, and where each comes back in reach when tiling lets go of it.
+    public internal(set) var stowed: [WindowID: CGRect] = [:]
 
     public init() {}
 
@@ -204,11 +209,12 @@ public struct TilingEngine: Equatable, Sendable {
             if options.tiles(workspace) {
                 arrange(workspace, place, here, focused: shot.focused)
                 for w in here { disprove(w) }
-                let targets = frames(workspace)
+                let targets = stow(frames(workspace), place.area, shot)
                 for w in here { if let t = targets[w.id], let m = move(w, to: t) { moves.append(m) } }
             }
             // A window that isn't tiled any more, on a workspace in sight, goes back where it was before.
-            let tiled = options.tiles(workspace)
+            let tiled = options.tiles(workspace) && style(of: workspace) != .floating
+            if !tiled { for w in here { stowed[w.id] = nil } }
             for w in here where !w.away && (!tiled || floats(w)) {
                 guard let was = before[w.id] else { continue }
                 // On the display it is on now. The frame is owed until the window is there, or won't go there.
@@ -220,7 +226,7 @@ public struct TilingEngine: Equatable, Sendable {
                     asked[w.id] = nil
                 }
             }
-            if !tiled, slots.keys.contains(where: { $0.workspace == workspace }) {
+            if !options.tiles(workspace), slots.keys.contains(where: { $0.workspace == workspace }) {
                 slots = slots.filter { $0.key.workspace != workspace }
                 dropUnneeded()
             }
@@ -299,16 +305,29 @@ public struct TilingEngine: Equatable, Sendable {
                           : new.sorted { $0.id < $1.id }
         var beside = fresh ? nil : slot.focused
         for w in order {
-            if before[w.id] == nil { before[w.id] = w.frame }
             insert(w.id, beside: beside, mirrored: !fresh && options.side == .before, &slot)
             beside = w.id
         }
-        for w in tiling where !w.away && before[w.id] == nil { before[w.id] = w.frame }
+        // In `floating` a window stays where it is put, so there is no frame to go back to.
+        for w in tiling where !w.away && before[w.id] == nil && slot.layout.style != .floating { before[w.id] = w.frame }
         slot.layout.sync(slot.layout.windows, focused: nil, area: place.area)
         if let f = focused, slot.layout.contains(f) { slot.focused = f }
         if let f = slot.focused, !slot.layout.contains(f) { slot.focused = nil }
+        slot.layout.reveal(slot.focused, area: place.area, gaps: options.gaps, minimums: minimums)
         slots[key] = slot
         lastDisplay[workspace] = place.display
+    }
+
+    /// The frames to write: a window whose place in a scrolled strip is out of sight waits in the corner, at its size.
+    private mutating func stow(_ frames: [WindowID: CGRect], _ area: CGRect, _ shot: TilingShot) -> [WindowID: CGRect] {
+        var out = frames
+        for (id, f) in frames {
+            stowed[id] = nil
+            guard let corner = shot.corner, !TileLayout.shows(f, in: area, displays: shot.displays) else { continue }
+            out[id] = CGRect(origin: corner, size: f.size)
+            stowed[id] = CGRect(x: area.midX - f.width / 2, y: f.minY, width: f.width, height: f.height).integral
+        }
+        return out
     }
 
     mutating func insert(_ id: WindowID, beside: WindowID?, mirrored: Bool, _ slot: inout Slot) {
@@ -329,14 +348,15 @@ public struct TilingEngine: Equatable, Sendable {
         for other in whole.windows where other != id && !now.contains(other) { whole.remove(other, area: slot.area) }
         var without = whole
         without.remove(id, area: slot.area)
-        without.full = slot.layout.full
-        whole.full = slot.layout.full
+        // How it is looked at, full or scrolled, is as it is now.
+        (without.full, without.scroll) = (slot.layout.full, slot.layout.scroll)
+        (whole.full, whole.scroll) = (slot.layout.full, slot.layout.scroll)
         guard without == slot.layout else { return slot.layout.insert(id, beside: was.beside, area: slot.area) }
         slot.layout = whole
         // Others still away left a layout without this one: theirs has it again too, so they find their places as well.
         for other in slot.away.keys where was.whole.contains(other) {
             var back = was.whole
-            back.full = whole.full
+            (back.full, back.scroll) = (whole.full, whole.scroll)
             var trimmed = back
             for id in back.windows where !whole.contains(id) { trimmed.remove(id, area: slot.area) }
             if trimmed == whole { slot.away[other]!.whole = back }
@@ -361,8 +381,10 @@ public struct TilingEngine: Equatable, Sendable {
             guard let host, var f = out[host] else { continue }
             // One wider or higher than that tile lies over the next, and not off the display.
             if let m = minimums[id], let box = options.gaps.inset(slot.area) {
+                // In a strip its tile may be out of view already.
+                let end = CGPoint(x: max(box.x0 + box.width, f.maxX), y: max(box.y0 + box.height, f.maxY))
                 f.size = CGSize(width: max(f.width, min(m.width, box.width)), height: max(f.height, min(m.height, box.height)))
-                f.origin = CGPoint(x: min(f.minX, box.x0 + box.width - f.width), y: min(f.minY, box.y0 + box.height - f.height))
+                f.origin = CGPoint(x: min(f.minX, end.x - f.width), y: min(f.minY, end.y - f.height))
             }
             out[id] = f
         }
@@ -371,7 +393,7 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// The tiles of the windows that have one of their own, and the windows that share another's.
     func tiles(_ workspace: Int) -> (own: [WindowID: CGRect], stacked: [WindowID]) {
-        guard let key = key(workspace), let slot = slots[key] else { return ([:], []) }
+        guard let key = key(workspace), let slot = slots[key], slot.layout.style != .floating else { return ([:], []) }
         let lone = options.lone.width(in: slot.area).map { CGSize(width: $0, height: .infinity) }
         func solve(_ l: TileLayout) -> [WindowID: CGRect] {
             let out = l.frames(in: slot.area, gaps: options.gaps, minimums: minimums, loneMax: lone)
@@ -420,7 +442,9 @@ public struct TilingEngine: Equatable, Sendable {
         if case .window = root { return true }
         let solver = TileSolver(root, in: box, gap: options.gaps.inner, minimums: minimums)
         let cells = solver.grown(box)
-        return TileAxis.allCases.allSatisfy { solver.need(root, $0) <= cells.length($0) + 0.5 }
+        // A strip is as long as it has to be.
+        let axes = layout.strip(solver, in: box) == nil ? TileAxis.allCases : [.vertical]
+        return axes.allSatisfy { solver.need(root, $0) <= cells.length($0) + 0.5 }
     }
 
     /// The write that puts a window on its tile, or nil when it is there, stays where it landed when asked, or has been
@@ -480,6 +504,7 @@ public struct TilingEngine: Equatable, Sendable {
         choice[new] = choice[old]
         // A window owed nothing is where the person has it, its other tabs too.
         if before[old] == nil { before[new] = nil }
+        if let s = stowed.removeValue(forKey: old) { stowed[new] = s }
         carry(&before); carry(&minimums); carry(&rounded); carry(&lessons); carry(&roundings); carry(&asked); carry(&landing)
         recent = recent.map { $0 == old ? new : $0 }
     }
@@ -487,7 +512,7 @@ public struct TilingEngine: Equatable, Sendable {
     /// Drops what is known of windows that closed, and their places on workspaces they left.
     private mutating func forget(_ now: [WindowID: TilingWindow]) {
         func alive<T>(_ d: inout [WindowID: T]) { if d.keys.contains(where: { now[$0] == nil }) { d = d.filter { now[$0.key] != nil } } }
-        alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&roundings); alive(&asked); alive(&landing)
+        alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&roundings); alive(&asked); alive(&landing); alive(&stowed)
         recent.removeAll { now[$0] == nil }
         claimed.formIntersection(now.keys)
         for key in slots.keys {

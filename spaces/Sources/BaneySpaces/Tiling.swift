@@ -60,7 +60,7 @@ final class Tiling {
 
     /// A window got the focus: the next one opened goes beside it.
     func focused(_ id: WindowID) {
-        if engine.wanted(on: spaces.shownWorkspaces) { engine.focused(id) }
+        if engine.wanted(on: spaces.shownWorkspaces), engine.focused(id) { lookSoon(0) }
     }
 
     /// A look a moment from now, the earliest asked for.
@@ -97,7 +97,10 @@ final class Tiling {
         guard ask.isEmpty else { return question(ask, view.windows) }
         let clock = OpenClock("tile")
         claim(facts)
-        let moves = engine.plan(TilingRead.shot(facts, shown: view.shown, focused: view.focused))
+        var shot = TilingRead.shot(facts, shown: view.shown, focused: view.focused)
+        (shot.displays, shot.corner) = (view.displays, Geometry.hidingSpot(screens: view.displays))
+        let moves = engine.plan(shot)
+        spaces.stowed = engine.stowed
         waitForLate(facts, Set(view.shown.keys))
         forget(facts)
         saveSoon()
