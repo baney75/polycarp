@@ -533,6 +533,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let browserTheme = { BrowserThemeFolder.sync(Appearance.shared.polycarp, systemDark: Appearance.systemDark) }
         browserTheme()
         NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { _ in browserTheme() }
+        // The Dock, Finder and Spotlight icon in the theme's colors.
+        AppIconKeeper.shared.follow()
         // surfaces.json (`polycarp-spaces surfaces set ...`, docs/surfaces.md): every surface reads
         // `SurfacesStore.shared.current` and listens for `SurfacesStore.didChange`. Same watch as the theme's, off main.
         // The launcher's engine moves into surfaces.json (search.engine) once, before the store's first read.
