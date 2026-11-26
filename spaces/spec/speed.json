@@ -94,6 +94,20 @@
         "measured": null,
         "target": "R-TS3: a closed window, from kAXUIElementDestroyed to the others asked for, p90 under 100"
       },
+      "close-fill": {
+        "p50": 25,
+        "p90": 50,
+        "p99": 100,
+        "measured": null,
+        "target": "R-TS11: a tiled window closed, from its cause to the last frame write that returned for the others, p90 under 50"
+      },
+      "move-fill": {
+        "p50": 25,
+        "p90": 50,
+        "p99": 100,
+        "measured": null,
+        "target": "R-TS11: a tiled window moved by a key or a drag, from its cause to the last frame write that returned, p90 under 50"
+      },
       "tile-switch": {
         "p50": 40,
         "p90": 80,

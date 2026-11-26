@@ -358,6 +358,13 @@ extension TilingEngine {
         key(workspace).flatMap { slots[$0] }.flatMap { $0.focused ?? $0.layout.windows.first }
     }
     public func windows(of workspace: Int) -> [WindowID] { key(workspace).flatMap { slots[$0]?.all } ?? [] }
+    /// A tiled window's workspace and how many other tiled windows share its layout there; nil when it has no tile.
+    public func tiledMates(of id: WindowID) -> (workspace: Int, others: Int)? {
+        for (key, slot) in slots where options.tiles(key.workspace) && slot.layout.style != .floating && slot.layout.contains(id) {
+            return (key.workspace, slot.layout.windows.count - 1)
+        }
+        return nil
+    }
 
     /// The display to the side of another, the nearest of those that share some of its height (or width).
     public static func display(_ d: TileDirection, of from: DisplayKey, in displays: [DisplayKey: CGRect]) -> DisplayKey? {
