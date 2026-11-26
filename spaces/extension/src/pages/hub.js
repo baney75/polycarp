@@ -78,7 +78,7 @@
     let list = await S.threads(q);
     const more = list.length === q.limit;
     const loaded = list.length;
-    if (v.bundle) list = list.filter((t) => O.bundleOf(t) === v.bundle);
+    if (v.bundle) list = list.filter((t) => O.bundleOf(t, decide) === v.bundle);
     return { threads: list, more, loaded };
   }
   async function loadMore() {
@@ -90,7 +90,7 @@
     let list = await S.threads(q);
     st.more = list.length === PAGE;
     st.loaded = (st.loaded || 0) + list.length;
-    if (v.bundle) list = list.filter((t) => O.bundleOf(t) === v.bundle);
+    if (v.bundle) list = list.filter((t) => O.bundleOf(t, decide) === v.bundle);
     st.threads = st.threads.concat(list);
     render();
   }
@@ -136,7 +136,7 @@
     const rows = $("rows");
     const keep = st.opts[st.sel] && st.opts[st.sel].id;
     rows.replaceChildren();
-    const gs = O.groups(st.threads, Date.now(), !!v.fold);
+    const gs = O.groups(st.threads, Date.now(), !!v.fold, decide);
     gs.forEach((g, i) => {
       const grp = el("div");
       grp.setAttribute("role", "group");
@@ -512,6 +512,66 @@
     toastTimer = setTimeout(() => { $("toast").hidden = true; st.undo = null; }, ms || (canUndo ? 8000 : 4000));
   }
 
+  // ---------- Rules ----------
+
+  const R = globalThis.PolycarpHubRules;
+  const rules = { text: "", saved: 0, list: [] };
+  const decide = (t) => R.bundleFor(rules.list, t);
+  async function loadRules() {
+    const r = await S.getMeta("rules");
+    rules.text = r ? r.text : "";
+    rules.saved = r ? r.saved : 0;
+    rules.list = R.parse(rules.text).rules;
+  }
+  // Mark read, flag and archive, for mail that arrived after the rules were saved, through the account like a key press.
+  const DOES = [["read", "mark it read", (ad, id, a, ids) => A.actions.markRead(id, ad, S, ids, true)],
+    ["flag", "flag it", (ad, id, a, ids) => A.actions.flag(id, ad, S, ids, true)],
+    ["archive", "archive it", (ad, id, a, ids) => A.actions.archive(id, ad, S, ids)]];
+  async function applyRules(ids) {
+    const plan = new Map();
+    for (const id of ids) {
+      const m = await S.message(id);
+      if (!m || m.folder === "sent" || m.date < rules.saved) continue;
+      const does = R.actionsFor(rules.list, m);
+      for (const [kind] of DOES) {
+        if (!does[kind] || (kind === "archive" && m.folder !== "inbox") || (kind === "read" && !m.unread) || (kind === "flag" && m.flagged)) continue;
+        const key = m.account + "\n" + kind;
+        if (!plan.has(key)) plan.set(key, []);
+        plan.get(key).push(m.remoteId);
+      }
+    }
+    for (const [kind, words, fn] of DOES) {
+      for (const [key, remote] of plan) {
+        const [account, k] = key.split("\n");
+        const a = st.accounts.get(account);
+        if (k !== kind || !a || !a.adapter) continue;
+        try { await fn(a.adapter, account, a, remote); } catch (e) { toast("A rule couldn't " + words + ": " + e.message); }
+      }
+    }
+  }
+  function showRuleErrors() {
+    const { errors } = R.parse($("rulesText").value);
+    $("rulesErr").replaceChildren(...errors.map((e) => el("li", "", "Line " + e.line + ": " + e.why + ".")));
+    $("rulesText").setAttribute("aria-invalid", String(errors.length > 0));
+    return errors;
+  }
+  function openRules() {
+    $("rulesText").value = rules.text || R.EXAMPLE;
+    showRuleErrors();
+    $("rules").showModal();
+    $("rulesText").focus();
+  }
+  async function saveRules(e) {
+    e.preventDefault();
+    if (showRuleErrors().length) { $("rulesText").focus(); return; }
+    const text = $("rulesText").value;
+    await S.setMeta("rules", { text, saved: Date.now() });
+    await loadRules();
+    $("rules").close();
+    toast(rules.list.length === 1 ? "1 rule saved" : rules.list.length + " rules saved");
+    await refresh();
+  }
+
   // ---------- The command bar ----------
 
   const cmd = { items: [], sel: 0 };
@@ -525,6 +585,7 @@
       { label: "Reply", key: "R", run: () => { const t = current(); if (t) reply(t); } },
       ...O.BUNDLES.map((b) => ({ label: "Open " + b.name, key: "", run: () => go(b.id) })),
       { label: "Check for new mail", key: "", run: () => pullAll().then(refresh) },
+      { label: "Edit rules", key: "", run: openRules },
       { label: "Move down, move up", key: "J K", run: () => {} },
       { label: "Open the conversation", key: "Return", run: () => {} },
       { label: "Archive", key: "E", run: () => { const t = current(); if (t) archive(t); } },
@@ -603,7 +664,7 @@
   let gPending = 0;
   function onKey(e) {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { e.preventDefault(); openCmd(); return; }
-    if ($("cmd").open || e.metaKey || e.ctrlKey || e.altKey) return;
+    if ($("cmd").open || $("rules").open || e.metaKey || e.ctrlKey || e.altKey) return;
     if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable) return;
     const k = e.key;
     if (gPending) {
@@ -676,8 +737,17 @@
     addEventListener("popstate", (e) => {
       if (e.state && e.state.t) openThread(e.state.t, false); else if (st.open) closeThread(true);
     });
+    $("rulesForm").addEventListener("submit", saveRules);
+    $("rulesText").addEventListener("input", showRuleErrors);
+    $("rulesText").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) saveRules(e); });
+    $("rulesCancel").addEventListener("click", () => $("rules").close());
     let pending = 0;
-    S.onChange(() => { clearTimeout(pending); pending = setTimeout(refresh, 120); });
+    S.onChange((ev) => {
+      // Only the page whose pull stored the mail acts on it, so two open pages don't both change the account.
+      if (ev && ev.local && ev.added && ev.added.length && rules.list.length) applyRules(ev.added);
+      clearTimeout(pending);
+      pending = setTimeout(refresh, 120);
+    });
     // Closing the page during the wait asks first; if it closes anyway, the send finishes when Mail opens again.
     addEventListener("beforeunload", (e) => { if (outbox.size) { e.preventDefault(); e.returnValue = ""; } });
   }
@@ -687,6 +757,7 @@
     wire();
     await S.open();
     await loadAccounts();
+    await loadRules();
     await refresh();
     // The search index builds now, a chunk at a time, so the first search doesn't wait to read every message.
     finder.warm().catch(() => {});

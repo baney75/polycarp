@@ -1,12 +1,12 @@
 /* Polycarp Hub search: an index over every stored message, in memory, so a search over 100,000 messages answers in
-   well under 50 ms. Words come from the subject, the people and the whole text; `from:`, `to:` and `subject:` look in
-   one field, and `in:`, `is:` and `has:` filter. The last word matches as a prefix while it is being typed.
+   well under 50 ms. Words come from the subject, the people and the whole text; `from:`, `to:`, `subject:` and `list:`
+   look in one field, and `in:`, `is:` and `has:` filter. The last word matches as a prefix while it is being typed.
    Classic script for extension pages and Node tests. */
 (function () {
   "use strict";
 
   const MAX_TEXT = 20000;
-  const FIELDS = { from: "f:", to: "t:", cc: "t:", subject: "s:" };
+  const FIELDS = { from: "f:", to: "t:", cc: "t:", subject: "s:", list: "l:" };
   const IS = {
     unread: (d) => d.unread, read: (d) => !d.unread, flagged: (d) => d.flagged, starred: (d) => d.flagged,
     snoozed: (d) => d.snoozeUntil > Date.now()
@@ -34,10 +34,37 @@
   }
   const addrWords = (a) => (a && a.addr ? [String(a.addr).toLowerCase(), ...words(a.name), ...words(a.addr)] : []);
 
+  // Every token a message is found by: each word bare, and again under its field. A thread summary works too: its
+  // people count as senders and its snippet as the text.
+  function tokensOf(m) {
+    const out = new Set();
+    const both = (w, f) => { out.add(w); out.add(f + w); };
+    for (const a of [m.from, ...(m.people || [])]) for (const w of addrWords(a)) both(w, "f:");
+    for (const a of [...(m.to || []), ...(m.cc || [])]) for (const w of addrWords(a)) both(w, "t:");
+    for (const w of words(m.subject)) both(w, "s:");
+    for (const w of words(m.headers && m.headers.listId)) both(w, "l:");
+    const body = m.text ? String(m.text) : m.html ? htmlText(m.html) : String(m.snippet || "");
+    for (const w of words(body.slice(0, MAX_TEXT))) out.add(w);
+    return out;
+  }
+  const docOf = (m) => ({ id: m.id, threadId: m.threadId || m.id, date: m.date || m.lastDate || 0, folder: m.folder, unread: !!m.unread, flagged: !!m.flagged,
+    att: !!((m.attachments && m.attachments.length) || m.hasAttachments), snoozeUntil: m.snoozeUntil || 0 });
+
+  // Whether one message or thread summary matches a parsed query, whole words only.
+  function matches(parsed, m) {
+    if (!parsed.terms.length && !parsed.filters.length) return false;
+    const doc = docOf(m);
+    if (!parsed.filters.every((f) => f(doc))) return false;
+    if (!parsed.terms.length) return true;
+    const ts = tokensOf(m);
+    return parsed.terms.every((t) => ts.has(t.token));
+  }
+
   // A query into terms (each a token or a prefix to look up) and filters.
   //   ada plans           both words, anywhere
   //   from:ada  to:bo     a word or the whole address in that field
   //   subject:"roof"      in the subject; quotes hold several words, each required
+  //   list:almanac       a word of the List-Id
   //   in:inbox is:unread is:flagged has:attachment
   // The last word is a prefix unless the query ends in a space.
   function parse(q) {
@@ -76,19 +103,12 @@
 
     function addOne(m) {
       const d = docs.length;
-      docs.push({ id: m.id, threadId: m.threadId, date: m.date, folder: m.folder, unread: !!m.unread, flagged: !!m.flagged, att: !!(m.attachments && m.attachments.length), snoozeUntil: m.snoozeUntil || 0 });
-      const seen = new Set();
-      const put = (t) => {
-        if (seen.has(t)) return;
-        seen.add(t);
+      docs.push(docOf(m));
+      for (const t of tokensOf(m)) {
         let p = post.get(t);
         if (!p) { p = []; post.set(t, p); if (keys) fresh.push(t); }
         p.push(d);
-      };
-      for (const w of addrWords(m.from)) { put(w); put("f:" + w); }
-      for (const a of [...(m.to || []), ...(m.cc || [])]) for (const w of addrWords(a)) { put(w); put("t:" + w); }
-      for (const w of words(m.subject)) { put(w); put("s:" + w); }
-      for (const w of words(m.text ? String(m.text).slice(0, MAX_TEXT) : htmlText(m.html))) put(w);
+      }
       let set = byThread.get(m.threadId);
       if (!set) byThread.set(m.threadId, (set = []));
       set.push(d);
@@ -249,5 +269,5 @@
     };
   }
 
-  globalThis.PolycarpHubSearch = { words, htmlText, parse, create, live };
+  globalThis.PolycarpHubSearch = { words, htmlText, parse, tokensOf, matches, create, live };
 })();

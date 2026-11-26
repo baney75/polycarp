@@ -127,7 +127,9 @@
   let channel = null;
   function emit(ev) {
     openChannel();
-    for (const fn of Array.from(listeners)) { try { fn(ev); } catch (e) { /* one bad listener must not stop the rest */ } }
+    // Listeners in this page see `local`; other pages get the event without it, so only one page acts on new mail.
+    const here = Object.assign({ local: true }, ev);
+    for (const fn of Array.from(listeners)) { try { fn(here); } catch (e) { /* one bad listener must not stop the rest */ } }
     if (channel) { try { channel.postMessage(ev); } catch (e) { /* closed */ } }
   }
   function openChannel() {
@@ -189,6 +191,7 @@
       const touched = new Set();
       const known = new Map();
       const out = [];
+      const added = [];
       for (const raw of raws) {
         const msg = M.normalize(accountId, raw);
         const old = await backend().get("messages", msg.id);
@@ -198,6 +201,7 @@
           if (hit) known.set(id, hit.threadId);
         }
         msg.threadId = old ? old.threadId : M.threadKey(msg, known);
+        if (!old) added.push(msg.id);
         if (old) { msg.snoozeUntil = msg.snoozeUntil || old.snoozeUntil; msg.remindAt = msg.remindAt || old.remindAt; }
         if (msg.messageId) known.set(msg.messageId, msg.threadId);
         touched.add(msg.threadId);
@@ -205,8 +209,8 @@
       }
       await backend().put("messages", out);
       await resummarize(touched);
-      return Array.from(touched);
-    }).then((threads) => { emit({ type: "messages", threads }); return threads; });
+      return { threads: Array.from(touched), added };
+    }).then((r) => { emit({ type: "messages", threads: r.threads, added: r.added }); return r.threads; });
   }
 
   function remove(ids) {

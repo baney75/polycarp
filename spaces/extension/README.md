@@ -77,6 +77,8 @@ node tests/hub.spec.mjs          # Polycarp Mail on made-up mail: the list, keys
 node tests/hub-compose.spec.mjs  # writing in Polycarp Mail: drafts, undo send, replies and an agent's draft
 node tests/hub-safe-html.spec.mjs # HTML mail: 276 hostile mails through the cleaner and the sandboxed frame, against a local server
 node --test tests/hub-search.test.mjs # search: fields, filters, prefixes, and 100,000 messages in under 50 ms a query
+node --test tests/hub-rules.test.mjs # rules: plain lines into searches and actions, problems named by line, bundle rules over the headers
+node tests/hub-rules.spec.mjs # rules in Chromium: the editor, a bundle rule, and rules acting only on new mail
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact
 node tests/store-shots.mjs       # the Chrome Web Store screenshots and promo tile to tests/out/store
 node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Kokoro voice once

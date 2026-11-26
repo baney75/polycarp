@@ -118,3 +118,14 @@ main > .compose { padding: var(--s5) var(--s6); }
   .thread { padding: var(--s3) var(--s4) var(--s6); }
   .back.pane { display: grid; margin: 0 0 var(--s2) calc(var(--s2) * -1); }
 }
+
+/* Rules: plain lines, edited in place, with each problem named by its line. */
+.rules { width: min(680px, calc(100vw - 32px)); padding: var(--s5); border: var(--bw) solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+.rules::backdrop { background: var(--scrim); }
+.rules h2 { margin: 0 0 var(--s2); font-size: var(--t-lg); }
+.rules p { margin: 0 0 var(--s3); color: var(--muted); font-size: var(--t-sm); }
+.rules code { font-size: var(--t-xs); }
+.rules textarea { width: 100%; box-sizing: border-box; font: var(--t-sm)/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; padding: var(--s3); border: var(--bw) solid var(--line); border-radius: var(--r-md); background: var(--bg); color: var(--ink); resize: vertical; }
+.rules textarea:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.rules ul { list-style: none; margin: var(--s2) 0 0; padding: 0; color: var(--warn); font-size: var(--t-sm); }
+.rules .cbar { margin-top: var(--s3); }
