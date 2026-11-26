@@ -38,7 +38,7 @@ enum TilingTiming {
                 }
                 return engine.plan(TilingRead.shot(facts, shown: [1: place], focused: nil))
             }
-            func write(_ moves: [TilingMove]) { _ = Tiling.place(moves.compactMap { m in mine[m.id].map { (m, $0) } }, while: { true }) }
+            func write(_ moves: [TilingMove]) { _ = Tiling.place(moves.compactMap { m in mine[m.id].map { (m, $0) } }, screens: Windows.screens(), while: { true }) }
             for w in windows where w.id != last { answers[w.id] = w.tilingAnswer(screenSized: false) }
             write(look(last))
             MoveTiming.spin(0.25)

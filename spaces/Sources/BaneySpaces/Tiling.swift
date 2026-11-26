@@ -262,8 +262,11 @@ final class Tiling {
     }
 
     /// Asks for every frame, the apps side by side and each app's windows in turn; which were asked for whole.
-    static func place(_ list: [(TilingMove, Window)], while allowed: @escaping @Sendable () -> Bool) -> [(WindowID, Bool)] {
-        Lanes.map(list, by: \.0.pid) { m, w in (m.id, w.place(m.to, currentSize: m.from.size, while: allowed)) }
+    static func place(_ list: [(TilingMove, Window)], screens: [CGRect], while allowed: @escaping @Sendable () -> Bool) -> [(WindowID, Bool)] {
+        Lanes.map(list, by: \.0.pid) { m, w in
+            let display = screens.first { $0.contains(CGPoint(x: m.to.midX, y: m.to.midY)) }
+            return (m.id, w.place(m.to, from: m.from, display: display, while: allowed))
+        }
     }
 
     /// The left button is down, read on any thread.
@@ -276,8 +279,9 @@ final class Tiling {
         let pass = gate.pass
         // The windows are this write's from its start, so an older settle watching them gives them up at once (R-TS4).
         let serial = writes.wrote(Set(list.map(\.0.id)))
+        let screens = Windows.screens()
         Spaces.axQueue.async { [weak self] in
-            let wrote = Tiling.place(list, while: { gate.open(pass) && !Tiling.pressed })
+            let wrote = Tiling.place(list, screens: screens, while: { gate.open(pass) && !Tiling.pressed })
             DispatchQueue.main.async {
                 guard let self else { return }
                 clock.shown()
