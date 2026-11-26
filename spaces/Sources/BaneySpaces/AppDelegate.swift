@@ -580,6 +580,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if self.tilingKeysKept != self.tilingKeysToKeep { self.tilingKeysMayHaveChanged() }
         }
         spaces.onSettled = { [weak self] in self?.tiling.look() }
+        spaces.onSwitchAsked = { [weak self] at in self?.tiling.cause(TileCauses.Cause(.switch, at: at)) }
         spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
         NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.tiling.settingsChanged()
@@ -942,7 +943,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let command = TilingCommand(words: [key.name]) else { continue }
             let took = hotkeys.register(keyCode: key.chord.keyCode, modifiers: key.chord.carbon) { [weak self] in
                 guard let self, self.stillTrusted() else { return }
-                self.tiling.run(command)
+                self.tiling.run(command, pressed: Hotkeys.pressedAt)
             }
             if !took { refused.insert(key.name) }
         }

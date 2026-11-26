@@ -49,6 +49,12 @@ for line in open(os.path.join(folder, "timing.log"), encoding="utf-8", errors="r
         if m and kind_of(m.group(1)) not in RETIRED:
             samples.setdefault(kind_of(m.group(1)), []).append(int(m.group(2)))
         continue
+    # A tiling look (spec/tiling-speed.md R-TS1): judged on asked=, the last frame asked for, from its cause.
+    if len(parts) >= 2 and parts[1].startswith("tile="):
+        m = re.search(r" asked=(\d+)", line)
+        if m:
+            samples.setdefault("tile-" + parts[1][5:], []).append(int(m.group(1)))
+        continue
     kv = {}
     for k, v in re.findall(r"(\w+)=(\S+)", line):
         kv.setdefault(k, v)  # the first of each mark: a switch out of full screen marks twice

@@ -1,5 +1,6 @@
 import Foundation
 import XCTest
+@testable import BaneySpacesCore
 
 /// Every kind of line Spaces writes to timing.log has a speed budget in spec/speed.json, and
 /// scripts/speed-report.sh holds a day of real use to them (gaps P3, P4, P5 and G8).
@@ -41,14 +42,18 @@ final class SpeedBudgetTests: XCTestCase {
                 }
             }
         }
-        // Two writers: the switch line and the open line. A third kind of line needs a kind here.
-        XCTAssertEqual(appends, 2, "a new timing.log writer needs its kind in loggedKinds and a budget")
+        // Three writers: the switch line, the open line and tiling's line (one `tile-<cause>` kind per cause). A fourth
+        // kind of line needs a kind here.
+        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Tiling.swift").contains("TileCauses.line("), "tiling's line")
+        kinds.formUnion(TileCauses.Kind.allCases.map { "tile-" + $0.rawValue })
+        XCTAssertEqual(appends, 3, "a new timing.log writer needs its kind in loggedKinds and a budget")
         return kinds
     }
 
     func testEveryLoggedKindHasABudget() throws {
         let kinds = try loggedKinds()
-        XCTAssertTrue(kinds.isSuperset(of: ["switch", "parked", "launcher", "overview", "settings", "settings-pane"]), "\(kinds)")
+        XCTAssertTrue(kinds.isSuperset(of: ["switch", "parked", "launcher", "overview", "settings", "settings-pane",
+                                            "tile-key", "tile-new", "tile-close", "tile-switch"]), "\(kinds)")
         let budgets = try budgets()
         for kind in kinds.sorted() {
             let b = try XCTUnwrap(budgets[kind], "timing.log kind \(kind) has no budget in spec/speed.json spacesTiming")
@@ -124,6 +129,23 @@ final class SpeedBudgetTests: XCTestCase {
         let r = try report(timing: fast() + (0..<20).map { "\(now - $0) open dock=400" })
         XCTAssertEqual(r.status, 0, r.out)
         XCTAssertFalse(r.out.contains("dock"), r.out)
+    }
+
+    /// spec/tiling-speed.md case 11: tiling's lines are judged on asked=, under tile-<cause>.
+    func testTilingLinesCountUnderTheirCause() throws {
+        let tiles = (0..<3).map { "\(now - $0) tile=key looked=4 asked=\(20 + $0) landed=140 moves=3" }
+        let r = try report(timing: fast() + tiles + ["\(now) tile=new looked=9 asked=900 landed=- moves=1"])
+        XCTAssertTrue(r.out.contains("tile-key            3"), r.out)
+        XCTAssertTrue(r.out.contains("tile-new            1"), r.out)
+        XCTAssertFalse(r.out.contains("no budget"), r.out)
+    }
+
+    /// The tiling targets (R-TS3) can't be loosened.
+    func testTheTilingBudgetsMeetTheirTargets() throws {
+        let b = try budgets()
+        for (kind, p90) in ["tile-key": 50, "tile-new": 150, "tile-close": 100, "tile-switch": 80] {
+            XCTAssertLessThanOrEqual(try XCTUnwrap(b[kind]?["p90"] as? Int), p90, kind)
+        }
     }
 
     func testAWrongSwitcherFails() throws {

@@ -4,21 +4,29 @@ import BaneySpacesCore
 /// What a key, the bar, the command line or an agent asks tiling to do.
 extension Tiling {
     /// Runs a command on the workspace in use and its front window. `done` gets nil when it did something, else why not.
-    func run(_ command: TilingCommand, done: @escaping (String?) -> Void = { _ in }) {
+    /// `pressed` is the key event's time, for timing.log (spec/tiling-speed.md R-TS1).
+    func run(_ command: TilingCommand, pressed: Double? = nil, done: @escaping (String?) -> Void = { _ in }) {
         // A command acts on the windows there are now, so one just opened counts. Mid-switch it waits for the switch.
         spaces.whenFresh { [self] in
             guard spaces.active else { return done("Polycarp isn't placing windows now") }
             let n = spaces.model.current
             look()
+            // Timed only where the key's own look writes (R-TS2): a key that writes nothing leaves no cause behind.
+            let key = { if let pressed { self.cause(TileCauses.Cause(.key, at: pressed)) } }
             switch engine.run(command, on: n, focused: spaces.front()) {
             case .nothing(let why): done(why)
             case .changed:
+                key()
                 look()
                 done(nil)
             case .focus(let id):
                 engine.focused(id)
                 drawStrips()
                 spaces.focus(id, on: n, announce: false)
+                if let pressed {
+                    let now = Self.uptime
+                    Timed(causes: [TileCauses.Cause(.key, at: pressed)], looked: now, asked: now).log(landed: nil)
+                }
                 done(nil)
             case .cross(let d, let id): done(cross(d, from: n, carrying: id))
             case .nextDisplay(let id): done(next(from: n, carrying: id))

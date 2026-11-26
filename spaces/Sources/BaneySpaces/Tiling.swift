@@ -22,6 +22,9 @@ final class Tiling {
     private var bundles: [pid_t: String] = [:]
     /// Windows drawn a moment after they were scanned, and how often they were waited for.
     private var waits: [WindowID: Int] = [:]
+    /// What the looks answer, for timing.log (`TileCauses`), and the windows a frame was ever asked for.
+    var causes = TileCauses()
+    private var placed: Set<WindowID> = []
     private var watching = false
     var loaded = false
     var titleKey = Data()
@@ -102,7 +105,7 @@ final class Tiling {
         let ask = TilingRead.toAsk(facts, shown: Set(view.shown.keys), options: engine.options)
             .filter { silent[$0.id].map { $0 < now } ?? true && Windows.isResponsive($0.pid) }
         guard ask.isEmpty else { return question(ask, view.windows) }
-        let clock = OpenClock("tile")
+        let clock = OpenClock("tile"), looked = Self.uptime
         claim(facts)
         var shot = TilingRead.shot(facts, shown: view.shown, focused: view.focused)
         (shot.displays, shot.corner) = (view.displays, Geometry.hidingSpot(screens: view.displays))
@@ -110,13 +113,39 @@ final class Tiling {
         spaces.stowed = engine.stowed
         for (old, new) in engine.swaps { spaces.model.tab(old, became: new) }
         waitForLate(facts, Set(view.shown.keys))
+        let at = Dictionary(facts.map { ($0.id, $0.workspace) }, uniquingKeysWith: { a, _ in a })
         forget(facts)
         saveSoon()
         onChange()
         drawStrips()
         let (later, go) = (moves.filter { silent[$0.id].map { $0 > now } ?? false }, moves.filter { silent[$0.id].map { $0 <= now } ?? true })
         for m in later { engine.touched(m.id) }
-        if !go.isEmpty { write(go, view.windows, clock) }
+        guard !go.isEmpty else { return }
+        let answered = causes.answer(now: looked, wrote: go.map { TileCauses.Wrote(pid: $0.pid, workspace: at[$0.id] ?? 0, new: !placed.contains($0.id)) })
+        placed.formUnion(go.map(\.id))
+        write(go, view.windows, clock, Timed(causes: answered, looked: looked))
+    }
+
+    /// A cause a look will answer (spec/tiling-speed.md R-TS2).
+    func cause(_ c: TileCauses.Cause) { causes.add(c) }
+
+    static var uptime: Double { ProcessInfo.processInfo.systemUptime }
+
+    /// The causes one write answers, and when its look began; the rest of each line comes as the write goes on.
+    struct Timed {
+        var causes: [TileCauses.Cause]
+        var looked: Double
+        var asked = 0.0
+        var moves = 0
+
+        /// Off the main thread, as `OpenClock` does.
+        func log(landed: Double?) {
+            guard !causes.isEmpty else { return }
+            let epoch = Int(Date().timeIntervalSince1970)
+            let lines = causes.map { TileCauses.line(epoch: epoch, $0, looked: looked, asked: asked, landed: landed, moves: moves) }
+            let url = Spaces.folder.appendingPathComponent("timing.log")
+            DispatchQueue.global(qos: .utility).async { TimingLog.append(lines.joined(separator: "\n"), to: url) }
+        }
     }
 
     /// Off: nothing is watched. On: an app shown, hidden or taken to another desktop changes what is in sight.
@@ -161,6 +190,7 @@ final class Tiling {
     private func forget(_ facts: [TilingFacts]) {
         self.facts = Dictionary(facts.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         let ids = Set(facts.map(\.id)), pids = Set(facts.map(\.pid))
+        placed.formIntersection(ids)
         answers = answers.filter { ids.contains($0.key) }
         silent = silent.filter { ids.contains($0.key) }
         waits = waits.filter { ids.contains($0.key) }
@@ -203,7 +233,7 @@ final class Tiling {
     /// The left button is down, read on any thread.
     private static var pressed: Bool { CGEventSource.buttonState(.combinedSessionState, button: .left) }
 
-    private func write(_ moves: [TilingMove], _ windows: [WindowID: Window], _ clock: OpenClock) {
+    private func write(_ moves: [TilingMove], _ windows: [WindowID: Window], _ clock: OpenClock, _ timed: Timed) {
         busy = true
         let list = moves.compactMap { m in windows[m.id].map { (m, $0) } }
         let gate = Window.gate
@@ -213,30 +243,37 @@ final class Tiling {
             DispatchQueue.main.async {
                 guard let self else { return }
                 clock.shown()
+                var timed = timed
+                (timed.asked, timed.moves) = (Self.uptime, moves.count)
                 // One a switch or a press got in front of was never asked; one whose app didn't answer is asked later.
                 for (id, whole) in wrote where !whole {
                     self.engine.touched(id)
                     if gate.open(pass), !Tiling.pressed { self.silent[id] = Date().addingTimeInterval(2) } else { self.again = true }
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
-                self.settle(Set(wrote.filter(\.1).map(\.0)), Dictionary(uniqueKeysWithValues: moves.map { ($0.id, $0.to) }), pass)
+                self.settle(Set(wrote.filter(\.1).map(\.0)), Dictionary(uniqueKeysWithValues: moves.map { ($0.id, $0.to) }), pass, timed)
             }
         }
     }
 
     /// Waits until the windows hold still, then tells the engine where they are. One on its tile at once is done; one
     /// that isn't is given a quarter of a second, since some apps lay out late.
-    private func settle(_ ids: Set<WindowID>, _ targets: [WindowID: CGRect], _ pass: Int, last: [WindowID: CGRect] = [:], still: Int = 0, looks: Int = 0) {
+    private func settle(_ ids: Set<WindowID>, _ targets: [WindowID: CGRect], _ pass: Int, _ timed: Timed, last: [WindowID: CGRect] = [:], still: Int = 0, looks: Int = 0) {
         DispatchQueue.main.asyncAfter(deadline: .now() + (looks == 0 ? 0.03 : 0.06)) { [weak self] in
             guard let self else { return }
             // A switch or a drag owns the windows now: what is seen here isn't their app's answer.
-            guard Window.gate.open(pass) else { self.ready(); return self.look() }
+            guard Window.gate.open(pass) else {
+                timed.log(landed: nil)
+                self.ready()
+                return self.look()
+            }
             let now = WindowMoves.bounds(of: ids)
             let there = now.allSatisfy { id, f in targets[id].map { TilingEngine.near(f, $0) } ?? true }
             let held = now == last ? still + 1 : 0
             guard there || held >= 3 || looks >= 10 else {
-                return self.settle(ids, targets, pass, last: now, still: held, looks: looks + 1)
+                return self.settle(ids, targets, pass, timed, last: now, still: held, looks: looks + 1)
             }
+            timed.log(landed: Self.uptime)
             let again = self.ready()
             if self.engine.landed(now) || again { self.look() }
         }
