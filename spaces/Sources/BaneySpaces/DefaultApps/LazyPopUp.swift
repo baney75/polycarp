@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// A pop-up button that holds only what it shows until it is opened. A SwiftUI `Picker` builds every choice when it is
-/// drawn, and eleven of those were most of what opening Default apps cost.
+/// drawn, and one per job of those was most of what opening Default apps cost.
 struct LazyPopUp: NSViewRepresentable {
     struct Item {
         let title: String

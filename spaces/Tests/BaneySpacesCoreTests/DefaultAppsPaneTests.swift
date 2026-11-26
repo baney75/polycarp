@@ -62,7 +62,7 @@ final class DefaultAppsPaneTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "func refresh() ", in: store)).contains("queue.async {"))
         let pane = try SourceText.code("Sources/BaneySpaces/DefaultApps/DefaultAppsPane.swift")
         XCTAssertFalse(pane.contains("urlForApplication"))
-        XCTAssertFalse(pane.contains("Picker("), "every choice of eleven lists is 40 ms")
+        XCTAssertFalse(pane.contains("Picker("), "every choice of every job's list is 40 ms")
         let list = try SourceText.code("Sources/BaneySpaces/DefaultApps/LazyPopUp.swift")
         XCTAssertEqual(list.components(separatedBy: "view.items()").count, 2)
         XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "func opening(_ note: Notification) ", in: list)).contains("view.items()"))
