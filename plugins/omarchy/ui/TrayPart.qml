@@ -98,7 +98,8 @@ Item {
       vertical: root.vertical
 
       Repeater {
-        model: root.items
+        // Keeps each icon's slot when another app changes, so nothing flickers and an open menu keeps its anchor.
+        model: ScriptModel { values: root.items }
 
         Slot {
           id: slot
