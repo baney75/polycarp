@@ -24,11 +24,11 @@ extension TileLayout {
         guard let root, let box = gaps.inset(area) else { return nil }
         // Cells and not tiles: a tile shorter than a gap can face only the gap, but every cell borders another.
         let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums)
-        let cells = solver.cells(root, in: solver.grown(box)).mapValues(solver.rounded)
-        guard let from = cells[id] else { return nil }
+        let all = cells(solver, in: box).mapValues(solver.rounded)
+        guard let from = all[id] else { return nil }
         let across = d.axis.other, middle = from.lo(across) + from.hi(across)
         let facing = windows.compactMap { w -> (id: WindowID, shared: Double, off: Double)? in
-            guard w != id, let c = cells[w] else { return nil }
+            guard w != id, let c = all[w] else { return nil }
             guard d.back ? c.hi(d.axis) == from.lo(d.axis) : c.lo(d.axis) == from.hi(d.axis) else { return nil }
             let shared = min(c.hi(across), from.hi(across)) - max(c.lo(across), from.lo(across))
             return shared > 0 ? (w, shared, abs(c.lo(across) + c.hi(across) - middle)) : nil
@@ -40,6 +40,28 @@ extension TileLayout {
             if abs(f.shared - best.shared) > 1 { return f.shared > best.shared ? f : best }
             return f.off < best.off - 2 ? f : best
         }?.id
+    }
+
+    /// The window nearest that way among some that stand anywhere: how far its middle is, off to the side counting double.
+    static func nearest(to id: WindowID, toward d: TileDirection, in frames: [WindowID: CGRect]) -> WindowID? {
+        guard let from = frames[id] else { return nil }
+        func way(_ f: CGRect) -> (along: Double, across: Double) {
+            let dx = f.midX - from.midX, dy = f.midY - from.midY
+            return switch d {
+            case .left: (-dx, abs(dy))
+            case .right: (dx, abs(dy))
+            case .up: (-dy, abs(dx))
+            case .down: (dy, abs(dx))
+            }
+        }
+        var that = frames.filter { $0.key != id && way($0.value).along > 0 }
+        // More that way than off to the side, when there is one.
+        let ahead = that.filter { way($0.value).along >= way($0.value).across }
+        if !ahead.isEmpty { that = ahead }
+        return that.min { a, b in
+            let (u, v) = (way(a.value), way(b.value))
+            return (u.along + 2 * u.across, a.key) < (v.along + 2 * v.across, b.key)
+        }?.key
     }
 
     /// The next window in the order, around the end. A window alone is its own next one.
@@ -81,7 +103,12 @@ extension TileLayout {
         guard let k = path.indices.last(where: { k in
             guard let s = tree[split: Array(path[..<k])], s.axis == d.axis else { return false }
             return s.parts.indices.contains(path[k] + step)
-        }) else { return false }
+        }) else {
+            // From a stack at the end of a strip, or the only one, it becomes a column of its own.
+            guard style == .scrolling, d.axis == .horizontal, path.count > 1 || tree[split: []]?.axis == .vertical else { return false }
+            wrap(id, d, area)
+            return true
+        }
         let parent = Array(path[..<k])
         if (k..<path.count).contains(where: { tree[split: Array(path[..<$0])]?.axis != d.axis }) {
             relocate(id, area) { $0.admit(id, into: parent, at: d.back ? path[k] : path[k] + 1) }
@@ -110,7 +137,7 @@ extension TileLayout {
         while taken.contains(hole) { hole -= 1 }
         tree.relabel { $0 == id ? hole : $0 }
         place(&tree)
-        _ = tree.remove(hole, in: TileBox(area), rechoosing: style == .dwindle)
+        _ = tree.remove(hole, in: TileBox(area), rechoosing: style.dwindles)
         root = tree
         settle(area)
     }

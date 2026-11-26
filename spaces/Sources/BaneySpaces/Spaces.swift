@@ -132,6 +132,8 @@ final class Spaces {
     var onChange: (() -> Void)?
     /// A scan was applied or a switch ended: the window list is as new as it gets. For tiling (`Tiling.look`).
     var onSettled: () -> Void = {}
+    /// Windows tiling keeps in the corner on a workspace in sight (`scrolling`), and where each goes when Polycarp lets go.
+    var stowed: [WindowID: CGRect] = [:]
     /// A window got the focus on its workspace.
     var onFocus: (WindowID) -> Void = { _ in }
 
@@ -1521,6 +1523,8 @@ final class Spaces {
             guard let w = windows[id], restore(w, to: frame, screens: screens) else { continue }
             saved.frames[id] = nil
         }
+        for (id, frame) in stowed { if let w = windows[id] { _ = restore(w, to: frame, screens: screens) } }
+        stowed = [:]
         for pid in saved.hiddenApps { NSRunningApplication(processIdentifier: pid)?.unhide() }
         saved.hiddenApps = []
         persist()
@@ -2016,6 +2020,8 @@ final class Spaces {
         let heldAway = Set(pendingLayout.values.filter { heldWindows.contains($0.window) && !model.isShown($0.workspace) }.map(\.pid))
         let how = Concealment(plan: plan, owner: windows.mapValues(\.pid), alsoShown: waiting, neverHidden: parkedApps,
                               alsoHidden: heldAway)
+        // One tiling keeps in the corner stays there.
+        for id in plan.show where stowed[id] != nil { saved.frames[id] = nil }
         let home = plan.show.compactMap { id -> (Window, CGRect)? in
             guard let frame = saved.frames[id], let w = windows[id] else { return nil }
             return (w, frame)

@@ -58,12 +58,16 @@ extension TileLayout {
                                minimums: [WindowID: CGSize]) -> Bool {
         guard !full, points.isFinite, var tree = root, let path = tree.path(of: id), let box = gaps.inset(area) else { return false }
         let solver = TileSolver(tree, in: box, gap: gaps.inner, minimums: minimums)
-        var rows = runs(tree, to: path, axis, solver.cells(tree, in: solver.grown(box)))
+        let all = cells(solver, in: box)
+        var rows = runs(tree, to: path, axis, all)
         func payers(_ r: Run) -> [Int] { r.members.indices.filter { $0 != r.mine && (before == nil || ($0 < r.mine) == before) } }
         func spare(_ r: Run, _ i: Int) -> Double { max(0, r.lengths[i] - solver.need(r.members[i], axis)) }
         // The runs inside the one whose cut line moves grow only their part with the window in it, and the rest of what
         // moved stays as long as it was.
-        guard let first = rows.lastIndex(where: { !payers($0).isEmpty }) else { return false }
+        guard let first = rows.lastIndex(where: { !payers($0).isEmpty }) else {
+            return axis == .horizontal && widen(id, by: points, solver, in: box)
+        }
+        if axis == .horizontal, rows[first].at.isEmpty, strip(solver, in: box) != nil { return widen(id, by: points, solver, in: box) }
         let run = rows[first], pay = payers(run)
         let most = pay.reduce(0) { $0 + spare(run, $1) }
         let least = rows[first...].map { spare($0, $0.mine) }.min() ?? 0
@@ -138,9 +142,11 @@ extension TileLayout {
             guard let path = tree.path(of: id) else { return }
             at = Array(path.dropLast())
         }
+        // The strip itself always runs across.
+        if at.isEmpty, style == .scrolling { return }
         guard var s = tree[split: at] else { return }
         (s.axis, s.automatic) = (s.axis.other, false)
-        if style == .dwindle { s.rechooseParts(in: tree.box(at: at, in: TileBox(area))) }
+        if style.dwindles { s.rechooseParts(in: tree.box(at: at, in: TileBox(area))) }
         tree[split: at] = s
         root = tree
         settle(area)

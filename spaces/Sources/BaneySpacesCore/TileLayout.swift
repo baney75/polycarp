@@ -8,6 +8,15 @@ public enum TileStyle: String, CaseIterable, Codable, Sendable {
     case columns
     /// One main window, the rest stacked beside it.
     case main
+    /// Columns in a strip that can be wider than the area, the one in use scrolled into it.
+    case scrolling
+    /// Windows stay where the person puts them; the order is kept for the next style.
+    case floating
+
+    /// A new window is a column of its own, and a drop beside a column is one more.
+    var inColumns: Bool { self == .columns || self == .scrolling }
+    /// Automatic splits take the long side of the shape they have.
+    var dwindles: Bool { self == .dwindle || self == .floating }
 }
 
 /// One workspace's tiling: a tree of splits with a window at each leaf. It holds no frames: the same layout gives them
@@ -24,17 +33,21 @@ public struct TileLayout: Codable, Equatable, Sendable {
     /// Every window gets the whole area and the app raises the focused one. The tree stays as it is, so turning this off
     /// puts everything back; only windows coming and going change it meanwhile.
     public var full = false
+    /// How far `scrolling` has the strip scrolled, in points.
+    var scroll = 0.0
     var root: TileNode?
 
     public init(style: TileStyle = .dwindle) { self.style = style }
 
-    private enum CodingKeys: String, CodingKey { case style, full, root }
+    private enum CodingKeys: String, CodingKey { case style, full, scroll, root }
 
     /// A saved layout can have been edited or cut short, so the tree is repaired before anything walks it.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         style = try c.decode(TileStyle.self, forKey: .style)
         full = try c.decodeIfPresent(Bool.self, forKey: .full) ?? false
+        let at = try c.decodeIfPresent(Double.self, forKey: .scroll) ?? 0
+        scroll = at.isFinite ? at : 0
         var seen: Set<WindowID> = []
         root = try c.decodeIfPresent(TileNode.self, forKey: .root)?.repaired(&seen)
     }
@@ -53,7 +66,7 @@ public struct TileLayout: Codable, Equatable, Sendable {
     public mutating func setStyle(_ new: TileStyle, area: CGRect) {
         guard new != style else { return }
         let order = windows
-        (style, root) = (new, nil)
+        (style, root, scroll) = (new, nil, 0)
         for (i, id) in order.enumerated() { insert(id, beside: i > 0 ? order[i - 1] : nil, area: area) }
     }
 
@@ -65,12 +78,19 @@ public struct TileLayout: Codable, Equatable, Sendable {
         let beside = focused.flatMap { tree.path(of: $0) }
         let box = TileBox(area)
         switch style {
-        case .dwindle:
+        case .dwindle, .floating:
             let path = beside ?? tree.lastPath
             tree[path] = .split(TileSplit(tree.box(at: path, in: box).axis, automatic: true, [tree[path], .window(id)]))
         case .columns:
             let end = tree[split: []].map { [$0.parts.count - 1] }
             tree.join(id, after: beside ?? end ?? [], axis: box.axis)
+        case .scrolling:
+            if let top = tree[split: []], top.axis == .horizontal {
+                tree.join(id, after: [beside?.first ?? top.parts.count - 1], axis: .horizontal)
+            } else {
+                // All there is so far, stacked or not, is the first column.
+                tree = .split(TileSplit(.horizontal, automatic: true, [tree, .window(id)]))
+            }
         case .main:
             if case .window = tree {
                 tree = .split(TileSplit(box.axis, automatic: true, [tree, .window(id)],
@@ -89,7 +109,7 @@ public struct TileLayout: Codable, Equatable, Sendable {
         if style == .main, let first = windows.first, first == id, let next = windows.dropFirst().first {
             tree.relabel { $0 == first ? next : $0 == next ? first : $0 }
         }
-        let gone = tree.remove(id, in: TileBox(area), rechoosing: style == .dwindle)
+        let gone = tree.remove(id, in: TileBox(area), rechoosing: style.dwindles)
         root = gone == .emptied ? nil : tree
         settle(area)
     }
@@ -121,9 +141,9 @@ public struct TileLayout: Codable, Equatable, Sendable {
     /// moved to one of another shape: the automatic splits choose again for it.
     mutating func settle(_ area: CGRect) {
         let box = TileBox(area)
-        guard box.usable, var top = root?[split: []] else { return }
+        guard style != .scrolling, box.usable, var top = root?[split: []] else { return }
         if top.automatic, top.axis != box.axis {
-            if style == .dwindle {
+            if style.dwindles {
                 root?.rechoose(in: box)
                 return
             }

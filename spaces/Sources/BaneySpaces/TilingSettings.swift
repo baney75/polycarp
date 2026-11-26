@@ -158,6 +158,8 @@ struct WindowsPane: View {
         case .dwindle: "A new window halves the one you are in."
         case .columns: "Windows stand side by side at full height."
         case .main: "One large window beside a stack of the rest."
+        case .scrolling: "Columns in a strip wider than the screen. Going to a window scrolls it in."
+        case .floating: "Windows stay where you put them. The focus keys still work."
         }
     }
 
@@ -218,11 +220,18 @@ struct TilingPreview: View {
 
     private static let area = CGRect(x: 0, y: 0, width: 1600, height: 1000)
 
+    /// Windows as a person leaves them, for `floating`.
+    private static let loose: [(id: WindowID, frame: CGRect)] = [
+        (2, CGRect(x: 120, y: 90, width: 760, height: 520)), (3, CGRect(x: 820, y: 180, width: 640, height: 460)),
+        (4, CGRect(x: 240, y: 480, width: 620, height: 420)), (1, CGRect(x: 560, y: 320, width: 700, height: 500)),
+    ]
+
     private var frames: [(id: WindowID, frame: CGRect)] {
         let o = TilingOptions(tiling, agentWorkspace: nil)
         var l = TileLayout(style: o.style)
         l.sync([1, 2, 3, 4], focused: nil, area: Self.area)
-        return l.frames(in: Self.area, gaps: o.gaps).sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+        if o.style == .floating { return Self.loose }
+        return l.frames(in: Self.area, gaps: o.gaps).filter { $0.value.maxX <= Self.area.maxX }.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
     }
 
     var body: some View {

@@ -206,7 +206,9 @@ extension TileLayout {
         if case .window(let id) = root { return [id: lone(id, in: box, minimums: minimums, loneMax: loneMax)] }
         let solver = TileSolver(root, in: box, gap: gaps.inner, minimums: minimums)
         var out: [WindowID: CGRect] = [:]
-        for (id, cell) in solver.cells(root, in: solver.grown(box)) { out[id] = solver.tile(cell, in: box) }
+        // A strip reaches past the area on both sides.
+        let room = style == .scrolling ? TileBox(-.infinity, box.y0, .infinity, box.y1) : box
+        for (id, cell) in cells(solver, in: box) { out[id] = solver.tile(cell, in: room) }
         return out
     }
 

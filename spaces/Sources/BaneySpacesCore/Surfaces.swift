@@ -398,8 +398,8 @@ extension SurfaceField {
         SurfaceField("tiling.enabled", .bool, .bool(false), "Tile every workspace that isn't in tiling.off. Off until you turn it on; a workspace in tiling.on tiles either way."),
         SurfaceField("tiling.on", .ids(known: workspaces, custom: false), ids([]), "Workspaces that tile while tiling.enabled is off."),
         SurfaceField("tiling.off", .ids(known: workspaces, custom: false), ids([]), "Workspaces that don't tile while tiling.enabled is on."),
-        SurfaceField("tiling.style", .choice(["dwindle", "columns", "main"]), .string("dwindle"),
-                     "dwindle splits the window you are in, columns puts windows side by side, main keeps one large window beside a stack."),
+        SurfaceField("tiling.style", .choice(["dwindle", "columns", "main", "scrolling", "floating"]), .string("dwindle"),
+                     "dwindle splits the window you are in, columns puts windows side by side, main keeps one large window beside a stack, scrolling has columns in a strip wider than the screen, floating leaves windows where you put them."),
         SurfaceField("tiling.gaps.inner", .integer(0...64), .number(8), "Points between tiled windows, 0 to 64."),
         SurfaceField("tiling.gaps.outer", .integer(0...64), .number(8), "Points around the tiled windows, 0 to 64."),
     ] + ["top", "bottom", "left", "right"].map {

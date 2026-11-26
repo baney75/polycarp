@@ -21,6 +21,8 @@ struct FakeWindows {
     var wins: [WindowID: Win] = [:]
     var shown: [Int: TilingShot.Place]
     var focused: WindowID?
+    var displays: [CGRect] = []
+    var corner: CGPoint?
     var engine = TilingEngine()
     var writes = 0
     /// Every write in this run, with what the window was when it was written.
@@ -39,7 +41,11 @@ struct FakeWindows {
         return o
     }
 
-    var shot: TilingShot { TilingShot(windows: wins.values.map(\.w).sorted { $0.id < $1.id }, shown: shown, focused: focused) }
+    var shot: TilingShot {
+        var s = TilingShot(windows: wins.values.map(\.w).sorted { $0.id < $1.id }, shown: shown, focused: focused)
+        (s.displays, s.corner) = (displays, corner)
+        return s
+    }
 
     mutating func open(_ id: WindowID, pid: Int32 = 100, bundle: String = "app", workspace: Int = 1, frame: CGRect? = nil, least: CGSize? = nil) {
         let f = frame ?? CGRect(x: 40 + CGFloat(id) * 12, y: 60 + CGFloat(id) * 9, width: 700, height: 500)
