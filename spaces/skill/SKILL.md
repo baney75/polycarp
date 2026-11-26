@@ -105,7 +105,7 @@ same as `paper_set`, `paper_get` and `paper_reset`. Docs: spaces/docs/surfaces.m
 
 ## Default apps: which app does each job
 
-Roles: agent, browser, terminal, editor, files, mail, messages, calendar, notes, music, passwords. Polycarp's keys,
+Roles: agent, browser, terminal, editor, files, mail, messages, calendar, notes, music, video, passwords. Polycarp's keys,
 launcher and commands open the app chosen for the role.
 
 ```sh

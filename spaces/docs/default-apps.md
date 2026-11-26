@@ -1,7 +1,7 @@
 # Default apps
 
 Polycarp keeps one answer to "which app does this job?", and its keys, launcher and commands all use it. The jobs are
-agent, browser, terminal, editor, files, mail, messages, calendar, notes, music and passwords.
+agent, browser, terminal, editor, files, mail, messages, calendar, notes, music, video and passwords.
 
 ## Who decides
 

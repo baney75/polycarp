@@ -25,7 +25,7 @@ pub(crate) const LATEST: &str = "2025-06-18";
 pub(crate) const KNOWN: [&str; 3] = ["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// The jobs Polycarp keeps a default app for, as `polycarp-spaces defaults` names them.
-const ROLES: [&str; 11] = [
+const ROLES: [&str; 12] = [
     "agent",
     "browser",
     "terminal",
@@ -36,6 +36,7 @@ const ROLES: [&str; 11] = [
     "calendar",
     "notes",
     "music",
+    "video",
     "passwords",
 ];
 
@@ -84,7 +85,7 @@ Polycarp's launcher and new tab page do (bangs like !yt and the engine in search
 nothing. search_open performs the top result: it brings an open tab or window forward, or opens the page in the \
 default browser. Call it only when the person asked to go there.
 To see or change which app Polycarp opens for a job (agent, browser, terminal, editor, files, mail, messages, calendar, \
-notes, music, passwords), read defaults_get and defaults_candidates, then defaults_set one role the person asked about; \
+notes, music, video, passwords), read defaults_get and defaults_candidates, then defaults_set one role the person asked about; \
 defaults_reset goes back to macOS's. None of them changes macOS's own default: tell the person data.everywhere, which \
 says what they press for that.
 To tell the person which keys do what in Polycarp, read keys_list; it changes nothing.
