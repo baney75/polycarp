@@ -90,9 +90,12 @@ final class Tiling {
         load()
         guard let view = spaces.tilingView(bar: Self.reach) else { return }
         var facts = view.facts
+        // Titles only when a rule asks for words of one; they stay in memory.
+        let titled = engine.options.rules.contains { $0.title != nil }
         for i in facts.indices {
             facts[i].answer = answers[facts[i].id]
             facts[i].bundle = bundle(of: facts[i].pid)
+            if titled { facts[i].title = spaces.title(of: facts[i].id) }
         }
         let now = Date()
         let ask = TilingRead.toAsk(facts, shown: Set(view.shown.keys), options: engine.options)

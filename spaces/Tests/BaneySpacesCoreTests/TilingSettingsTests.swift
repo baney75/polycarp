@@ -19,7 +19,7 @@ final class TilingSettingsTests: XCTestCase {
         XCTAssertEqual(t.style, "dwindle")
         XCTAssertEqual([t.inner, t.outer, t.top, t.bottom, t.left, t.right], [8, 8, 0, 0, 0, 0])
         XCTAssertEqual(t.loneWidth, .smart)
-        XCTAssertEqual(t.float, ["com.apple.calculator", "com.apple.Stickies"])
+        XCTAssertEqual(t.float, [])
         let one = try surfaces(#"{"on":["3"],"loneWidth":"points:1200","floatModifier":"none"}"#).get().surfaces.tiling
         XCTAssertTrue(one.anywhere)
         XCTAssertEqual(one.on, [3])

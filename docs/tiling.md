@@ -110,14 +110,30 @@ The outline takes the theme's border color; `tiling { … }` in [style.css](../s
 ## What is never tiled
 
 Windows that can't be resized, dialogs, sheets, panels and popovers, full-screen windows, Polycarp's own windows and
-every window on the agent workspace. So are the windows of an app in `tiling.float` (Calculator and Stickies, until you
-change it in Settings > Windows) and any window you floated. Minimized and hidden windows leave the layout and come back to
-their place. The native tabs of one window take one tile.
+every window on the agent workspace. So are the windows of an app in `tiling.float`, small utilities such as Calculator,
+Stickies, Digital Color Meter and System Settings unless a rule tiles them, and any window you floated. Minimized and hidden
+windows leave the layout and come back to their place. The native tabs of one window take one tile.
 
 An app may refuse a size. Polycarp learns the smallest it takes, solves the layout again and leaves it there: it tries a
 size at most three times.
 
 Layouts are kept across restarts of Polycarp and of its apps, for each workspace and display, for two weeks.
+
+## Rules
+
+Settings > Windows > Rules, or `tiling.rules` in surfaces.json, one rule a line: an app's bundle id, what to do, and words
+of the title when only some of its windows are meant.
+
+```json
+"tiling": { "rules": ["com.apple.Notes 3", "com.apple.Music pin", "com.apple.Safari float Picture in Picture", "com.apple.calculator tile"] }
+```
+
+`float` and `tile` say whether its windows take a tile; the first one that matches wins, over `tiling.float` and the
+built-in utilities. `pin` keeps a new window in sight on every workspace of its display, and a workspace 1 to 9 sends a new
+window there; the first of those that matches says where a new window goes. A rule never moves a window to or from the
+agent workspace, a window of an app working there, a window an agent claimed, or one that waits on you. A window is judged
+once, when it first has a title: a title that changes later moves nothing. Titles stay in memory and are never written to a
+file or a log.
 
 ## The command
 

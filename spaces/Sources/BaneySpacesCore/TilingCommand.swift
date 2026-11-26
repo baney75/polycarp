@@ -243,7 +243,7 @@ extension TilingEngine {
     public mutating func setFloating(_ id: WindowID, _ floating: Bool) {
         guard let w = seen[id], !w.fixed else { return }
         if floating { keepPlace(of: id) }
-        choice[id] = options.floatApps.contains(w.bundle) == floating ? nil : floating
+        choice[id] = (ruling[id] ?? options.ruled.floats(bundle: w.bundle, title: w.title)) == floating ? nil : floating
         asked[id] = nil
     }
 

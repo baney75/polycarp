@@ -499,7 +499,9 @@ final class Spaces {
         let now = Date()
         if !firstScan {
             let fresh = added.filter { !fromLayout.contains($0) && unplaced.isNew($0, known: knownWindows, now: now) }
-            returned = placeClaimed(fresh) || returned
+            var claimed = Set<WindowID>()
+            returned = placeClaimed(fresh, claimed: &claimed) || returned
+            returned = placeByRule(fresh.filter { !claimed.contains($0) }) || returned
             adoptBackgroundWindows(fresh)
         }
         if returned {
@@ -641,7 +643,7 @@ final class Spaces {
     /// Claimed windows go straight to their workspace, before the next switch would show them.
     /// A window of the app you're in is yours (⌘N), unless Polycarp started that process for the claim. True when one went
     /// somewhere other than here.
-    private func placeClaimed(_ added: [WindowID]) -> Bool {
+    private func placeClaimed(_ added: [WindowID], claimed: inout Set<WindowID>) -> Bool {
         let now = Date()
         claims = claims.compactMapValues { l in
             let live = l.filter { $0.until > now }
@@ -662,6 +664,7 @@ final class Spaces {
             // workspace (`WaitingWindow.claimKeeps`).
             // Read by the scan: a standard window it found modal is among `asking`.
             let modal = asking.contains { $0.id == id && $0.modal == true }
+            claimed.insert(id)
             guard WaitingWindow.claimKeeps(agentStartedProcess: c.newProcess, subrole: kAXStandardWindowSubrole as String, modal: modal) else {
                 let parents = Set(windows.values.filter { $0.pid == w.pid && $0.id != id }.compactMap { model.workspace(of: $0.id) })
                 switch WaitingWindow.place(asks: true, parents: parents, shown: Set(Workspaces.range.filter(model.isShown)), recent: recent) {
@@ -678,6 +681,31 @@ final class Spaces {
             model.assign(id, to: c.workspace, focus: false)
             Trace.log("claimed window \(id) of \(windows[id]?.appName ?? "?") for workspace \(c.workspace)")
             away = away || !model.isShown(c.workspace)
+        }
+        return away
+    }
+
+    /// New windows a pin or workspace rule names (`tiling.rules`). True when one went somewhere out of sight.
+    private func placeByRule(_ added: [WindowID]) -> Bool {
+        let rules = TileRules(lines: SurfacesStore.shared.current.tiling.rules, float: [])
+        guard !rules.rules.isEmpty else { return false }
+        let agent = Self.agentWorkspace
+        var away = false
+        for id in added {
+            guard let w = windows[id], let here = model.workspace(of: id),
+                  let bundle = NSRunningApplication(processIdentifier: w.pid)?.bundleIdentifier else { continue }
+            let agentApp = agent.map { a in windows.values.contains { $0.pid == w.pid && $0.id != id && model.workspace(of: $0.id) == a } } ?? false
+            let waits = asking.contains { $0.id == id && $0.modal == true }
+            switch rules.place(bundle: bundle, title: title(of: id), at: here, agent: agent, agentApp: agentApp, waits: waits) {
+            case .stay: continue
+            case .pin:
+                pin(id, true)
+                Trace.log("rule pins window \(id) of \(w.appName)")
+            case .to(let n):
+                model.assign(id, to: n, focus: false)
+                Trace.log("rule sends window \(id) of \(w.appName) to workspace \(n)")
+                away = away || !model.isShown(n)
+            }
         }
         return away
     }

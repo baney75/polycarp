@@ -37,6 +37,8 @@ public enum SurfaceKind: Equatable, Sendable {
     case bundles
     /// A shortcut (`KeyChord`), or empty for none.
     case chord
+    /// Window rules (`TileRule`), one a line, each once.
+    case tileRules
 }
 
 /// One field of surfaces.json.
@@ -278,6 +280,8 @@ public struct Surfaces: Equatable, Sendable {
         public var newWindow: String
         /// Apps whose windows float, by bundle id.
         public var float: [String]
+        /// Window rules, one a line (`TileRule`).
+        public var rules: [String]
         public var floatModifier: FloatModifier
         /// The key of each command that has one, by its name in `TilingKeys`.
         public var keys: [String: KeyChord]
@@ -408,7 +412,9 @@ extension SurfaceField {
         SurfaceField("tiling.loneWidth", .tagged(choices: ["smart", "fill"], prefix: "points", pattern: "^[1-9][0-9]{2,3}$", example: "points:1400"),
                      .string("smart"), "How wide a workspace's only window gets: smart (a 16:10 shape on a wide display, all of any other), fill, or points:<width>."),
         SurfaceField("tiling.newWindow", .choice(["after", "before"]), .string("after"), "Which side of the window you are in a new one goes on: after (right or below) or before."),
-        SurfaceField("tiling.float", .bundles, ids(["com.apple.calculator", "com.apple.Stickies"]), "Apps whose windows are never tiled, by bundle id."),
+        SurfaceField("tiling.float", .bundles, ids([]), "Apps whose windows are never tiled, by bundle id, besides the small utilities that float unless a rule tiles them."),
+        SurfaceField("tiling.rules", .tileRules, ids([]),
+                     "Window rules, one a line: an app's bundle id, then float, tile, pin or a workspace 1-9, then words of the title if only some windows. The first float or tile rule that matches wins, and the first pin or workspace rule says where a new window goes."),
         SurfaceField("tiling.floatModifier", .choice(Surfaces.Tiling.FloatModifier.allCases.map(\.rawValue)), .string("shift"),
                      "The key held while a tiled window is let go that leaves it floating: shift, control, option, command or none."),
     ] + TilingKeys.all.map {
@@ -514,7 +520,7 @@ extension Surfaces {
                         inner: n("tiling.gaps.inner"), outer: n("tiling.gaps.outer"), top: n("tiling.gaps.top"), bottom: n("tiling.gaps.bottom"),
                         left: n("tiling.gaps.left"), right: n("tiling.gaps.right"),
                         loneWidth: lone == "fill" ? .fill : lone.hasPrefix("points:") ? .points(Int(lone.dropFirst(7)) ?? 1400) : .smart,
-                        newWindow: s("tiling.newWindow"), float: list("tiling.float"),
+                        newWindow: s("tiling.newWindow"), float: list("tiling.float"), rules: list("tiling.rules"),
                         floatModifier: .init(rawValue: s("tiling.floatModifier")) ?? .shift,
                         keys: Dictionary(uniqueKeysWithValues: TilingKeys.all.compactMap { k in KeyChord(s("tiling.keys." + k.name)).map { (k.name, $0) } }))
     }
@@ -674,6 +680,15 @@ enum SurfaceCheck {
                 if !seen.insert(id).inserted { return ("[\(i)]", "\"\(id)\" is listed twice") }
             }
             return nil
+        case .tileRules:
+            guard let a = v.array else { return (nil, "must be a list of window rules, not \(v.kind)") }
+            var seen = Set<String>()
+            for (i, item) in a.enumerated() {
+                guard let line = item.string else { return ("[\(i)]", "must be a window rule (a string), not \(item.kind)") }
+                if case .failure(let p) = TileRule.read(line) { return ("[\(i)]", "\"\(line)\" \(p.message)") }
+                if !seen.insert(line).inserted { return ("[\(i)]", "\"\(line)\" is listed twice") }
+            }
+            return nil
         case .chord:
             guard let s = v.string else { return (nil, "must be a shortcut such as \"ctrl+opt+T\", or empty, not \(v.kind)") }
             if s.isEmpty { return nil }
@@ -786,6 +801,11 @@ extension Surfaces {
             case .bundles:
                 o["type"] = .string("array"); o["uniqueItems"] = .bool(true)
                 o["items"] = .object(["type": .string("string"), "pattern": .string(SurfaceCheck.bundlePattern)])
+            case .tileRules:
+                o["type"] = .string("array"); o["uniqueItems"] = .bool(true)
+                o["items"] = .object(["type": .string("string"), "maxLength": .number(Double(TileRule.longest)),
+                                      "pattern": .string("^[A-Za-z0-9][A-Za-z0-9._-]{0,154}[ \\t]+(float|tile|pin|[1-9])([ \\t].*)?$")])
+                o["examples"] = .array([.string("com.apple.Notes 3"), .string("com.apple.Safari float Picture in Picture")])
             case .chord:
                 o["type"] = .string("string"); o["maxLength"] = .number(40)
                 o["examples"] = .array([.string("ctrl+opt+T"), .string("ctrl+opt+shift+Left"), .string("")])

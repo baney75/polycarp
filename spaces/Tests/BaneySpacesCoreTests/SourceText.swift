@@ -8,6 +8,7 @@ enum SourceText {
     /// Code only: comments may name what the code must not call.
     static func code(_ path: String) throws -> String {
         try String(contentsOf: root.appendingPathComponent(path), encoding: .utf8)
+            .replacingOccurrences(of: "\r\n", with: "\n")
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { $0.components(separatedBy: "//")[0] }.joined(separator: "\n")
     }
