@@ -35,7 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `PendingSettles` cancels it when the window is pressed or dragged again, or any button goes down. A window dropped
     /// on a workspace is the drop's.
     private func correctOnceStill(_ id: WindowID, after end: DragEnd) {
-        guard !end.dropped else { return }
+        // A tiled window goes to a tile, which is in reach.
+        guard !end.dropped, !tiling.holds(id) else { return }
         cancelCorrection(id)
         let watch = DragRelease.settleWatch(from: TopDragWatcher.bounds(of: id), after: end, displays: Spaces.dragDisplays())
         if watch.leaveIfMoved {
@@ -106,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // A drag the overview covered and that dropped nowhere goes back where it was; any other is the person's own.
         t.onDragEnd = { [weak self] id, end in self?.correctOnceStill(id, after: end) }
         t.onLetGo = { id in DragFrameTrace.released(id) }
+        t.onHold = { [weak self] id, frame in self?.tiling.pressed(id, frame: frame) }
+        t.onHeld = { [weak self] id, frame, p in self?.tiling.held(id, frame: frame, at: p) }
+        t.onHoldEnd = { [weak self] id, p, dropped in self?.tiling.letGo(id, at: p, taken: dropped) }
         return t
     }()
 

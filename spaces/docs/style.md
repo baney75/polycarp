@@ -1,6 +1,7 @@
-# Style sheet: restyle the top bar with CSS
+# Style sheet: restyle the top bar and the tiling outline with CSS
 
-`style.css` restyles Polycarp's top bar with a small, strict subset of CSS. The theme (`polycarp theme`) sets colors,
+`style.css` restyles Polycarp's top bar, the launcher and the outline of where a dragged tiled window would go
+(surfaces.json's `tiling`) with a small, strict subset of CSS. The theme (`polycarp theme`) sets colors,
 shape, type and motion everywhere; a rule in the sheet changes them for the bar or one part of it, and anything the sheet leaves out is drawn as before. What each surface shows (which modules, which
 labels) stays in [surfaces.json](surfaces.md). `polycarp look` keeps the sheet with the theme, the surfaces and the paper
 as one look ([looks.md](../../docs/looks.md)); applying one replaces the sheet, and `polycarp look undo` brings it back.
@@ -10,7 +11,7 @@ as one look ([looks.md](../../docs/looks.md)); applying one replaces the sheet, 
 - At most 64 KB, a regular file, UTF-8. A file that breaks these is ignored, with one line in `trace.log`.
 - No file means no sheet, and nothing is logged.
 - Edits apply live: a running Polycarp picks up a change within 200 ms, logs `style.css: applied, N rules, M problems`
-  (or `style.css: removed`) and redraws the bar. A new bar `height` moves the bar's panels. Nothing restarts.
+  (or `style.css: removed`) and redraws the bar; the outline reads it at the next drag. A new bar `height` moves the bar's panels. Nothing restarts.
 - `polycarp-spaces style example` prints a starter sheet that names every selector and property, all commented out.
 - `polycarp-spaces style preset omarchy` writes a whole look in one command (see [Presets](#presets)).
 - Every selector and property below changes something on screen; nothing in the table is parsed and then ignored.
@@ -76,6 +77,7 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 | `launcher .badge` | `.selected` | A result's word at the right (Install, Installed); .selected while its row is. |
 | `launcher .icon` | `.selected` | A result's picture, and the color of a symbol; .selected while its row is. |
 | `launcher .footer` | none | The key hints along the bottom. border takes the place of the line over it. |
+| `tiling` | none | The outline of where a dragged tiled window would go. |
 
 States join with no space: `bar .workspace.current`, `bar .workspace:hover`, `bar .workspace.current:hover`. A
 `custom:<name>` bar module has no class yet.
@@ -85,7 +87,7 @@ States join with no space: `bar .workspace.current`, `bar .workspace:hover`, `ba
 | Property | Takes | Applies to | Inherited | What it does |
 | --- | --- | --- | --- | --- |
 | `color` | a color | bar, bar region, bar module, bar workspace; all of launcher | yes | Text and symbol color. |
-| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer | no | What is drawn behind it. |
+| `background` | a color, `none`, `glass` (the platform's blur) or `linear-gradient(<color>, <color>)`, optionally starting `to bottom,` or `to right,` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; all of tiling | no | What is drawn behind it. |
 | `opacity` | a number from 0 to 1, or a percentage | everything | no | How opaque the whole thing is. |
 | `font-family` | a font stack, as the theme's `type.ui`: names separated by commas, quoted when they hold other characters | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | The font, first installed name wins; `monospace` and `serif` are the system's. |
 | `font-size` | a length from 6 to 40 (`px` or `pt`) | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row, launcher title, launcher subtitle, launcher badge, launcher footer | yes | Text size in points. |
@@ -98,8 +100,8 @@ States join with no space: `bar .workspace.current`, `bar .workspace:hover`, `ba
 | `height` | a length from 18 to 64 (`px` or `pt`) | bar; launcher row | no | The bar's height (on a screen with a notch the bar fills the strip beside it), or a row's: its icon shrinks to fit, and a subtitle with no room goes. |
 | `padding` | 1 to 4 lengths from 0 to 40, in CSS order (top, right, bottom, left) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer | no | Space inside the edge. |
 | `gap` | a length from 0 to 40 (`px` or `pt`) | bar, bar region, bar island, bar module; launcher, launcher row | no | Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows (launcher) or between an icon and its text (row). |
-| `border-radius` | a length from 0 to 40 (`px` or `pt`) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher icon, launcher footer | no | Corner radius. |
-| `border` | `none` or `<width 0 to 8> solid <color>` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer | no | A line all around. |
+| `border-radius` | a length from 0 to 40 (`px` or `pt`) | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher icon, launcher footer; all of tiling | no | Corner radius. |
+| `border` | `none` or `<width 0 to 8> solid <color>` | all of bar; launcher, launcher field, launcher section, launcher row, launcher badge, launcher footer; all of tiling | no | A line all around. |
 | `border-bottom` | `none` or `<width 0 to 8> solid <color>` | bar, bar region, bar module, bar workspace; launcher, launcher field, launcher section, launcher row | no | A line along the bottom edge only. |
 | `box-shadow` | `none` or `<x> <y> <blur> <color>` (x and y -40 to 40, blur 0 to 64) | bar island | no | A drop shadow. |
 | `display` | `flex` or `none` | bar region, bar island, bar module, bar workspace; launcher section, launcher subtitle, launcher badge, launcher icon, launcher footer | no | `none` hides it; `flex` (the default) shows it. |

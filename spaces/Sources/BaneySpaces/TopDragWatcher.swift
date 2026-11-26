@@ -146,6 +146,12 @@ final class TopDragWatcher {
     var onDragEnd: (WindowID, DragEnd) -> Void = { _, _ in }
     /// Any let-go of a drag the watcher saw move, even one it stopped following (the overview declined it): the frame watch.
     var onLetGo: (WindowID) -> Void = { _ in }
+    /// The button went down on a window of another app (or on none), came up, or is still down. For tiling, which follows
+    /// any press on a window, a pulled edge too, whatever the watcher makes of it.
+    var onHold: (WindowID?, CGRect?) -> Void = { _, _ in }
+    var onHeld: (WindowID, _ frame: CGRect?, _ at: CGPoint) -> Void = { _, _, _ in }
+    var onHoldEnd: (WindowID, _ at: CGPoint?, _ dropped: Bool) -> Void = { _, _, _ in }
+    private var holding: WindowID?
     private var letGo = DragLetGo()
     /// The drag to the top opens the overview. Off, the watcher still follows drags, for `onDragEnd`'s title bar rescue.
     var topEnabled = true
@@ -198,6 +204,10 @@ final class TopDragWatcher {
                 if g != nil, let p { onMove(p) }
             },
             release: g.map { g in { [self] in onRelease(g, p) } })
+        if let id = holding {
+            holding = nil
+            onHoldEnd(id, p, end.dropped)
+        }
         if let dragged, p != nil { onDragEnd(dragged.window, end) }
         if let watched = letGo.letGo(tracked: dragged?.window, at: p != nil) { onLetGo(watched) }
     }
@@ -208,6 +218,8 @@ final class TopDragWatcher {
         released(at: nil)
         let found = TopDragWatcher.window(at: p)
         onPress(found?.grab.window)
+        onHold(found?.grab.window, found?.grab.frame)
+        holding = found?.grab.window
         guard let found else { return }
         let g = found.grab
         state.press(TopDrag.Grab(window: g.window, frame: g.frame, press: g.press, startedFull: startsFull(g.window, g.frame)))
@@ -221,9 +233,13 @@ final class TopDragWatcher {
     private func tick() {
         let p = TopDragWatcher.cursor
         guard NSEvent.pressedMouseButtons & 1 != 0 else { return released(at: p) }
-        if open != nil { return onMove(p) }
+        if let g = open {
+            onHeld(g.window, nil, p)
+            return onMove(p)
+        }
         guard let grab = state.grab else { return endTicks() }
         let frame = TopDragWatcher.bounds(of: grab.window)
+        onHeld(grab.window, frame, p)
         let wasDragging = state.moving || state.pinned
         defer {
             // Once per drag, so trace.log shows the drags the watcher saw.

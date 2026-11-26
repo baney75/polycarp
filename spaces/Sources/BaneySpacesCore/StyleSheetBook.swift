@@ -59,6 +59,11 @@ public final class StyleBook {
         }
     }
 
+    // MARK: Tiling
+
+    /// The outline of where a dragged tiled window would go.
+    public var outline: ComputedStyle { lookup.computed(surface: .tiling) }
+
     // MARK: The other surfaces
     //
     // A panel opens on a key press, so everything it can need is worked out once for the book, at the first open, and
