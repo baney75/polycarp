@@ -79,9 +79,22 @@ final class Updater: NSObject {
     /// In the background and quietly: `polycarp browser status` and `polycarp doctor` say where it stands.
     private func updateBrowserIfDue() {
         let last = UserDefaults.standard.object(forKey: "lastBrowserUpdate") as? Date
-        guard installing == nil, BrowserUpdate.due(last: last, now: Date(), automatic: checksAutomatically),
-              let resources = Bundle.main.resourceURL else { return }
+        guard installing == nil, BrowserUpdate.due(last: last, now: Date(), automatic: checksAutomatically) else { return }
         UserDefaults.standard.set(Date(), forKey: "lastBrowserUpdate")
+        runBrowserUpdate()
+    }
+
+    /// The same run now, for a new icon in the theme's colors: quiet, and only while updates are automatic. One at a time;
+    /// where the browser isn't installed it does nothing.
+    func rebuildBrowser() {
+        guard checksAutomatically, installing == nil, browserUpdate?.isRunning != true else { return }
+        runBrowserUpdate()
+    }
+
+    private var browserUpdate: Process?
+
+    private func runBrowserUpdate() {
+        guard let resources = Bundle.main.resourceURL else { return }
         let update = Process()
         update.executableURL = BrowserUpdate.command(resources: resources)
         update.arguments = BrowserUpdate.arguments
@@ -90,6 +103,7 @@ final class Updater: NSObject {
         update.standardOutput = FileHandle.nullDevice
         update.standardError = FileHandle.nullDevice
         try? update.run()
+        browserUpdate = update
     }
 
     /// Reads the feed's latest.json. A manual check always answers, even "you're up to date".
