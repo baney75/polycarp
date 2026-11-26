@@ -19,3 +19,12 @@ public struct TilingShortcuts: Equatable, Sendable {
         (keys, toVoiceOver) = (mine, its)
     }
 }
+
+public extension Surfaces.Tiling {
+    /// The writes to surfaces.json that give `name` the key `text` ("" for none). A command that has the key now gives it
+    /// up first, so the file holds no two commands on one key after any of them.
+    func keyWrites(giving name: String, _ text: String) -> [(path: String, value: SurfaceValue)] {
+        let others = KeyChord(text).map { c in keys.filter { $0.key != name && $0.value == c }.map(\.key).sorted() } ?? []
+        return others.map { ("tiling.keys." + $0, SurfaceValue.string("")) } + [("tiling.keys." + name, .string(text))]
+    }
+}

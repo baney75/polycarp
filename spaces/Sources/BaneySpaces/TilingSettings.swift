@@ -38,10 +38,12 @@ final class TilingSettings: ObservableObject {
     }
 
     func setKey(_ name: String, _ text: String) {
-        set("keys." + name, .string(text)) { t in
-            let chord = KeyChord(text)
-            if let chord { for (other, c) in t.keys where c == chord { t.keys[other] = nil } }
-            t.keys[name] = chord
+        let writes = tiling.keyWrites(giving: name, text), chord = KeyChord(text)
+        if let chord { for (other, c) in tiling.keys where c == chord { tiling.keys[other] = nil } }
+        tiling.keys[name] = chord
+        write {
+            for w in writes { if let failure = SurfacesOps.set(w.path, w.value, file: SurfacesFile.path()).failure { return failure } }
+            return nil
         }
     }
 
@@ -251,6 +253,7 @@ struct TilingKeysGroup: View {
     var body: some View {
         SettingsGroup("Tiling") {
             if let said { SettingsNote(said, tone: .urgent) }
+            if let failed = settings.failed { SettingsNote("That wasn't saved: \(failed)", tone: .urgent) }
             ForEach(TilingKeys.all, id: \.name) { command in
                 SettingsRow(command.title, help: help(command.name)) {
                     Button { settings.recording == command.name ? stop() : record(command.name) } label: {

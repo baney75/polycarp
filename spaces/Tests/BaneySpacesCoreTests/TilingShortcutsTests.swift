@@ -116,3 +116,34 @@ final class KeyPressTests: XCTestCase {
         XCTAssertEqual(odd.message, "that key can't be a shortcut")
     }
 }
+
+final class TilingKeyWritesTests: XCTestCase {
+    /// Settings > Keys moves a key from one command to another; each write must leave a file `surfaces set` accepts.
+    func testAKeyMovesToAnotherCommandInWritesTheFileTakes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("surfaces.json").path
+        func keys() -> [String: KeyChord] {
+            if case .document(let d) = SurfacesFile.load(path: file) { return d.surfaces.tiling.keys }
+            return Surfaces.defaults.tiling.keys
+        }
+        func give(_ name: String, _ text: String) {
+            var now = Surfaces.defaults.tiling
+            now.keys = keys()
+            for w in now.keyWrites(giving: name, text) {
+                guard case .success = SurfacesOps.set(w.path, w.value, file: file) else { return XCTFail("\(w.path) = \(w.value) was refused") }
+            }
+        }
+        give("balance", "ctrl+opt+X")
+        XCTAssertEqual(keys()["balance"], KeyChord("ctrl+opt+X"))
+        give("flip", "ctrl+opt+X")
+        XCTAssertEqual(keys()["flip"], KeyChord("ctrl+opt+X"), "the key moved")
+        XCTAssertNil(keys()["balance"], "and the one that had it has none")
+        give("balance", "ctrl+opt+T")
+        XCTAssertEqual(keys()["balance"], KeyChord("ctrl+opt+T"), "a key Polycarp comes with moves too")
+        XCTAssertNil(keys()["toggle"])
+        XCTAssertEqual(Surfaces.defaults.tiling.keyWrites(giving: "flip", "ctrl+opt+Y").map(\.path), ["tiling.keys.flip"], "a free key is one write")
+        XCTAssertEqual(Surfaces.defaults.tiling.keyWrites(giving: "flip", "").map(\.path), ["tiling.keys.flip"], "and so is none")
+    }
+}
