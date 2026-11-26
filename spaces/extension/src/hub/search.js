@@ -9,7 +9,8 @@
   const FIELDS = { from: "f:", to: "t:", cc: "t:", subject: "s:", list: "l:" };
   const IS = {
     unread: (d) => d.unread, read: (d) => !d.unread, flagged: (d) => d.flagged, starred: (d) => d.flagged,
-    snoozed: (d) => d.snoozeUntil > Date.now()
+    snoozed: (d) => d.snoozeUntil > Date.now(), waiting: (d) => d.remindAt > Date.now(),
+    due: (d) => (d.snoozeUntil > 0 && d.snoozeUntil <= Date.now()) || (d.remindAt > 0 && d.remindAt <= Date.now())
   };
 
   // Lowercase words without accents. Letters need two or more; numbers count at any length.
@@ -48,7 +49,7 @@
     return out;
   }
   const docOf = (m) => ({ id: m.id, threadId: m.threadId || m.id, date: m.date || m.lastDate || 0, folder: m.folder, unread: !!m.unread, flagged: !!m.flagged,
-    att: !!((m.attachments && m.attachments.length) || m.hasAttachments), snoozeUntil: m.snoozeUntil || 0 });
+    att: !!((m.attachments && m.attachments.length) || m.hasAttachments), snoozeUntil: m.snoozeUntil || 0, remindAt: m.remindAt || 0 });
 
   // Whether one message or thread summary matches a parsed query, whole words only.
   function matches(parsed, m) {
@@ -65,7 +66,7 @@
   //   from:ada  to:bo     a word or the whole address in that field
   //   subject:"roof"      in the subject; quotes hold several words, each required
   //   list:almanac       a word of the List-Id
-  //   in:inbox is:unread is:flagged has:attachment
+  //   in:inbox is:unread is:flagged is:snoozed is:waiting has:attachment
   // The last word is a prefix unless the query ends in a space.
   function parse(q) {
     const s = String(q || "");

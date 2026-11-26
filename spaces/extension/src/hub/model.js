@@ -137,8 +137,9 @@
       flagged: list.some((m) => m.flagged),
       folder,
       snippet: last.snippet,
-      snoozeUntil: Math.max(0, ...list.map((m) => m.snoozeUntil)),
-      remindAt: Math.max(0, ...list.map((m) => m.remindAt)),
+      // A snooze or a reminder is set on every message; one newer than it (a reply, yours or theirs) ends it.
+      snoozeUntil: last.snoozeUntil,
+      remindAt: last.remindAt,
       hasAttachments: list.some((m) => m.attachments.length > 0),
       replied: list.some((m) => m.folder === "sent"),
       sentAt: Math.max(0, ...list.filter((m) => m.folder === "sent").map((m) => m.date)),
