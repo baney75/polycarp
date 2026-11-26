@@ -55,8 +55,8 @@ reports a window only while its own write is that window's latest; a window a ne
 
 ### R-TS5 A frame in flight is not asked for again
 While a frame is in flight to a target, a plan that wants the same target for that window asks nothing and uses up
-none of its tries. A plan that wants another target asks at once. The settle ends the flight, and so does a window
-being touched (a press, a drag) or 1 s passing.
+none of its tries. A plan that wants another target asks at once. The settle ends the flight however it ends (landed,
+held still, given up after 10 looks, or cut off by a switch or a press), and so does a window being touched.
 
 ### R-TS6 Windows reach tiling through the apps' own notifications
 Spaces watches each app it scans for `kAXWindowCreated`, `kAXFocusedWindowChanged` and `kAXMainWindowChanged`, and

@@ -158,6 +158,8 @@ public struct TilingEngine: Equatable, Sendable {
         var answered: Bool
         /// It is on its way back to its frame from before tiling.
         var back: Bool
+        /// Written, and its settle hasn't said where it landed (spec/tiling-speed.md R-TS5).
+        var flying = false
     }
 
     public internal(set) var options = TilingOptions()
@@ -286,6 +288,7 @@ public struct TilingEngine: Equatable, Sendable {
     public mutating func landed(_ frames: [WindowID: CGRect]) -> Bool {
         var learned = false
         for (id, now) in frames {
+            asked[id]?.flying = false
             guard var a = asked[id] else { continue }
             let there = Self.near(now, a.target)
             let over = CGSize(width: now.width - a.target.width, height: now.height - a.target.height)
@@ -317,6 +320,16 @@ public struct TilingEngine: Equatable, Sendable {
             learned = true
         }
         return learned
+    }
+
+    /// Frames written to these windows, on their way (R-TS5): a plan asks for the same target again only once they land.
+    public mutating func flying(_ ids: Set<WindowID>) {
+        for id in ids { asked[id]?.flying = true }
+    }
+
+    /// These windows' settle ended without a word on where they are: a plan may ask for their targets again.
+    public mutating func grounded(_ ids: Set<WindowID>) {
+        for id in ids { asked[id]?.flying = false }
     }
 
     /// The person took hold of a window: what was asked of it before no longer counts, its way back neither.
@@ -523,6 +536,8 @@ public struct TilingEngine: Equatable, Sendable {
         let a = asked[w.id].flatMap { Self.near($0.target, target) ? $0 : nil }
         if Self.near(w.frame, target) { return nil }
         if let a, let landed = a.landed, Self.near(w.frame, landed) { return nil }
+        // On its way there already: asking again would only use up a try.
+        if a?.flying == true { return nil }
         let tries = a?.tries ?? 0
         guard tries < Self.mostTries else { return nil }
         asked[w.id] = Asked(from: w.frame, target: target, landed: nil, tries: tries + 1, answered: a?.answered ?? false, back: back)
@@ -531,7 +546,7 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// Seen smaller than the minimum learned: it was busy then, not at its least.
     private mutating func disprove(_ w: TilingWindow) {
-        guard let m = minimums[w.id], w.frame.width < m.width - Self.close || w.frame.height < m.height - Self.close else { return }
+        guard asked[w.id]?.flying != true, let m = minimums[w.id], w.frame.width < m.width - Self.close || w.frame.height < m.height - Self.close else { return }
         minimums[w.id] = CGSize(width: min(m.width, w.frame.width), height: min(m.height, w.frame.height))
     }
 
