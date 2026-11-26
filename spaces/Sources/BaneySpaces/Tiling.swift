@@ -154,10 +154,13 @@ final class Tiling {
         }
     }
 
-    /// A window is leaving its workspace: timed only when it was tiled and another tiled window stays there (R-TS10).
-    func left(_ id: WindowID, how: String, at: Double) {
-        guard let mates = engine.tiledMates(of: id), mates.others > 0 else { return }
-        action(.close, how: how, at: at, workspace: mates.workspace)
+    /// Windows leaving their workspaces together (a quit, a move of several): timed on each workspace in sight where
+    /// one was tiled and another tiled window stays (R-TS10). Out of sight, no look writes there until it is shown.
+    func left(_ ids: Set<WindowID>, how: String, at: Double) {
+        let shown = spaces.shownWorkspaces
+        for (workspace, others) in engine.staying(after: ids) where others > 0 && shown.contains(workspace) {
+            action(.close, how: how, at: at, workspace: workspace)
+        }
     }
 
     /// The causes one write answers, and when its look began; the rest of each line comes as the write goes on.
@@ -285,7 +288,7 @@ final class Tiling {
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
                 let ids = Set(wrote.filter(\.1).map(\.0))
-                self.actions.wrote(wrote.filter(\.1).compactMap { w in spots[w.0].map { (id: w.0, workspace: $0) } }, at: Self.uptime)
+                self.actions.wrote(wrote.filter(\.1).compactMap { w in spots[w.0].map { (id: w.0, workspace: $0) } }, looked: timed.looked, at: Self.uptime)
                 self.writes.done(Set(wrote.filter { !$0.1 }.map(\.0)), serial)
                 self.engine.flying(ids)
                 let again = self.ready()

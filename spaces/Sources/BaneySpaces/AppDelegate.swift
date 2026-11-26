@@ -582,7 +582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         spaces.onSettled = { [weak self] in self?.tiling.look() }
         spaces.onSwitchAsked = { [weak self] at in self?.tiling.cause(TileCauses.Cause(.switch, at: at)) }
         spaces.onWindowNote = { [weak self] cause in self?.tiling.cause(cause) }
-        spaces.onWindowLeft = { [weak self] id, how, at in self?.tiling.left(id, how: how, at: at) }
+        spaces.onWindowsLeft = { [weak self] ids, how, at in self?.tiling.left(ids, how: how, at: at) }
         spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
         NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in
             self?.tiling.settingsChanged()

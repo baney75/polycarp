@@ -111,6 +111,8 @@ for kind in list(budgets) + sorted(set(samples) - set(budgets)):
 
 for kind in sorted(unfilled):
     print(f"{kind:<16}{unfilled[kind]:>5}  with nothing written in 3 s (fill=-), not in the percentiles")
+    # A close nothing filled is the miss Donovan reported (spec/tiling-speed.md R-TS8): it fails the report.
+    missed.append(f"{kind}: {unfilled[kind]} with nothing written")
 
 # Gap G8: lines that mean a glitch Donovan reported came back.
 glitches = {

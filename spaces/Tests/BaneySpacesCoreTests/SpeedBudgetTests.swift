@@ -151,7 +151,17 @@ final class SpeedBudgetTests: XCTestCase {
         XCTAssertTrue(r.out.contains("close-fill          1"), r.out)
         XCTAssertTrue(r.out.contains("move-fill           1"), r.out)
         XCTAssertTrue(r.out.contains("close-fill          1  with nothing written in 3 s"), r.out)
+        XCTAssertTrue(r.out.range(of: #"close-fill\s+1\s+-/25"#, options: .regularExpression) != nil, "only the filled close counts toward the percentiles: \(r.out)")
+        XCTAssertTrue(r.out.range(of: #"move-fill\s+1\s+-/25"#, options: .regularExpression) != nil, r.out)
         XCTAssertFalse(r.out.contains("no budget"), r.out)
+        XCTAssertNotEqual(r.status, 0, "a close nothing filled fails the report (R-TS8): \(r.out)")
+    }
+
+    /// Review of #871, second-F6: a log where no close ever filled must not pass.
+    func testALogOfOnlyUnfilledClosesFails() throws {
+        let r = try report(timing: fast() + (0..<20).map { _ in "\(now) close fill=- writes=0 windows=0 how=destroyed" })
+        XCTAssertNotEqual(r.status, 0, r.out)
+        XCTAssertTrue(r.out.contains("close-fill: 20 with nothing written"), r.out)
     }
 
     /// The tiling targets (R-TS3, R-TS11) can't be loosened.

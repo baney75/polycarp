@@ -33,13 +33,13 @@ public struct TileActions: Equatable, Sendable {
         open.append(Action(kind, how: how, at: at, workspace: workspace))
     }
 
-    /// Frames that returned at `at`, each with its window's workspace: each counts once toward every open action on
-    /// that workspace that began at or before `at`.
-    public mutating func wrote(_ ids: [(id: WindowID, workspace: Int)], at: Double) {
-        for i in open.indices where open[i].at <= at {
-            let mine = ids.filter { $0.workspace == open[i].workspace }
-            guard !mine.isEmpty else { continue }
-            for w in mine { open[i].writes[w.id, default: 0] += 1 }
+    /// Frames a look that began at `looked` asked for, back at `at`, each with its window's workspace. Each counts
+    /// toward one action only: the latest open one on its workspace whose cause came before that look began. A write
+    /// from a look before the cause answers something else, so a close no look answered still says `fill=-`.
+    public mutating func wrote(_ ids: [(id: WindowID, workspace: Int)], looked: Double, at: Double) {
+        for w in ids {
+            guard let i = open.indices.last(where: { open[$0].workspace == w.workspace && open[$0].at <= looked }) else { continue }
+            open[i].writes[w.id, default: 0] += 1
             open[i].last = at
         }
     }

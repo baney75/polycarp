@@ -88,7 +88,7 @@ final class Spaces {
     var onWindowNote: (TileCauses.Cause) -> Void = { _ in }
     /// A window is leaving its workspace (id, how, uptime), told before the model changes: tiling times the close from
     /// here (spec/tiling-speed.md R-TS10).
-    var onWindowLeft: (WindowID, String, Double) -> Void = { _, _, _ in }
+    var onWindowsLeft: (Set<WindowID>, String, Double) -> Void = { _, _, _ in }
     private let hud = SwitchHUD()
     /// Saved workspaces for windows not seen yet this launch. A hidden or busy app may not answer
     /// at startup; when its window shows up later it goes back where it was, and until then its
@@ -1305,7 +1305,7 @@ final class Spaces {
     /// An app that quit loses its place in the order: its process id may come back as another app.
     func appQuit(_ pid: pid_t) {
         let at = ProcessInfo.processInfo.systemUptime
-        for (id, w) in windows where w.pid == pid && model.workspace(of: id) != nil { onWindowLeft(id, "quit", at) }
+        onWindowsLeft(Set(windows.filter { $0.value.pid == pid && model.workspace(of: $0.key) != nil }.keys), "quit", at)
         activations.forget("\(pid)")
     }
 
@@ -1523,11 +1523,11 @@ final class Spaces {
         case .created: onWindowNote(TileCauses.Cause(.new, at: at, pid: pid))
         case .destroyed:
             if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key, let n = model.workspace(of: id) {
-                onWindowLeft(id, "destroyed", at)
+                onWindowsLeft([id], "destroyed", at)
                 onWindowNote(TileCauses.Cause(.close, at: at, workspace: n))
             }
         case .minimized:
-            if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key { onWindowLeft(id, "minimized", at) }
+            if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key { onWindowsLeft([id], "minimized", at) }
         case .restored: break
         }
         let before = model
@@ -2059,7 +2059,7 @@ final class Spaces {
         guard active, Workspaces.range.contains(n), !ids.isEmpty else { return }
         if switching { return enqueue { [weak self] in self?.move(ids, to: n) } }
         let at = ProcessInfo.processInfo.systemUptime
-        for id in ids where model.workspace(of: id) != n { onWindowLeft(id, "workspace", at) }
+        onWindowsLeft(Set(ids.filter { model.workspace(of: $0) != n }), "workspace", at)
         // The window last used there stays the one a visit lands on.
         for id in ids { model.assign(id, to: n, focus: false) }
         switchTo(model.current, takeFocus: false, announce: false)

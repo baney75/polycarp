@@ -9,22 +9,25 @@ final class WindowLeftWiringTests: XCTestCase {
         return String(code[a..<b])
     }
 
-    func testEveryLeaveCallsOnWindowLeft() throws {
+    func testEveryLeaveCallsOnWindowsLeft() throws {
         let code = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
         let note = try body(code, from: "private func windowNote(", to: "private func focusMovedWithin(")
-        XCTAssertTrue(note.contains("onWindowLeft(id, \"destroyed\""))
-        XCTAssertTrue(note.contains("onWindowLeft(id, \"minimized\""))
+        XCTAssertTrue(note.contains("onWindowsLeft([id], \"destroyed\""))
+        XCTAssertTrue(note.contains("onWindowsLeft([id], \"minimized\""))
         let quit = try body(code, from: "func appQuit(", to: "activations.forget(")
-        XCTAssertTrue(quit.contains("onWindowLeft(id, \"quit\""))
+        XCTAssertTrue(quit.contains("\"quit\", at)"))
         let move = try body(code, from: "func move(_ ids: [WindowID], to n: Int)", to: "model.assign(id, to: n")
-        XCTAssertTrue(move.contains("onWindowLeft(id, \"workspace\""), "told before the model changes")
-        XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/AppDelegate.swift").contains("spaces.onWindowLeft = { [weak self] id, how, at in self?.tiling.left(id, how: how, at: at) }"))
+        XCTAssertTrue(move.contains("\"workspace\", at)"), "told before the model changes")
+        XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/AppDelegate.swift").contains("spaces.onWindowsLeft = { [weak self] ids, how, at in self?.tiling.left(ids, how: how, at: at) }"))
     }
 
     func testTheWriteCountsTowardTheActions() throws {
         let code = try SourceText.code("Sources/BaneySpaces/Tiling.swift")
         let write = try body(code, from: "private func write(", to: "private func settle(")
         XCTAssertTrue(write.contains("actions.wrote("))
+        XCTAssertTrue(write.contains("looked: timed.looked"), "a write counts by when its look began (review of #871, first-F2)")
+        let left = try body(code, from: "func left(_ ids: Set<WindowID>", to: "struct Timed")
+        XCTAssertTrue(left.contains("shown.contains(workspace)"), "a close out of sight is not timed (second-F5)")
         XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/TilingRun.swift").contains("action(.move, how: \"key\""))
         XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/TilingDrags.swift").contains("action(.move, how: \"drag\""))
     }

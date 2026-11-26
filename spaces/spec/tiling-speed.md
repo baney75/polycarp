@@ -87,10 +87,11 @@ which only confirms. A sheet or panel closing is not a window leaving: nothing i
 - A close or a move asks each window for at most one frame. A window is asked again only when it didn't land
   (R-TS5's tries), and that write counts.
 - A frame goes to its app in the fewest Accessibility messages that never show the window clamped by the display's
-  edge or outside both its old and its new frame. Same size: the position alone. Same position: the size alone.
+  edge. Same size: the position alone. Same position: the size alone.
   Otherwise the position first when the window at its new position and old size stays inside the display, else the
   size first when it does at its old position and new size, else size, position and size again (the old way). When
-  both fit, the order whose frame in between lies inside the new frame. Animation stays off while it is sent.
+  both fit, the order whose frame in between lies inside the new frame, else inside the old one. Animation stays off
+  while it is sent.
 
 ### R-TS10 Every close and move writes its time and its writes
     <epoch s> close fill=<ms> writes=<n> windows=<k> how=<destroyed|minimized|quit|workspace>
@@ -154,7 +155,7 @@ Each row is a test; the test names it.
 | 32 | R-TS9 | (8,40 744x934) to (760,40 744x934) | the position alone |
 | 33 | R-TS9 | (8,40 744x934) to (8,40 1496x934) | the size alone |
 | 34 | R-TS9 | (8,40 1496x934) to (760,40 744x934) | size, then position; between, (8,40 744x934) |
-| 35 | R-TS9 | (8,40 300x934) to (1000,40 500x934), display 1512 wide, neither in between fits | size, position, size |
+| 35 | R-TS9 | (700,600 800x300) to (750,40 760x985), display (0,40 1512x985): moved first runs off the right, sized first runs off the bottom | size, position, size |
 | 36 | R-TS9 | three tiled windows, the middle one leaves | one move for each of the two left; none in the next plan while they fly or once they landed |
 | 37 | R-TS10 | a close at 10.000; writes of windows 1 and 2 return at 10.010, window 1 again at 10.030; 0.5 s quiet | `close fill=30 writes=2 windows=2 how=destroyed` |
 | 38 | R-TS10 | a close with no write in 3 s | `close fill=- writes=0 windows=0 how=destroyed` |
