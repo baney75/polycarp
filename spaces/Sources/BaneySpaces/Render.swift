@@ -223,6 +223,21 @@ enum Render {
                 topBar.bar.style = .solid
                 guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
             }
+            // Moving a module (R-BA1): the clock, taken with ⌘, held over the right before the status row. The first
+            // render measures the bar, the second draws the drag from what it measured.
+            topBar.trayHeld = false
+            topBar.bar.style = .islands
+            for sides in [nil, (left: 656.0, right: 656.0)] as [(left: CGFloat, right: CGFloat)?] {
+                let name = sides == nil ? "topbar-drag.png" : "topbar-drag-notch.png", height: CGFloat = sides == nil ? 26 : 37
+                topBar.drag = nil
+                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
+                if let m = topBar.measure[id], let clock = m.frames[.item(.center, 0)], let status = m.frames[.item(.right, 1)] {
+                    topBar.drag = BarDrag(display: id, from: BarSlot(.center, 0), module: .clock, rows: m.rows(topBar.bar),
+                                          grab: Double(clock.width) / 2, width: Double(clock.width), x: Double(status.minX) + 4)
+                    guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
+                }
+            }
+            topBar.drag = nil
         }
 
         // The bar's `page` module: a page with its icon, one playing elsewhere and a download.

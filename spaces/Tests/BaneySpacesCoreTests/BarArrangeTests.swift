@@ -125,6 +125,30 @@ final class BarArrangeTests: XCTestCase {
         XCTAssertEqual(BarArrange.slot(at: 1200, rows: notch), BarSlot(.right, 0))
     }
 
+    func testFlatRowsMeetHalfwayBetweenTheirModules() {
+        let rows = BarArrange.rows(width: 1000, notch: nil, drawn: [.left: (10, 100), .center: (450, 550), .right: (800, 990)],
+                                   items: [:], counts: [.left: 2, .center: 1, .right: 3])
+        XCTAssertEqual(rows.map(\.minX), [0, 275, 675])
+        XCTAssertEqual(rows.map(\.maxX), [275, 675, 1000])
+        XCTAssertEqual(BarArrange.slot(at: 990, rows: rows), BarSlot(.right, 3))
+    }
+
+    func testANotchedBarOffersNoStretchUnderTheCamera() {
+        // 1512 wide, 656 either side of the notch: the camera from 656 to 856.
+        let rows = BarArrange.rows(width: 1512, notch: (656, 856), drawn: [.left: (10, 300), .center: (868, 990), .right: (1300, 1500)],
+                                   items: [:], counts: [.left: 1, .center: 1, .right: 1])
+        XCTAssertNil(BarArrange.slot(at: 700, rows: rows))
+        XCTAssertEqual(BarArrange.slot(at: 650, rows: rows), BarSlot(.left, 1))
+        XCTAssertEqual(BarArrange.slot(at: 860, rows: rows), BarSlot(.center, 1))
+        XCTAssertEqual(BarArrange.slot(at: 1200, rows: rows), BarSlot(.right, 1))
+    }
+
+    func testAnEmptyCenterStillHasAStretch() {
+        let rows = BarArrange.rows(width: 1000, notch: nil, drawn: [.left: (10, 100), .center: (500, 500), .right: (800, 990)],
+                                   items: [:], counts: [.left: 2, .center: 0, .right: 3])
+        XCTAssertEqual(BarArrange.slot(at: 500, rows: rows), BarSlot(.center, 0))
+    }
+
     // MARK: VoiceOver steps
 
     func testStepsLeftAndRightPassModulesThatDrawNothingAndCrossRows() {

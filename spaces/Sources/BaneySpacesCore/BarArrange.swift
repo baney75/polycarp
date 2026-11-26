@@ -90,6 +90,26 @@ public enum BarArrange {
         return (before...next).contains(slot.index) ? moving : slot
     }
 
+    /// Each row's stretch for drops on a bar `width` wide, from where each row is drawn (`drawn`, its modules' box; an
+    /// empty row is a zero-width box where it would be). Neighbouring rows meet halfway between their boxes. With a
+    /// notch from `notch.start` to `notch.end` the left row ends at its start and the center row begins at its end, so no
+    /// slot is under it (R-BA3).
+    public static func rows(width: Double, notch: (start: Double, end: Double)?,
+                            drawn: [BarRow: (minX: Double, maxX: Double)],
+                            items: [BarRow: [BarRowGeometry.Item]], counts: [BarRow: Int]) -> [BarRowGeometry] {
+        func box(_ r: BarRow) -> (minX: Double, maxX: Double) {
+            drawn[r] ?? (r == .left ? (0, 0) : r == .right ? (width, width) : (width / 2, width / 2))
+        }
+        let (l, c, r) = (box(.left), box(.center), box(.right))
+        let leftEnd = notch?.start ?? (l.maxX + c.minX) / 2
+        let centerStart = notch?.end ?? leftEnd
+        let rightStart = max(centerStart, (c.maxX + r.minX) / 2)
+        let stretch: [BarRow: (Double, Double)] = [.left: (0, leftEnd), .center: (centerStart, rightStart), .right: (rightStart, width)]
+        return BarRow.allCases.map { row in
+            BarRowGeometry(row: row, minX: stretch[row]!.0, maxX: stretch[row]!.1, items: items[row] ?? [], count: counts[row] ?? 0)
+        }
+    }
+
     /// The moves VoiceOver offers on each module (R-BA6).
     public enum Step: String, CaseIterable, Sendable {
         case left = "Move Left", right = "Move Right"
