@@ -45,9 +45,20 @@ The same list with your changes: `polycarp-spaces keys`.
 | ⌃⌥Return | Make the window the main one |
 | ⌃⌥F | Float the window, or tile it again |
 | ⌃⌥M | Give the window the whole area, or put it back |
+| ⌃⌥G | Make the tile a group of tabs, or take it apart |
+| ⌃⌥⇧⌘ arrows | Move the window into the tile that way, or out of its group |
+| ⌃⌥Tab and ⌃⌥⇧Tab | Focus the next or previous window of the group |
 | ⌃⌥N | Send the window to the next display |
 
 While VoiceOver is on it keeps the keys it uses (⌃⌥ with the arrows and more); Settings > Keys marks them.
+
+## Groups
+
+A group is several windows in one tile, with a strip of tabs above it. ⌃⌥G makes the tile you are in a group; a window
+opened in it joins it. ⌃⌥⇧⌘ with an arrow moves the window into the tile that way, or out of its group on that side.
+Click a tab to go to its window, or drop a dragged window on the strip to join. ⌃⌥G again takes the group apart.
+
+The layout treats a group as one window. A tile under 120 points high has no strip. Groups are kept across restarts.
 
 ## The pointer
 

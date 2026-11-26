@@ -212,6 +212,20 @@ final class TilingGroupTests: XCTestCase {
         XCTAssertEqual(tabs(f), [[2]], "a group of one until it is taken apart")
     }
 
+    func testAStripShowsATabPerWindowNamedByTitleOrApp() {
+        var f = three()
+        _ = run(&f, .join(.left), 2)
+        let tabs = f.engine.tabs(1)
+        let names: [WindowID: (title: String, app: String, pid: Int32)] = [1: ("Notes", "TextEdit", 11), 2: ("", "Terminal", 22)]
+        let drawn = TilingTabs.drawn(tabs, moving: nil) { names[$0]! }
+        XCTAssertEqual(drawn, [TilingTabs.Drawn(frame: tabs[0].frame, tabs: [
+            .init(id: 1, title: "Notes", pid: 11, front: false),
+            .init(id: 2, title: "Terminal", pid: 22, front: true),
+        ])], "a window with no title goes by its app")
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: 2) { names[$0]! }, [], "none while its front is dragged")
+        XCTAssertEqual(TilingTabs.drawn(tabs, moving: 1) { names[$0]! }.count, 1, "a window behind it on the move leaves it")
+    }
+
     func testAGroupOfOneIsOneAgainWhenItComesBack() {
         var f = three()
         _ = run(&f, .group, 1)

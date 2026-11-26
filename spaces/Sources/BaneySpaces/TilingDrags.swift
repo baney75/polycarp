@@ -20,7 +20,7 @@ extension Tiling {
         let was = drag?.phase
         drag?.saw(frame)
         guard let d = drag, d.phase == .moving else { return }
-        if was != .moving { watchEscape() }
+        if was != .moving { watchEscape(); drawStrips() }
         guard frame != nil, !d.cancelled, !floatKeyDown, let to = engine.dropFrame(id, at: point) else { return outline.hide() }
         outline.show(to)
     }
@@ -67,6 +67,7 @@ extension Tiling {
         drag = nil
         outline.hide()
         stopEscape()
+        drawStrips()
     }
 
     private var floatKeyDown: Bool {

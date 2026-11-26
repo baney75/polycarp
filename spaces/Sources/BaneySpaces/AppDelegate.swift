@@ -554,6 +554,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateIcon()
             self.topBar.workspacesChanged()
             self.switcher.titlesChanged()
+            self.tiling.drawStrips()
             self.tiling.lookSoon(0.02)
         }
         spaces.onSettled = { [weak self] in self?.tiling.look() }

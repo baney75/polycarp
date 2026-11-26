@@ -26,6 +26,31 @@ public struct TilingTabs: Equatable, Sendable {
     public var frame: CGRect
     public var windows: [WindowID]
     public var front: WindowID
+
+    /// A tab as drawn: its window's title, or its app's name when the window has none.
+    public struct Tab: Equatable, Identifiable, Sendable {
+        public var id: WindowID
+        public var title: String
+        public var pid: Int32
+        public var front: Bool
+    }
+
+    /// What a strip shows.
+    public struct Drawn: Equatable, Sendable {
+        public var frame: CGRect
+        public var tabs: [Tab]
+    }
+
+    /// The strips to draw: none for a group whose front is on the move, as it is let go somewhere else.
+    public static func drawn(_ all: [TilingTabs], moving: WindowID?,
+                             window: (WindowID) -> (title: String, app: String, pid: Int32)) -> [Drawn] {
+        all.filter { $0.front != moving }.map { t in
+            Drawn(frame: t.frame, tabs: t.windows.map { id in
+                let w = window(id)
+                return Tab(id: id, title: w.title.isEmpty ? w.app : w.title, pid: w.pid, front: id == t.front)
+            })
+        }
+    }
 }
 
 extension TilingEngine.Slot {
