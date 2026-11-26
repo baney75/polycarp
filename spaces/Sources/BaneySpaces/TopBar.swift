@@ -45,6 +45,13 @@ final class TopBar {
     private var menuMinute: Date?
     /// The height the panels were placed at, so a theme change that leaves it alone places nothing.
     private var placedHeight: Double?
+    /// Moves a module with ⌘ and a drag (spec/bar.md R-BA1).
+    private lazy var dragger = BarDragger(model: model, display: { [weak self] w in self?.panels.first { $0.value === w }?.key },
+                                          panel: { [weak self] in self?.panels[$0] }, drop: { [weak self] in self?.move($0, to: $1) })
+    /// The lists from before the last move, for Undo Move until the next move or a quit (R-BA5).
+    private(set) var undo: Surfaces.Bar?
+    private let writes = DispatchQueue(label: "com.baney.polycarp.bar-arrange", qos: .userInitiated)
+    private var rightClicks: Any?
 
     init(spaces: Spaces) {
         self.spaces = spaces
@@ -141,6 +148,10 @@ final class TopBar {
             DispatchQueue.main.async { if self?.model.offline != offline { self?.model.offline = offline } }
         }
         network.start(queue: .global(qos: .utility))
+        dragger.start()
+        rightClicks = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] e in
+            self?.rightClick(e) == true ? nil : e
+        }
         let me = Unmanaged.passUnretained(self).toOpaque()
         if let src = IOPSNotificationCreateRunLoopSource({ ctx in
             guard let ctx else { return }
@@ -252,6 +263,7 @@ final class TopBar {
     }
 
     private func removeAll() {
+        dragger.cancel()
         SystemMenuBar.hide(false)
         for p in panels.values { p.orderOut(nil) }
         panels = [:]
@@ -271,6 +283,55 @@ final class TopBar {
         calendarPanel.hide()
         agentsPanel.hide()
         notices.set(on: false)
+    }
+
+    /// A drop: the lists moved, drawn on every bar at once, then written in one write that the store and every bar follow
+    /// (R-BA4). A drop on the module's own place writes nothing (R-BA5).
+    func move(_ from: BarSlot, to: BarSlot) {
+        let before = model.bar
+        let next = BarArrange.move(before, from: from, to: to)
+        guard next != before else { Trace.log("top bar: move to its own place, nothing changed"); return }
+        let id = BarArrange.list(before, from.row)[from.index].id
+        save(next, undo: before, revert: before, "moved \(id) from \(from.row.rawValue) \(from.index) to \(to.row.rawValue) \(to.index)")
+    }
+
+    /// Puts back the lists from before the last move.
+    func undoMove() {
+        guard let u = undo else { return }
+        var next = model.bar
+        (next.left, next.center, next.right) = (u.left, u.center, u.right)
+        save(next, undo: nil, revert: model.bar, "move undone")
+    }
+
+    /// Draws `next` and writes it; a failed write puts back `revert` and the undo there was.
+    private func save(_ next: Surfaces.Bar, undo before: Surfaces.Bar?, revert: Surfaces.Bar, _ what: String) {
+        let undoBefore = undo
+        model.bar = next
+        undo = before
+        writes.async { [weak self] in
+            let failed = BarArrange.write(next, file: SurfacesFile.path())
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let failed {
+                    // Nothing was written: the bars go back to what they showed before it.
+                    self.undo = undoBefore
+                    self.model.bar = revert
+                    Trace.log("top bar: \(what) not saved: \(failed)")
+                } else {
+                    Trace.log("top bar: \(what)")
+                }
+            }
+        }
+    }
+
+    /// A right-click on the bar's empty space: Undo Move, when there is a move to undo.
+    private func rightClick(_ e: NSEvent) -> Bool {
+        guard let id = panels.first(where: { $0.value === e.window })?.key,
+              model.measure[id]?.module(at: Double(e.locationInWindow.x)) == nil, undo != nil else { return false }
+        let menu = NSMenu()
+        menu.addItem(BlockMenuItem("Undo Move") { [weak self] in self?.undoMove() })
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+        return true
     }
 
     private func wants(_ m: Surfaces.BarModule) -> Bool {
@@ -430,6 +491,10 @@ final class TopBarModel: ObservableObject {
     /// How many notifications are new, as the bell shows it (`NoticeShelf.count`).
     @Published var notices = ""
     @Published var pages: [CGDirectDisplayID: Page] = [:]
+    /// The module being moved by hand, on one bar (`BarDragger`).
+    @Published var drag: BarDrag?
+    /// Where each bar last laid out its rows and modules; read at a press, never drawn from.
+    var measure: [CGDirectDisplayID: BarMeasure] = [:]
 
     /// The `page` module's: what there is to show, and the front page's site's icon.
     struct Page: Equatable {
@@ -492,31 +557,51 @@ struct TopBarView: View {
                 if let sides {
                     let right = max(0, sides.right - pad.trailing)
                     HStack(spacing: 0) {
-                        row(model.bar.left, .left).frame(width: max(0, sides.left - pad.leading), alignment: .leading)
+                        row(.left).frame(width: max(0, sides.left - pad.leading), alignment: .leading)
                         Spacer(minLength: 0)
                         // The clock beside the camera, the icons at the edge.
                         BarSideRow {
-                            row(model.bar.center, .center)
-                            row(model.bar.right, .right, room: Double(right) * (1 - BarLayout.middleShare))
+                            row(.center)
+                            row(.right, room: Double(right) * (1 - BarLayout.middleShare))
                         }
+                        .animation(slide, value: model.drag?.target)
                         .padding(.leading, CGFloat(BarGeometry.group))
                         .frame(width: right)
                     }
+                    .animation(slide, value: model.drag?.target)
                 } else {
                     // Each place gets its share of the width, so a long verse or app menu row shortens instead of running
                     // into the next: the middle what it needs up to its share, the sides what is left either side of it.
                     BarFlatRow {
-                        row(model.bar.left, .left)
-                        row(model.bar.center, .center)
-                        row(model.bar.right, .right, room: Double(g.size.width) * (1 - BarLayout.middleShare) / 2)
+                        row(.left)
+                        row(.center)
+                        row(.right, room: Double(g.size.width) * (1 - BarLayout.middleShare) / 2)
                     }
+                    .animation(slide, value: model.drag?.target)
                 }
+                if let d = model.drag, d.display == display { lifted(d, pad: pad, height: g.size.height) }
             }
             .frame(width: g.size.width, height: g.size.height)
+            .barMeasured(.bar)
             .environment(\.barFace, CGFloat(BarGeometry.face(bar: model.bar.style == .islands ? height - 6 : height)))
         }
         .padding(pad)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .coordinateSpace(name: BarDragger.space)
+        .onPreferenceChange(BarMeasureFrames.self) { frames in
+            let width = Double((frames[.bar]?.maxX ?? screen.frame.width) + pad.trailing)
+            let bar = model.bar
+            let all = bar.left + bar.center + bar.right
+            var hides: [BarRow: Set<Surfaces.BarModule>] = [:]
+            var closed: Set<BarRow> = []
+            for row in BarRow.allCases {
+                let region = StyleBook.Region(rawValue: row.rawValue) ?? .left
+                if styles.book.region(region).isHidden { closed.insert(row) }
+                hides[row] = Set(all.filter { styles.book.module($0, in: region).isHidden })
+            }
+            model.measure[display] = BarMeasure(frames: frames, width: width,
+                                                notch: sides.map { (Double($0.left), width - Double($0.right)) }, closed: closed, hides: hides)
+        }
         .opacity(styles.book.bar.opacity ?? 1)
         .environment(\.colorScheme, Chrome.scheme)
     }
@@ -552,25 +637,30 @@ struct TopBarView: View {
 
     /// One region's modules, in the groups `|` splits them into. The sheet can hide a region, box it and set its own
     /// gap. With `bar.style` islands each group floats in its own island; otherwise a little room parts them.
-    @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, room: Double = 400) -> some View {
+    @ViewBuilder private func row(_ place: BarRow, room: Double = 400) -> some View {
+        let region = StyleBook.Region(rawValue: place.rawValue) ?? .left
         let r = styles.book.region(region)
         if r.isHidden {
             // A hidden region keeps its place in the layout, with nothing in it.
-            Color.clear.frame(width: 0, height: 0)
+            Color.clear.frame(width: 0, height: 0).barMeasured(.row(place))
         } else {
             let gap = r.gap.map { CGFloat($0) } ?? spacing
-            let groups = BarLayout.islands(modules).map { $0.filter { draws($0, region) } }.filter { !$0.isEmpty }
+            let groups = placed(BarArrange.list(shown, place), place, region)
             Group {
-                if model.bar.style == .islands {
+                if groups.isEmpty, dragging {
+                    // An empty row while a module moves: somewhere to drop it.
+                    BarShape.face.strokeBorder(Chrome.wash(0.45), style: StrokeStyle(lineWidth: Chrome.width(.overviewChip), dash: [3, 3]))
+                        .frame(width: CGFloat(BarGeometry.slot) + 12).padding(.vertical, 4)
+                } else if model.bar.style == .islands {
                     // A fixed space between islands; the region's gap still spaces the modules inside each.
                     HStack(spacing: 6) {
-                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in island(group, region, gap: r.gap, room: room) }
+                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in island(group, place, region, gap: r.gap, room: room) }
                     }
                 } else {
                     HStack(spacing: CGFloat(BarGeometry.group) + gap) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                             HStack(spacing: gap) {
-                                ForEach(group, id: \.id) { styled($0, region, room: room) }
+                                ForEach(group) { item($0, place, region, room: room) }
                             }
                         }
                     }
@@ -579,23 +669,73 @@ struct TopBarView: View {
             .lineLimit(1)
             .environment(\.barBoxed, r.hasBox)
             .modifier(StyledBox(style: r))
+            .barMeasured(.row(place))
         }
     }
 
     /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. Only the face is inset:
     /// what is on it reaches the screen's edge. The sheet's
     /// `bar .island` sets its background, corners, line, shadow, padding and gap; what it leaves unset keeps the face.
-    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, gap: Double?, room: Double) -> some View {
+    @ViewBuilder private func island(_ modules: [Placed], _ place: BarRow, _ region: StyleBook.Region, gap: Double?, room: Double) -> some View {
         let s = styles.book.island(in: region)
         if !s.isHidden {
             HStack(spacing: CGFloat(s.gap ?? gap ?? Double(spacing))) {
-                ForEach(modules, id: \.id) { styled($0, region, room: room) }
+                ForEach(modules) { item($0, place, region, room: room) }
             }
             .padding(s.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
             .frame(maxHeight: .infinity)
             .background { IslandFace(style: s, barFill: styles.book.bar.background).padding(.vertical, 3) }
             .opacity(s.opacity ?? 1)
         }
+    }
+
+    /// A drawn module with its index in its row's list.
+    struct Placed: Identifiable {
+        let index: Int
+        let module: Surfaces.BarModule
+        var id: String { module.id }
+    }
+
+    private var dragging: Bool { model.drag?.display == display }
+
+    /// The lists as the drop under the pointer would leave them, so the others slide apart where it will land.
+    private var shown: Surfaces.Bar {
+        guard let d = model.drag, d.display == display, let to = d.target else { return model.bar }
+        return BarArrange.move(model.bar, from: d.from, to: to)
+    }
+
+    private var slide: Animation? { Chrome.reduceMotion ? nil : Chrome.spring(0.22, damping: 0.86) }
+
+    /// A row's modules in the groups `|` splits them into, without those that draw nothing or the groups left empty.
+    private func placed(_ modules: [Surfaces.BarModule], _ place: BarRow, _ region: StyleBook.Region) -> [[Placed]] {
+        var out: [[Placed]] = [[]]
+        for (i, m) in modules.enumerated() {
+            if m == .split { out.append([]) } else if BarLayout.drawn(m), draws(m, region) { out[out.count - 1].append(Placed(index: i, module: m)) }
+        }
+        return out.filter { !$0.isEmpty }
+    }
+
+    /// One module in its row, measured for a press. The one being moved leaves a gap where it will land, marked by a
+    /// thin accent line, or shows faintly where it was while the pointer is off the bar.
+    @ViewBuilder private func item(_ p: Placed, _ place: BarRow, _ region: StyleBook.Region, room: Double) -> some View {
+        let moving = model.drag.map { $0.display == display && $0.module == p.module } ?? false
+        styled(p.module, region, room: room)
+            .opacity(moving ? (model.drag?.target == nil ? 0.3 : 0) : 1)
+            .overlay(alignment: .leading) {
+                if moving, model.drag?.target != nil { Capsule().fill(Chrome.accent).frame(width: 2).padding(.vertical, 5) }
+            }
+            .barMeasured(.item(place, p.index))
+    }
+
+    /// The module being moved, lifted under the pointer.
+    private func lifted(_ d: BarDrag, pad: EdgeInsets, height: CGFloat) -> some View {
+        styled(d.module, StyleBook.Region(rawValue: d.from.row.rawValue) ?? .left, room: 400)
+            .fixedSize()
+            .background { BarShape.face.fill(Chrome.panel(0.94)).shadow(color: Chrome.shadow(0.3), radius: 5, x: 0, y: 2) }
+            .scaleEffect(Chrome.reduceMotion ? 1 : 1.06)
+            .opacity(d.over ? 1 : 0.6)
+            .position(x: CGFloat(d.x - d.grab + d.width / 2) - pad.leading, y: height / 2)
+            .allowsHitTesting(false)
     }
 
     /// A module with the sheet's style for it where it sits, hidden by `display: none`.

@@ -187,6 +187,17 @@ apart and there are no lines between them. On a screen with a notch the middle's
 right, and the right's at the screen's edge. By default the bar shows the mark, the numbers, the app's menus, the clock, the agents while there are any, the status row and the bell,
 nothing else.
 
+**Moving modules.** Hold ⌘ and drag any module along the bar, as in the macOS menu bar: it lifts under the pointer,
+the others part where it will land, and a thin accent line marks the place. It can go before or after any module in
+any of the three places, or into an empty place (a dashed outline shows while you drag). Let go to keep it there:
+the three lists are written to `bar.modules` in one write, and every bar on every display follows. Letting go off the
+bar, pressing Escape, or letting go where it started changes nothing. Right-click the bar's empty space for Undo Move,
+which puts back the lists from before your last move until the next move or a quit. On a screen with a notch nothing
+can be dropped under the camera, and the middle's modules stay beside it; nor in a place style.css hides, or one
+that hides the module you hold. Escape is kept from the app in front while you drag. The first move writes all three places, so
+a place you never set stops following Polycarp's defaults; `polycarp-spaces surfaces reset bar.modules` gives them
+back. The rules and their cases are in spec/bar.md, "Moving modules (macOS)".
+
 **Saved module lists are not changed.** The defaults above (the clock in the middle, the status row at the right, no
 `hour`) are for a file that sets no `bar.modules` place. A file that already lists its modules keeps them as they are;
 to take the new layout, `polycarp-spaces surfaces reset bar.modules`.
