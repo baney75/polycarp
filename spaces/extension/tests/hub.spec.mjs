@@ -168,7 +168,7 @@ try {
     await globalThis.PolycarpHubStore.upsert('made-up', [{
       remoteId: 'hostile', messageId: '<hostile@x>', from: { name: 'Sender', addr: 'sender@example.com' }, to: [{ addr: 'me@home.example' }],
       subject: 'HTML only', date: Date.now() + 1000, folder: 'inbox', unread: true,
-      html: '<style>p{color:red}</style><p>Plain words</p><img src="https://pixel.example/t.gif" onerror="window.__ran=1"><script>window.__ran=2</script><a href="javascript:window.__ran=3">x</a>'
+      html: '<style>p{color:red}.pc-real{display:none}</style><p>Plain words</p><a href="https://login.evil.example/bank">bank.example</a><img src="https://pixel.example/t.gif" onerror="window.__ran=1"><script>window.__ran=2</script><a href="javascript:window.__ran=3">x</a>'
     }]);
   });
   const reqs = [];
@@ -185,6 +185,8 @@ try {
   const note = await p.textContent('#pane .hbar span');
   check(inFrame && inFrame.text.includes('Plain words') && inFrame.scripts === 0 && inFrame.imgs.every((s) => !s) && ran === 0 && reqs.length === 0 && sandbox === 'allow-popups allow-popups-to-escape-sandbox' && /1 picture/.test(note),
     'HTML mail shows in the sandboxed frame, with nothing run or loaded and the left-out picture counted', { inFrame, ran, reqs, sandbox, note });
+  const warned = await p.evaluate(() => { const w = document.querySelector('#pane .hwarn'); return w && w.offsetHeight > 0 ? w.textContent : null; });
+  check(warned === 'A link that says bank.example goes to login.evil.example.', 'a misleading link is named on the page, where the mail\'s CSS hiding the in-frame note does not reach', warned);
   await p.click('#pane .hbar button');
   const plain = await p.textContent('#pane .html .body');
   check(plain.includes('Plain words') && !plain.includes('__ran') && await p.isHidden('#pane .html iframe'), 'it switches to plain text', null);

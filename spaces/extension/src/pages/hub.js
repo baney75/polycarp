@@ -252,7 +252,15 @@
       flip.textContent = "Show it formatted";
     });
     bar.append(flip);
-    box.append(bar, shown.frame);
+    box.append(bar);
+    // Links whose text names one site but go to another, said here on the page, where the mail's CSS can't hide it.
+    if (shown.misleading.length) {
+      const warn = el("ul", "hwarn");
+      warn.setAttribute("aria-label", "Links that go somewhere other than they say");
+      for (const x of shown.misleading) warn.append(el("li", "", "A link that says " + x.named + " goes to " + x.real + "."));
+      box.append(warn);
+    }
+    box.append(shown.frame);
     return box;
   }
   const fmtSize = (n) => (n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " bytes");

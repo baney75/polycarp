@@ -6,7 +6,8 @@
       that allows only inline styles and data: pictures, so even markup that slipped past step 1 can neither run nor
       load anything.
    Every link says where it goes: its full address is its tooltip, and when a link's text names one site but the link
-   goes to another, the real site is written after it. Links open in a new tab, outside the sandbox. */
+   goes to another, `clean` lists the pair, so the page can warn outside the frame where the mail's own CSS can't
+   hide it. Links open in a new tab, outside the sandbox. */
 (function () {
   "use strict";
 
@@ -25,15 +26,30 @@
     RETURN_TRUSTED_TYPE: false
   };
 
-  const hostOf = (s) => { try { return new URL(s).hostname.replace(/^www\./, "").toLowerCase(); } catch (e) { return ""; } };
-  // The site a link's text names, when its text looks like an address ("example.com", "https://example.com/x").
-  function namedHost(text) {
-    const m = String(text || "").trim().match(/^(?:https?:\/\/)?((?:[a-z0-9-]+\.)+[a-z]{2,})(?:[/:?#]\S*)?$/i);
-    return m ? m[1].replace(/^www\./, "").toLowerCase() : "";
+  // A host as the browser would go to it: lower case, in punycode, without "www." or a final dot.
+  const hostOf = (s) => { try { return new URL(s).hostname.replace(/^www\./, "").replace(/\.$/, ""); } catch (e) { return ""; } };
+  // Invisible characters a sender can put inside a name to break a match: zero-width, joiners, bidi marks, fillers.
+  const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u3164\uFFA0]/gu;
+  // Names that end like a file, not a site, so "report.pdf" in a link's text is not a site it names.
+  const FILES = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "jpg", "jpeg", "png", "gif", "htm", "html"]);
+  // Every site a link's text names, anywhere in it and in any script ("Log in at paypal.com now", "p\u0430ypal.com."),
+  // in the same form as hostOf, so a look-alike spelled in another alphabet compares as the different site it is.
+  function namedHosts(text) {
+    // Wide and styled letters need nothing here (hostOf maps them as the browser does), but dots other than "." do,
+    // or "paypal\u3002com" would not read as a name at all.
+    const s = String(text || "").replace(INVISIBLE, "").replace(/[\u3002\uff0e\uff61]/g, ".");
+    const out = new Set();
+    for (const m of s.matchAll(/(?:[\p{L}\p{N}\p{M}-]+\.)+[\p{L}\p{M}]{2,}/gu)) {
+      if (FILES.has(m[0].split(".").pop().toLowerCase())) continue;
+      const h = hostOf("http://" + m[0]);
+      if (h) out.add(h);
+    }
+    return Array.from(out);
   }
 
-  // Sanitizes `html` and answers { html, blocked, links } where `blocked` counts pictures and styles from the web that
-  // were left out and `links` lists each kept link's address.
+  // Sanitizes `html` and answers { html, blocked, links, misleading } where `blocked` counts pictures and styles from
+  // the web that were left out, `links` lists each kept link's address and `misleading` lists {named, real} for each
+  // link whose text names a site it doesn't go to.
   function clean(html) {
     const P = globalThis.DOMPurify;
     if (!P || !P.isSupported) throw new Error("the HTML cleaner is missing");
@@ -73,19 +89,22 @@
       }
     });
     const out = purify.sanitize(String(html || ""), CONFIG);
-    // A second pass marks links whose text names a different site than they go to.
+    // A second pass finds links whose text names a different site than they go to. The note in the frame is only an
+    // extra, since the mail's CSS can hide it; `misleading` is what the page shows.
     const doc = new DOMParser().parseFromString("<body>" + out + "</body>", "text/html");
+    const misleading = [];
     for (const a of doc.querySelectorAll("a[href]")) {
-      const named = namedHost(a.textContent);
       const real = hostOf(a.getAttribute("href"));
-      if (named && real && named !== real && !real.endsWith("." + named)) {
-        const s = doc.createElement("span");
-        s.className = "pc-real";
-        s.textContent = " (goes to " + real + ")";
-        a.after(s);
-      }
+      if (!real) continue;
+      const named = namedHosts(a.textContent).find((n) => n !== real && !real.endsWith("." + n));
+      if (!named) continue;
+      if (!misleading.some((x) => x.named === named && x.real === real)) misleading.push({ named, real });
+      const s = doc.createElement("span");
+      s.className = "pc-real";
+      s.textContent = " (goes to " + real + ")";
+      a.after(s);
     }
-    return { html: doc.body.innerHTML, blocked, links };
+    return { html: doc.body.innerHTML, blocked, links, misleading };
   }
 
   // The whole document for the sandboxed frame. Mail is drawn on its own light paper, as most HTML mail expects.
@@ -107,8 +126,8 @@
     f.setAttribute("loading", "lazy");
     f.title = title || "Message";
     f.srcdoc = frameDoc(c.html);
-    return { frame: f, blocked: c.blocked, links: c.links };
+    return { frame: f, blocked: c.blocked, links: c.links, misleading: c.misleading };
   }
 
-  globalThis.PolycarpHubSafeHtml = { CSP, CONFIG, clean, frameDoc, frame, namedHost };
+  globalThis.PolycarpHubSafeHtml = { CSP, CONFIG, clean, frameDoc, frame, namedHosts };
 })();

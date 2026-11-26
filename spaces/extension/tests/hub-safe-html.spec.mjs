@@ -116,6 +116,20 @@ try {
     return { notes: Array.from(d.querySelectorAll('.pc-real')).map((s) => s.textContent), a: Array.from(d.querySelectorAll('a')).map((a) => [a.title, a.target, a.rel]), imgs: Array.from(d.querySelectorAll('img')).map((i) => i.getAttribute('src') || ''), blocked: c.blocked };
   });
   check(links.notes.length === 1 && links.notes[0] === ' (goes to login.evil.example)', 'a link whose text names another site says where it really goes', links.notes);
+  // The ways a phishing link spells the site it names: each must still be caught, and honest links must not be.
+  const spell = await p.evaluate(() => {
+    const S = globalThis.PolycarpHubSafeHtml;
+    const to = (text, href) => S.clean('<a href="' + (href || 'https://evil.example/x') + '">' + text + '</a>').misleading.map((x) => x.named + '>' + x.real).join();
+    return {
+      dot: to('paypal.com.'), word: to('Log in at paypal.com now'), hidden: to('paypal.com<span style="font-size:0"> x</span>'),
+      cyrillic: to('p\u0430ypal.com'), zeroWidth: to('pay\u200bpal.com'), fullWidth: to('\uff50aypal.com'), wideDot: to('paypal\u3002com'), wideDot2: to('paypal\uff0ecom'), url: to('https://paypal.com/login'),
+      same: to('www.shop.example', 'https://shop.example/a'), sub: to('shop.example', 'https://mail.shop.example/a'), file: to('report.pdf', 'https://cdn.example/report.pdf'),
+      mail: to('help@paypal.com', 'mailto:help@paypal.com'), words: to('Read the full story')
+    };
+  });
+  check(['dot', 'word', 'hidden', 'zeroWidth', 'fullWidth', 'wideDot', 'wideDot2', 'url'].every((k) => spell[k] === 'paypal.com>evil.example') && spell.cyrillic === 'xn--pypal-4ve.com>evil.example',
+    'a trailing dot, extra words, hidden text, invisible or wide letters and a look-alike alphabet are all caught', spell);
+  check(['same', 'sub', 'file', 'mail', 'words'].every((k) => spell[k] === ''), 'honest links, file names and plain words are not flagged', spell);
   check(links.a.every(([t, tg, rel]) => t && tg === '_blank' && /noopener/.test(rel)), 'every link shows its address and opens outside the frame', links.a);
   check(links.imgs[0].startsWith('data:image/png') && links.imgs[1] === '' && links.blocked === 1, 'pictures in the mail stay, pictures from the web are left out and counted', links);
   const frameAttrs = await p.evaluate(() => { const f = globalThis.PolycarpHubSafeHtml.frame('<p>x</p>').frame; return { sandbox: f.getAttribute('sandbox'), csp: f.getAttribute('csp') }; });
