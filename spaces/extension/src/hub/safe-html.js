@@ -39,9 +39,18 @@
     // or "paypal\u3002com" would not read as a name at all.
     const s = String(text || "").replace(INVISIBLE, "").replace(/[\u3002\uff0e\uff61]/g, ".");
     const out = new Set();
-    for (const m of s.matchAll(/(?:[\p{L}\p{N}\p{M}-]+\.)+[\p{L}\p{M}]{2,}/gu)) {
-      if (FILES.has(m[0].split(".").pop().toLowerCase())) continue;
-      const h = hostOf("http://" + m[0]);
+    // One pass over words split at anything a host can't hold, so a long hostile text takes time in line with its length.
+    for (const word of s.split(/[^\p{L}\p{N}\p{M}.-]+/u)) {
+      if (!word.includes(".")) continue;
+      // The run of whole labels at the end: "a..b.example." names b.example.
+      const labels = word.split(".");
+      while (labels.length && !labels[labels.length - 1]) labels.pop();
+      let i = labels.length;
+      while (i > 0 && labels[i - 1]) i--;
+      const name = labels.slice(i);
+      const top = name[name.length - 1] || "";
+      if (name.length < 2 || !/^[\p{L}\p{M}]{2,}$/u.test(top) || FILES.has(top.toLowerCase())) continue;
+      const h = hostOf("http://" + name.join(".").slice(-253));
       if (h) out.add(h);
     }
     return Array.from(out);

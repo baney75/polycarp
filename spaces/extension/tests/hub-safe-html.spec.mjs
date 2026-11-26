@@ -124,11 +124,14 @@ try {
       dot: to('paypal.com.'), word: to('Log in at paypal.com now'), hidden: to('paypal.com<span style="font-size:0"> x</span>'),
       cyrillic: to('p\u0430ypal.com'), zeroWidth: to('pay\u200bpal.com'), fullWidth: to('\uff50aypal.com'), wideDot: to('paypal\u3002com'), wideDot2: to('paypal\uff0ecom'), url: to('https://paypal.com/login'),
       same: to('www.shop.example', 'https://shop.example/a'), sub: to('shop.example', 'https://mail.shop.example/a'), file: to('report.pdf', 'https://cdn.example/report.pdf'),
-      mail: to('help@paypal.com', 'mailto:help@paypal.com'), words: to('Read the full story')
+      mail: to('help@paypal.com', 'mailto:help@paypal.com'), words: to('Read the full story'), gap: to('see..paypal.com')
     };
   });
-  check(['dot', 'word', 'hidden', 'zeroWidth', 'fullWidth', 'wideDot', 'wideDot2', 'url'].every((k) => spell[k] === 'paypal.com>evil.example') && spell.cyrillic === 'xn--pypal-4ve.com>evil.example',
+  check(['dot', 'word', 'hidden', 'zeroWidth', 'fullWidth', 'wideDot', 'wideDot2', 'url', 'gap'].every((k) => spell[k] === 'paypal.com>evil.example') && spell.cyrillic === 'xn--pypal-4ve.com>evil.example',
     'a trailing dot, extra words, hidden text, invisible or wide letters and a look-alike alphabet are all caught', spell);
+  // A long hostile link text is read in time in line with its length (the old scan took about 25 s on this).
+  const slow = await p.evaluate(() => { const t = performance.now(); globalThis.PolycarpHubSafeHtml.clean('<a href="https://x.example">' + 'a.'.repeat(100000) + '</a>'); return Math.round(performance.now() - t); });
+  check(slow < 2000, 'a 200 KB link text of a.a.a does not stall the page', slow + ' ms');
   check(['same', 'sub', 'file', 'mail', 'words'].every((k) => spell[k] === ''), 'honest links, file names and plain words are not flagged', spell);
   check(links.a.every(([t, tg, rel]) => t && tg === '_blank' && /noopener/.test(rel)), 'every link shows its address and opens outside the frame', links.a);
   check(links.imgs[0].startsWith('data:image/png') && links.imgs[1] === '' && links.blocked === 1, 'pictures in the mail stay, pictures from the web are left out and counted', links);
