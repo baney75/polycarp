@@ -72,6 +72,7 @@ node tests/sources.spec.mjs      # Search sources against saved fixtures
 node tests/nas.spec.mjs          # NAS against a local WebDAV fake
 node --test tests/hub.test.mjs   # the Hub's model, store and account interface, with a made-up account
 node tests/hub-store.spec.mjs    # the Hub's store on real IndexedDB matches the memory store
+node tests/hub.spec.mjs          # Polycarp Mail on made-up mail: the list, keys, undo, command bar and narrow layout
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact
 node tests/store-shots.mjs       # the Chrome Web Store screenshots and promo tile to tests/out/store
 node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Kokoro voice once
@@ -83,7 +84,7 @@ node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Koko
 | --- | --- |
 | `src/content` | The script that restyles pages, the page finder and the site helpers |
 | `src/reader` | The Reader, importers, read-aloud, recall and print |
-| `src/pages` | Welcome, Library, Review, Search and Settings |
+| `src/pages` | Welcome, Library, Review, Search, Settings and Mail |
 | `src/hub` | The Hub (mail and messages in one place): its model, store and the one interface every account implements |
 | `src/shared` | Settings, memory, library, search sources, NAS, sync and icons, shared by all pages |
 | `lib` | Bundled third-party code, each with its license |

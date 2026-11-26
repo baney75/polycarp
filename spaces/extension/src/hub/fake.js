@@ -54,7 +54,7 @@
             from: mine ? { name: "Me", addr: o.me } : who, to: [mine ? who : { name: "Me", addr: o.me }],
             subject: (i ? "Re: " : "") + subject, date: date + i * 3600e3, folder: mine ? "sent" : "inbox",
             unread: !mine && r() < 0.4, flagged: r() < 0.08,
-            text: pick(LINES) + "\n\n" + pick(LINES) + "\n\n" + who.name.split(" ")[0],
+            text: pick(LINES) + "\n\n" + pick(LINES) + (mine ? "" : "\n\n" + who.name.split(" ")[0]),
             headers: { authResults: "mx.home.example; dkim=pass header.d=example.com; spf=pass" }
           });
           refs.push(mid);

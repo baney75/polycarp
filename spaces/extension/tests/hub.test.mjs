@@ -88,6 +88,19 @@ test("a thread leaves the inbox only when its last inbox message does", async ()
   await assert.rejects(S.update(["home:1"], { subject: "x" }), /can't change subject/);
 });
 
+test("archiving a thread you answered last puts it in Archive; Sent lists every thread you wrote in", async () => {
+  S.useMemoryStore();
+  await S.upsert("home", [msg("1"), msg("2", { date: 2000, from: me, to: [ada], folder: "sent", inReplyTo: "<1@x>", references: ["<1@x>"] })]);
+  await S.update(["home:1"], { folder: "archive" });
+  assert.deepEqual((await S.allThreads()).map((t) => t.folder), ["archive"]);
+  await S.upsert("home", [msg("5", { date: 3000, folder: "archive", inReplyTo: "<2@x>", references: ["<1@x>", "<2@x>"] })]);
+  await S.upsert("home", [msg("3", { messageId: "<3@x>", subject: "Mine", from: me, to: [ada], folder: "sent", date: 1500 }), msg("4", { messageId: "<4@x>", subject: "Not mine" })]);
+  const sent = await S.threads({ folder: "sent" });
+  assert.deepEqual(sent.map((t) => [t.subject, t.folder]), [["Plans", "archive"], ["Mine", "sent"]], "newest you wrote first");
+  assert.deepEqual((await S.threads({ folder: "sent", before: S.after(sent[0], true) })).map((t) => t.subject), ["Mine"]);
+  assert.deepEqual((await S.threads({ folder: "sent", account: "home", limit: 1 })).map((t) => t.subject), ["Plans"]);
+});
+
 test("removing an account takes its mail and cursor with it", async () => {
   S.useMemoryStore();
   await S.putAccount({ id: "home", kind: "fake", label: "Home" });

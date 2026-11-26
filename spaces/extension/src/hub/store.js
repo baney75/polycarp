@@ -6,7 +6,7 @@
 
   const M = globalThis.PolycarpHubModel;
   const DB_NAME = "polycarp-hub";
-  const DB_VERSION = 1;
+  const DB_VERSION = 2;
   const STORES = ["accounts", "messages", "threads", "drafts", "meta"];
 
   // ---------- Backends: get, all, put, del, byIndex, page ----------
@@ -17,17 +17,28 @@
       if (dbp) return dbp;
       dbp = new Promise((res, rej) => {
         const r = indexedDB.open(DB_NAME, DB_VERSION);
-        r.onupgradeneeded = () => {
+        r.onupgradeneeded = (e) => {
           const d = r.result;
-          d.createObjectStore("accounts", { keyPath: "id" });
-          const ms = d.createObjectStore("messages", { keyPath: "id" });
-          ms.createIndex("threadId", "threadId");
-          ms.createIndex("messageId", "messageId");
-          ms.createIndex("account", "account");
-          // The id ends the key so threads with the same date still have one order, and a page can start after any of them.
-          d.createObjectStore("threads", { keyPath: "id" }).createIndex("folderDate", ["folder", "lastDate", "id"]);
-          d.createObjectStore("drafts", { keyPath: "id" });
-          d.createObjectStore("meta", { keyPath: "key" });
+          if (e.oldVersion < 1) {
+            d.createObjectStore("accounts", { keyPath: "id" });
+            const ms = d.createObjectStore("messages", { keyPath: "id" });
+            ms.createIndex("threadId", "threadId");
+            ms.createIndex("messageId", "messageId");
+            ms.createIndex("account", "account");
+            d.createObjectStore("drafts", { keyPath: "id" });
+            d.createObjectStore("meta", { keyPath: "key" });
+          }
+          // Version 2 lists the threads you wrote in by when you last wrote. Version 1 held only a copy of account mail,
+          // so it is dropped with the cursors and the next pull brings it back; accounts and drafts stay.
+          if (d.objectStoreNames.contains("threads")) {
+            d.deleteObjectStore("threads");
+            r.transaction.objectStore("messages").clear();
+            r.transaction.objectStore("meta").clear();
+          }
+          // The id ends each key so threads with the same date still have one order, and a page can start after any of them.
+          const ts = d.createObjectStore("threads", { keyPath: "id" });
+          ts.createIndex("folderDate", ["folder", "lastDate", "id"]);
+          ts.createIndex("sentDate", ["sentAt", "id"]);
         };
         r.onsuccess = () => { const d = r.result; d.onversionchange = () => { d.close(); dbp = null; }; res(d); };
         r.onerror = () => { dbp = null; rej(r.error); };
@@ -81,7 +92,7 @@
       del: async (s, keys) => { for (const k of keys) stores[s].delete(k); },
       byIndex: async (s, i, val) => Array.from(stores[s].values()).filter((v) => v[i] === val).map(copy),
       page: async (s, i, lower, upper, limit) => {
-        const fields = i === "folderDate" ? ["folder", "lastDate", "id"] : [i];
+        const fields = i === "folderDate" ? ["folder", "lastDate", "id"] : i === "sentDate" ? ["sentAt", "id"] : [i];
         return Array.from(stores[s].values())
           .map((v) => [fields.map((f) => v[f]), v])
           .filter(([k]) => tuple(k, lower) >= 0 && tuple(k, upper) < 0)
@@ -135,7 +146,9 @@
 
   async function putAccount(a) {
     if (!a || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(a.id || "")) throw new Error("an account id is 1 to 41 of a-z, 0-9 and -");
-    await queue(() => backend().put("accounts", [{ id: a.id, kind: String(a.kind || ""), label: String(a.label || a.id), address: String(a.address || ""), route: String(a.route || "") }]));
+    // `options` holds what the route needs to reach the account (a server, a port), never a password or token.
+    const options = a.options && typeof a.options === "object" ? JSON.parse(JSON.stringify(a.options)) : {};
+    await queue(() => backend().put("accounts", [{ id: a.id, kind: String(a.kind || ""), label: String(a.label || a.id), address: String(a.address || ""), route: String(a.route || ""), options }]));
     emit({ type: "accounts" });
   }
   const accounts = () => backend().all("accounts");
@@ -251,23 +264,26 @@
     return { summary, messages };
   }
 
-  // Where the next page starts: just after this thread.
-  const after = (t) => ({ date: t.lastDate, id: t.id });
+  // Where the next page starts: just after this thread. In Sent, threads go by when you last wrote in them.
+  const after = (t, sent) => ({ date: sent ? t.sentAt : t.lastDate, id: t.id });
 
   // Thread summaries in a folder, newest first. `before` is a date (older than it) or `after(thread)` (everything after
   // that thread, ties on its date included). `account` narrows to one account.
   async function threads(opts) {
     const o = Object.assign({ folder: "inbox", limit: 50, before: Infinity, account: "" }, opts || {});
-    const lower = [o.folder];
-    let upper = o.before && typeof o.before === "object" ? [o.folder, o.before.date, o.before.id] : [o.folder, o.before];
-    if (!o.account) return backend().page("threads", "folderDate", lower, upper, o.limit);
+    // Sent is every thread you wrote in, whatever folder the rest of it is in.
+    const ix = o.folder === "sent" ? "sentDate" : "folderDate";
+    const head = ix === "sentDate" ? [] : [o.folder];
+    const lower = ix === "sentDate" ? [1] : head;
+    let upper = o.before && typeof o.before === "object" ? [...head, o.before.date, o.before.id] : [...head, o.before];
+    if (!o.account) return backend().page("threads", ix, lower, upper, o.limit);
     const out = [];
     while (out.length < o.limit) {
-      const batch = await backend().page("threads", "folderDate", lower, upper, 200);
+      const batch = await backend().page("threads", ix, lower, upper, 200);
       for (const t of batch) if (t.account === o.account && out.length < o.limit) out.push(t);
       if (batch.length < 200) break;
       const last = batch[batch.length - 1];
-      upper = [o.folder, last.lastDate, last.id];
+      upper = [...head, ix === "sentDate" ? last.sentAt : last.lastDate, last.id];
     }
     return out;
   }
