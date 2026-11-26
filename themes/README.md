@@ -147,6 +147,12 @@ dark.muted on dark.surface is 3.04, needs 4.5
 
 Every problem is listed, not only the first.
 
+## The app icons
+
+Polycarp's icon and Polycarp Browser's take the theme's colors: the olive branch in `on_accent` on the `accent`. When
+those two read at less than 3:1, it is the `accent` on the `surface`, then the `foreground` on the `surface`. With no
+theme it is the green icon Polycarp ships with. `spaces/scripts/render-icons.sh <folder>` draws every theme's icon.
+
 ## A full example
 
 This file is `mine.toml`. It starts from `evening` and changes a few things.

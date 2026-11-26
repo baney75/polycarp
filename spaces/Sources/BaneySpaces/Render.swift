@@ -9,6 +9,11 @@ enum Render {
     static func run(into folder: URL) -> Int32 {
         if let asked = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_MOVE_HELPER"] { return MoveTiming.help(asked) }
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        // BANEYSPACES_RENDER_ICONS=<folder of theme.json files> draws the app icon in each theme, light and dark
+        // (scripts/render-icons.sh makes the folder from themes/), and the icon with no theme. Nothing else is drawn.
+        if let themes = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_ICONS"] {
+            return renderIcons(themes: URL(fileURLWithPath: themes), into: folder)
+        }
         // Run from `swift build` rather than the app bundle, macOS hands out a generic folder for
         // the app icon; settings would show that. Use the repo's icon when it's there.
         if Bundle.main.bundleURL.pathExtension != "app", let icon = NSImage(contentsOfFile: "../brand/export/macos/icon-512.png") {
@@ -391,6 +396,27 @@ enum Render {
         guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-verse.png", idleSize) else { return 1 }
         idle.style = .theme
         guard save(IdleView(settings: idle, machine: "Rectory1", size: idleSize, backdrop: nil, at: idleAt), "idle-theme.png", idleSize) else { return 1 }
+        return 0
+    }
+
+    static func renderIcons(themes: URL, into folder: URL) -> Int32 {
+        var made = [("icon-no-theme.png", ThemeIcon.brand)]
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: themes.path)) ?? []
+        for file in files.sorted() where file.hasSuffix(".json") {
+            guard case .theme(let theme) = PolycarpThemeFile.load(path: themes.appendingPathComponent(file).path) else {
+                print("render: \(file) is not a theme"); return 1
+            }
+            for dark in [false, true] {
+                made.append(("icon-\(file.dropLast(5))-\(dark ? "dark" : "light").png", ThemeIcon.colors(theme, systemDark: dark)))
+            }
+        }
+        for (name, colors) in made {
+            guard let png = ThemeIcon.png(colors, pixels: 512), (try? png.write(to: folder.appendingPathComponent(name))) != nil else {
+                print("render: \(name) not written"); return 1
+            }
+            let ratio = colors.background.contrast(with: colors.mark)
+            print("\(name) \(colors.background.hex) \(colors.mark.hex) \(String(format: "%.2f", ratio)):1")
+        }
         return 0
     }
 }

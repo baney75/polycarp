@@ -188,6 +188,20 @@ as a literal in `Sources`, outside the theme module and the agent cursor, fails 
 `spec/theme-literals-allow.txt` lists it with a reason. A line there that no longer matches fails
 too, so the list only shrinks.
 
+## The icons
+
+Polycarp.app's icon and Polycarp Browser's are drawn by `ThemeIcon` (BaneySpacesCore), one drawing for both: the olive
+branch of `brand/mark.svg` (`brand/mark-small.svg` below 48 px) on the rounded square of `brand/icon-macos.svg`.
+
+1. The square and the mark take the first pair of the theme's colors, for the mode in force, that has a contrast of 3:1
+   or more: `accent` with `on_accent`, then `surface` with `accent`, then `surface` with `foreground`.
+2. With no theme, or no pair that reads, the icon is the brand's own: Cream `#F6F3E8` on Vine green `#59693F`.
+3. `ThemeIcon.icns` writes every size an app's `.icns` holds, 16 to 1024 pixels, as PNGs.
+4. `scripts/render-icons.sh <folder>` draws the icon for every theme in `themes/`, light and dark, and prints each pair's
+   contrast; `BANEYSPACES_RENDER_ICONS=<folder of theme.json> Polycarp --render <out>` is what it runs.
+
+Pinned by `ThemeIconTests`, which reads every file in `themes/`.
+
 ## Window borders
 
 On macOS, Polycarp can draw a border around the focused window in the theme's `accent`, and
