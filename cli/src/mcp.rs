@@ -57,9 +57,10 @@ To change what lies behind the desktop, the browser's new tab page and the idle 
 use paper_set with a picture path, an https URL to a picture, a #RRGGBB color or a scene (field, olive, water, \
 parchment, solid), in one call; on limits it to some places. paper_get shows each place's paper; paper_reset puts \
 the theme's wallpaper and each place's old look back.
-To restyle one part of the top bar past the theme (a gold clock, square workspace numbers, a hairline bar), use \
-the style sheet: read style_example, style_set each change, then style_check. A refused style_set wrote nothing; \
-error.data.errors gives each problem with its line and column. To undo, style_unset or style_set what style_get gave. \
+To restyle one part of the bar, launcher, switcher, overview, notifications, small notices or tiling outline past the \
+theme (a gold clock, a square launcher, a hairline bar), use the style sheet: read style_example, style_set each change, then \
+style_check. A refused style_set wrote nothing; error.data.errors gives each problem with its line and column. To undo, \
+style_unset or style_set what style_get gave. \
 For a whole look in one call (omarchy), style_preset; style_restore undoes it, putting back the sheet that was there.
 To find something the person has open (a browser tab, a window, a terminal split) or to search the web the way \
 Polycarp's launcher and new tab page do (bangs like !yt and the engine in search.engine), call search; it changes \
@@ -482,7 +483,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_example",
-            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number with .current and :hover; tiling, the outline of a dragged window) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the tiling outline on top of the theme with a strict subset of CSS.",
+            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, launcher, switcher, overview, notifications, hud and tiling, the outline of a dragged tiled window, each with its parts and their .current, .selected and :hover states) and every property, with what each takes and where it applies, all commented out. The style sheet restyles these surfaces on top of the theme with a strict subset of CSS.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -511,7 +512,7 @@ pub(crate) fn tools() -> Vec<Tool> {
             description: "Set one property for one selector in style.css, editing the file in place and keeping its comments: the declaration changes if the rule has it, else it is added, else the rule is added. Refused, with nothing written, when the change would add an error; error.data.errors gives each with its line and column. A running Polycarp shows the change within 200 ms.",
             schema: obj(
                 json!({
-                    "selector": {"type":"string","description":"One selector from style_example, as bar, bar .clock, bar .workspace.current or :root."},
+                    "selector": {"type":"string","description":"One selector from style_example, as bar, bar .clock, launcher .row.selected or :root."},
                     "property": {"type":"string","description":"A property from style_example, as color or border-radius, or a --custom-property on :root."},
                     "value": {"type":"string","description":"A CSS value, as #d4af37, var(--accent), 1px solid var(--border) or glass."},
                     "media": {"type":"string","enum":["dark","light"],"description":"Set it for that mode only, inside @media (prefers-color-scheme: ...)."}
@@ -539,7 +540,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_preset",
-            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there is kept as the next backup (style.css.bak, then .bak.1 and on; none is written over), and style_restore puts it back. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, and a quiet right side. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
+            description: "Replace style.css with a whole preset sheet in one call; the sheet that was there is kept as the next backup (style.css.bak, then .bak.1 and on; none is written over), and style_restore puts it back. omarchy: a solid dark bar, one monospace face, numbered workspaces with an accent line under the current one, a quiet right side, and the launcher, switcher, overview, notifications and small notices square, dark and monospace to match. Leave name out for the list. A running Polycarp shows it within 200 ms; style_get shows the text, and the reset command (polycarp-spaces style reset) puts the theme's look back.",
             schema: obj(
                 json!({"name": {"type":"string","enum":["omarchy"],"description":"The preset to write; leave out to list them."}}),
                 &[],

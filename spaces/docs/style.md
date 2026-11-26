@@ -1,17 +1,23 @@
-# Style sheet: restyle the top bar and the tiling outline with CSS
+# Style sheet: restyle Polycarp with CSS
 
-`style.css` restyles Polycarp's top bar, the launcher and the outline of where a dragged tiled window would go
-([tiling.md](../../docs/tiling.md)) with a small, strict subset of CSS. The theme (`polycarp theme`) sets colors,
-shape, type and motion everywhere; a rule in the sheet changes them for the bar or one part of it, and anything the sheet leaves out is drawn as before. What each surface shows (which modules, which
+`style.css` restyles Polycarp with a small, strict subset of CSS: the top bar, the launcher, the ⌘Tab switcher, the
+overview, the notification list, the small notices (the workspace change notice, toasts and an agent's notice) and the
+outline of where a dragged tiled window would go ([tiling.md](../../docs/tiling.md)). The theme (`polycarp theme`) sets colors,
+shape, type and motion everywhere; a rule in the sheet changes them for one surface or one part of it, and anything the
+sheet leaves out is drawn as before. What each surface shows (which modules, which
 labels) stays in [surfaces.json](surfaces.md). `polycarp look` keeps the sheet with the theme, the surfaces and the paper
 as one look ([looks.md](../../docs/looks.md)); applying one replaces the sheet, and `polycarp look undo` brings it back.
+
+The theme alone draws the rest: Settings, the welcome and permission windows, the shortcut sheet, the idle screen, and
+the menus the bar opens, which are macOS's own.
 
 - File: `<config>/style.css`, in the folder `polycarp theme current` prints: `$POLYCARP_CONFIG_DIR`, else
   `$XDG_CONFIG_HOME/polycarp`, else `~/.config/polycarp`.
 - At most 64 KB, a regular file, UTF-8. A file that breaks these is ignored, with one line in `trace.log`.
 - No file means no sheet, and nothing is logged.
 - Edits apply live: a running Polycarp picks up a change within 200 ms, logs `style.css: applied, N rules, M problems`
-  (or `style.css: removed`) and redraws the bar; the outline reads it at the next drag. A new bar `height` moves the bar's panels. Nothing restarts.
+  (or `style.css: removed`) and redraws the bar and any panel that is open; the outline reads it at the next drag. A new
+  bar `height` moves the bar's panels. Nothing restarts.
 - `polycarp-spaces style example` prints a starter sheet that names every selector and property, all commented out.
 - `polycarp-spaces style preset omarchy` writes a whole look in one command (see [Presets](#presets)).
 - Every selector and property below changes something on screen; nothing in the table is parsed and then ignored.
@@ -52,9 +58,9 @@ A warning (low contrast) still applies; `check` passes when there are only warni
 - Colors: `#rgb` `#rgba` `#rrggbb` `#rrggbbaa`, `rgb()` and `rgba()` (commas or spaces, `/ alpha`, numbers or
   percentages), `hsl()` and `hsla()`, `transparent`, `currentColor`, the 16 basic named colors (`black` `silver` `gray`
   `white` `maroon` `red` `purple` `fuchsia` `green` `lime` `olive` `yellow` `navy` `blue` `teal` `aqua`) and `var(--role)`.
-- Specificity: the surface counts as a type; each part, `.current` and `:hover` counts as a class.
-- Inheritance: `color`, `font-*`, `letter-spacing` and `text-transform` pass from a surface to its region and from a
-  region to its modules. Nothing else inherits.
+- Specificity: the surface counts as a type; each part, `.current`, `.selected` and `:hover` counts as a class.
+- Inheritance: `color`, `font-*`, `letter-spacing` and `text-transform` pass from a surface to its parts, from a bar
+  region to its modules, and from a row, item or tile to the text in it, in the state it is in. Nothing else inherits.
 - `*`, ids, attribute selectors, combinators other than the space, and pseudo-elements aren't supported. A selector with
   any of them is a problem that says why and names the selectors that work.
 - Low contrast: text whose color is under 3:1 against what it's drawn on is a warning.
@@ -177,6 +183,22 @@ Quiet workspace numbers with an accent line under the one you're on:
 bar .workspace { color: var(--muted); padding: 0 5px 3px; }
 bar .workspace:hover { color: var(--foreground); }
 bar .workspace.current { color: var(--foreground); border-bottom: 2px solid var(--accent); }
+```
+
+A wide, square launcher in a monospace face, with roomier rows and a dark blue behind the selected one:
+
+```css
+launcher { width: 760px; border-radius: 0; font-family: "JetBrains Mono", monospace; }
+launcher .row { height: 52px; border-radius: 0; }
+launcher .row.selected { background: #1f3a5f; color: #ffffff; }
+launcher .subtitle.selected { color: #d6e2f0; }
+```
+
+Solid panels with a thin accent line, and no icons in the switcher:
+
+```css
+launcher, switcher, notifications, hud { background: var(--background); border: 1px solid var(--accent); }
+switcher .icon { display: none; }
 ```
 
 ## Presets

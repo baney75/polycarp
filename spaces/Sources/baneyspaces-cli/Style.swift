@@ -2,8 +2,8 @@ import BaneySpacesCore
 import Darwin
 import Foundation
 
-/// `polycarp-spaces style …`: read, check and edit `<config>/style.css`, the sheet that restyles the top bar
-/// on top of the theme (docs/style.md). It edits the file directly, so it works with the app running or not; a running
+/// `polycarp-spaces style …`: read, check and edit `<config>/style.css`, the sheet that restyles the bar,
+/// the launcher and the other panels on top of the theme (docs/style.md). It edits the file directly, so it works with the app running or not; a running
 /// app picks the change up within 200 ms. `--json` prints the envelope `polycarp-spaces surfaces` uses, and
 /// `polycarp mcp` passes it on as is. The parsing, checking and editing are all in Core (StyleOps); this only reads
 /// the arguments.
@@ -113,7 +113,7 @@ enum StyleCommand {
             guard rest.isEmpty else { usageFail("reset [--json]") }
             finish(StyleOps.reset(file: file), json: json) { d in
                 let restore = d["restorable"]?.string.map { "; `polycarp-spaces style restore` puts \($0 == d["backup"]?.string ? "it" : $0) back" } ?? ""
-                if let b = d["backup"]?.string { return "moved the style sheet to \(b); the theme alone styles the bar" + restore }
+                if let b = d["backup"]?.string { return "moved the style sheet to \(b); the theme alone styles Polycarp" + restore }
                 if let p = d["preset"]?.string { return "removed the unedited \(p) preset (`style preset \(p)` writes it again)" + restore }
                 return "no style sheet to reset" + restore
             }

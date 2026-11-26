@@ -53,7 +53,7 @@ usage: \(me) <command>
                               what the extension changes on the pages of sites you name
                               (edits help, docs/edits.md)
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
-                              style.css: restyle the top bar and the tiling outline on top of the theme
+                              style.css: restyle the bar, the panels and the tiling outline past the theme
                               (style help, docs/style.md)
   defaults [get|candidates|set|reset] [--json]
                               which app does each job: agent, browser, terminal and more

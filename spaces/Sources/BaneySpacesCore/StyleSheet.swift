@@ -1,7 +1,7 @@
 import Foundation
 
-// Polycarp's style sheet (docs/style.md): `<config>/style.css`, a strict, documented subset of CSS that restyles the top
-// bar on top of the theme. The theme sets colors, shape, type and motion everywhere; the sheet
+// Polycarp's style sheet (docs/style.md): `<config>/style.css`, a strict, documented subset of CSS that restyles the bar,
+// the launcher and the other panels on top of the theme. The theme sets colors, shape, type and motion everywhere; the sheet
 // targets one surface or one part of it, and anything it doesn't set is the look the views draw today. Parsing is
 // forgiving like CSS: a bad rule or declaration is dropped and reported with its line and column, and the rest applies.
 // `StyleProperty.all` is the one table of properties: validation, the docs table and `style example` all read it.

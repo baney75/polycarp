@@ -530,7 +530,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // The launcher's engine moves into surfaces.json (search.engine) once, before the store's first read.
         Launcher.moveOldSearchEngine()
         SurfacesStore.shared.start(log: { Trace.log($0) })
-        // style.css (`polycarp-spaces style set ...`, docs/style.md): the bar draws from `Styles.shared`, which
+        // style.css (`polycarp-spaces style set ...`, docs/style.md): every surface it names draws from `Styles.shared`, which
         // follows `StyleSheetStore.didChange`. Waits up to 0.1 s for the first read, so the first panels draw with it.
         StyleSheetStore.shared.start(log: { Trace.log($0) })
         // [defaults] in config.toml: which app does each job (docs/default-apps.md).

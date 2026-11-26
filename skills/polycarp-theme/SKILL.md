@@ -10,9 +10,9 @@ One theme file drives every Polycarp product. Change it with the `polycarp theme
 
 What a surface shows (the top bar's modules, the desktop scene and verse, the status menu, the new tab
 page, the idle screen) is not the theme: it is `polycarp-spaces surfaces` (MCP `surfaces_*`, spaces/docs/surfaces.md).
-To restyle one part of the bar past the theme (a gold clock, square workspace numbers), use `<config>/style.css`: run
-`polycarp-spaces style example`, `style set '<selector>' <property> <value>` per change, then `style check`; `style preset
-omarchy` is the Omarchy look in one command, `style restore` undoes it (MCP `style_*`; spaces/docs/style.md).
+To restyle one part of the bar, launcher, switcher, overview, notifications, small notices or tiling outline past
+the theme, use `<config>/style.css`: run `polycarp-spaces style example`, `style set '<selector>' <property> <value>` per change, then
+`style check`; `style preset omarchy` is the Omarchy look, `style restore` undoes it (MCP `style_*`; spaces/docs/style.md).
 
 A look is all of that and the paper as one thing (MCP `look_*`; docs/looks.md). Before a redesign run `polycarp look save
 <name>`, so one command brings it back. `look show <name|file>` says what it would change, `look apply <name|file>` is all
