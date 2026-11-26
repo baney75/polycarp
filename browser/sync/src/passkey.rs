@@ -15,7 +15,8 @@ use webauthn_rs_core::{error::WebauthnError, WebauthnCore};
 
 /// The relying party. `browser/docs/sync.md` weighs it against the extension's own origin and a real domain.
 pub const RP_ID: &str = "localhost";
-/// How long a passkey request stands.
+/// How long the browser waits for the person. A proof holds no time of its own: whatever it allowed keeps when it
+/// asked and when it was answered, and checks that.
 pub const EXPIRES_MS: u64 = 5 * 60 * 1000;
 
 /// Why a passkey's answer was not accepted.
@@ -45,7 +46,7 @@ impl std::fmt::Display for Refused {
             Refused::NotVerified => {
                 "the passkey did not check who you are (PIN, fingerprint or face)"
             }
-            Refused::Counter => "the passkey's counter went backwards, so a copy of it may exist",
+            Refused::Counter => "the passkey's counter did not go up, so a copy of it may exist",
             Refused::Unknown => "that passkey is not one of this group's",
             Refused::Signature => "the passkey's signature is wrong",
             Refused::Malformed => "that is not an answer from a passkey",
@@ -124,8 +125,9 @@ impl Proof {
     }
 }
 
-/// Any port: each request has its own, and a proof is checked again later by devices that never saw it.
-/// The page that takes an answer checks its exact origin too (`ceremony`).
+/// Any port on localhost: each request has its own, and a proof is checked again later by devices that never saw it.
+/// So a proof shows a localhost page, not which one. The page that takes an answer checks its exact origin (`origin`),
+/// and a change to the group needs a member device's signature as well.
 fn rp() -> WebauthnCore {
     let origin = Url::parse("http://localhost").expect("a fixed address");
     WebauthnCore::new_unsafe_experts_only(
@@ -138,8 +140,10 @@ fn rp() -> WebauthnCore {
     )
 }
 
-/// Checks one answer against one request. `counter_of` gives the highest counter seen from a passkey.
-/// Returns the passkey's id and its new counter.
+/// Checks one answer against one request. `counter_of` gives a passkey's counter as of the change before this one, so
+/// every device that checks the same changes in the same order gets the same answer. A passkey that keeps no counter
+/// (synced ones report 0) is not checked for copies: the challenge, which names one change, is what keeps its answer
+/// from counting twice. Returns the passkey's id and its new counter.
 pub fn verify(
     passkeys: &[Passkey],
     counter_of: impl Fn(&[u8]) -> u32,
@@ -147,8 +151,8 @@ pub fn verify(
     proof: &Proof,
 ) -> Result<(Vec<u8>, u32), Refused> {
     let mut credential = None;
-    for p in passkeys {
-        let mut c = p.credential()?;
+    // One passkey this version can't read doesn't stop the others.
+    for (p, mut c) in readable(passkeys) {
         if c.cred_id == proof.credential {
             p.usable()?;
             c.counter = c.counter.max(counter_of(&c.cred_id));
@@ -204,10 +208,9 @@ pub fn request(
     challenge: &[u8; 32],
     prf: Option<&[u8; 32]>,
 ) -> Result<Value, Refused> {
-    let mut allow = Vec::new();
-    for p in passkeys {
-        allow.push(json!({ "type": "public-key", "id": base64(&p.id()?) }));
-    }
+    let allow: Vec<Value> = readable(passkeys)
+        .map(|(_, c)| json!({ "type": "public-key", "id": base64(&c.cred_id) }))
+        .collect();
     let mut options = json!({
         "challenge": base64(challenge),
         "rpId": RP_ID,
@@ -224,10 +227,7 @@ pub fn request(
 /// What the page hands `navigator.credentials.create`, and what to check the answer with.
 pub fn begin(existing: &[Passkey]) -> Result<(Value, RegistrationState), Refused> {
     let rp = rp();
-    let mut ids = Vec::new();
-    for p in existing {
-        ids.push(p.id()?);
-    }
+    let ids: Vec<_> = readable(existing).map(|(_, c)| c.cred_id).collect();
     let builder = rp
         .new_challenge_register_builder(&random::<32>(), "Polycarp Sync", "Polycarp Sync")?
         .user_verification_policy(UserVerificationPolicy::Required)
@@ -253,6 +253,12 @@ pub fn finish(label: &str, answer: Value, state: &RegistrationState) -> Result<P
     };
     passkey.usable()?;
     Ok(passkey)
+}
+
+fn readable(passkeys: &[Passkey]) -> impl Iterator<Item = (&Passkey, Credential)> {
+    passkeys
+        .iter()
+        .filter_map(|p| p.credential().ok().map(|c| (p, c)))
 }
 
 fn base64(bytes: &[u8]) -> Value {

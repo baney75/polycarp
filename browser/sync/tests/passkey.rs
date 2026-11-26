@@ -2,7 +2,7 @@
 
 mod support;
 
-use polycarp_sync::passkey::{begin, finish, verify, Passkey, Proof, Refused};
+use polycarp_sync::passkey::{begin, finish, request, verify, Passkey, Proof, Refused};
 use serde_json::{json, Value};
 use support::{Ask, Soft, PAGE};
 
@@ -84,6 +84,23 @@ fn a_counter_that_did_not_go_up_does_not() {
     assert_eq!(seen(counter), Err(Refused::Counter));
     assert_eq!(seen(counter + 1), Err(Refused::Counter));
     assert!(seen(counter - 1).is_ok());
+}
+
+#[test]
+fn a_passkey_that_cannot_be_read_does_not_stop_the_others() {
+    let mut key = Soft::new();
+    let p = key.register("Key");
+    let unread: Passkey =
+        serde_json::from_value(json!({ "label": "New", "credential": "{}" })).unwrap();
+    let list = [unread, p.clone()];
+    let id = Value::from(data_encoding::BASE64URL_NOPAD.encode(&p.id().unwrap()));
+    let asked = request(&list, &ASKED, None).unwrap();
+    assert_eq!(asked["allowCredentials"].as_array().unwrap().len(), 1);
+    assert_eq!(asked["allowCredentials"][0]["id"], id);
+    let (options, _) = begin(&list).unwrap();
+    assert_eq!(options["excludeCredentials"][0]["id"], id);
+    let proof = key.sign(std::slice::from_ref(&p), &ASKED);
+    assert!(verify(&list, |_| 0, &ASKED, &proof).is_ok());
 }
 
 #[test]
