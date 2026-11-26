@@ -62,6 +62,10 @@ main:focus { outline: none; }
 .mh time { white-space: nowrap; }
 .msg .to { margin: var(--s1) 0 0; }
 .body { margin: var(--s3) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 68ch; font: inherit; line-height: 1.55; }
+.html { margin-top: var(--s3); }
+.hbar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); color: var(--muted); font-size: var(--t-sm); min-height: 40px; }
+.hwarn { margin: 0 0 var(--s2); padding: var(--s2) var(--s3); list-style: none; color: var(--ink); font-size: var(--t-sm); border: var(--bw) solid var(--warn); border-radius: var(--r-sm); overflow-wrap: anywhere; }
+.html iframe { display: block; width: 100%; height: min(70vh, 720px); border: var(--bw) solid var(--line); border-radius: var(--r-md); background: #fff; }
 .files { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s3); }
 .files button { font-size: var(--t-sm); min-height: 32px; padding: 0 var(--s3); border: var(--bw) solid var(--line); border-radius: var(--r-sm); }
 .back.pane { display: none; }
