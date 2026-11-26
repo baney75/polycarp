@@ -1890,15 +1890,16 @@ final class Spaces {
     /// focuses it once it exists. The app stays hidden until then, and its windows on other
     /// workspaces stay where they are. `orElse` runs when the app has no New Window command; an app that makes no
     /// window in time is gone to instead. The app's menus are read, and the command pressed, off the main thread.
-    func openWindowHere(_ pid: pid_t, orElse: @escaping () -> Void) {
+    /// `by` opens it some other way than the app's menu, off the main thread.
+    func openWindowHere(_ pid: pid_t, by open: (() -> Bool)? = nil, orElse: @escaping () -> Void) {
         guard active else { return orElse() }
         // An app that comes forward for it isn't asking to be followed to its workspace. Set before the press, which
         // lands off the main thread, so an activation it causes can't arrive first.
         opening = (pid, Date().addingTimeInterval(1.5))
         Spaces.axQueue.async { [weak self] in
-            let item = Windows.newWindowItem(pid)
+            let item = open == nil ? Windows.newWindowItem(pid) : nil
             let known = Windows.standardIDs(of: pid)
-            let pressed = item.map { AXUIElementPerformAction($0, kAXPressAction as CFString) == .success } ?? false
+            let pressed = open?() ?? item.map { AXUIElementPerformAction($0, kAXPressAction as CFString) == .success } ?? false
             DispatchQueue.main.async {
                 guard let self, self.active else { return }
                 guard pressed else {

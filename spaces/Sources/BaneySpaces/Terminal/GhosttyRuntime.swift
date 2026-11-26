@@ -207,6 +207,7 @@ final class GhosttyRuntime {
     private static func openURL(_ text: String) {
         if let url = URL(string: text), let scheme = url.scheme?.lowercased() {
             guard ["http", "https", "mailto", "file"].contains(scheme) else { return }
+            if scheme.hasPrefix("http"), Launcher.openHere(url, { NSWorkspace.shared.open(url) }) { return }
             NSWorkspace.shared.open(url)
         } else if text.hasPrefix("/") {
             NSWorkspace.shared.open(URL(fileURLWithPath: text))

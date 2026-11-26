@@ -30,3 +30,12 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
 - **R-B8 Site icons.** A site's icon is the browser's own copy, asked for the first time a row shows it, once a site: a PNG of
   at most 64 KB. One nobody asked for is dropped. The newest 400 sites' are held, in memory, until the last browser goes or a
   switch changes.
+- **R-B9 Which window is which.** A browser's window is the Mac's window the session engine read for its tabs, else the one
+  whose title is its front tab's, alone or before " - " and what the browser adds. A title two windows or two front tabs share
+  names neither; of two that fit, the longer title does.
+- **R-B10 Here.** A tab Polycarp opens ("New Tab Here", a search, a bookmark, a visited page, a link the launcher or Polycarp's
+  terminal opens) goes to the browser's window on the workspace the person is on, the one last used there first. With none
+  there it gets a window of its own there. Windows that are all here but not told apart leave the choice to the browser. With
+  two profiles and no known window here, or without the extension, the address opens as macOS opens it.
+- **R-B11 Cmd-Tab.** A browser's window in the switcher is named by its front tab's title and shows its site's icon on the
+  browser's, where the window is known; every other window is named as it was.

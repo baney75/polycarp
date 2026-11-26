@@ -78,15 +78,30 @@ final class BrowserHub {
     }
 
     /// A row's site's icon, as its browser has it. Asked for the first time it is wanted; `onChange` follows.
-    func icon(_ hit: BrowserHit) -> NSImage? {
-        let (image, ask) = icons.icon(hit.row.url)
-        if let ask { links[hit.peer]?.send(["op": "browser.icon", "url": ask]) }
+    func icon(_ hit: BrowserHit) -> NSImage? { icon(hit.row, hit.peer) }
+    func icon(_ row: BrowserRow, _ peer: BrowserPeer) -> NSImage? {
+        let (image, ask) = icons.icon(row.url)
+        if let ask { links[peer]?.send(["op": "browser.icon", "url": ask]) }
         return image
+    }
+
+    /// The front tab of each of a browser's windows that is known for sure (`BrowserWindows`).
+    func fronts(of bundleID: String, _ windows: [(id: UInt32, title: String)], items: [Item]) -> [UInt32: BrowserWindows.Front] {
+        guard links.keys.contains(where: { $0.bundleID == bundleID }) else { return [:] }
+        return BrowserWindows.match(windows, book.fronts(of: bundleID), numbers: BrowserWindows.numbers(items, of: bundleID))
     }
 
     /// Searches with a browser's own engine, in a new tab there: the main browser if it is here, else the first that is.
     func searcher(main: String?) -> BrowserPeer? { links.keys.sorted { ($0.bundleID != main ? 1 : 0, $0) < ($1.bundleID != main ? 1 : 0, $1) }.first }
-    func search(_ text: String, in peer: BrowserPeer) { links[peer]?.send(["op": "browser.open", "text": text]) }
+    func peers(of bundleID: String) -> [BrowserPeer] { links.keys.filter { $0.bundleID == bundleID }.sorted() }
+
+    /// Opens `what` (an address, a search or nothing) in a browser, in one of its windows, a new one or the one in front.
+    @discardableResult
+    func open(_ what: [String: Any], in peer: BrowserPeer, window: Any? = nil) -> Bool {
+        guard let link = links[peer] else { return false }
+        link.send(what.merging(["op": "browser.open", "window": window as Any?].compactMapValues { $0 }) { $1 })
+        return true
+    }
 
     /// Asks the row's browser for what it can only do itself. False when that browser is gone.
     @discardableResult

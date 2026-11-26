@@ -49,9 +49,18 @@ enum Launcher {
         }
     }
 
+    /// Opens a web address in the main browser on the workspace the person is on, when that can be done; the closure is
+    /// the caller's own way, run if it turns out it can't.
+    static var openHere: (URL, @escaping () -> Void) -> Bool = { _, _ in false }
+
     /// A web address in the main browser (the default, usually Helium), never an app that claims the link; Apple Maps
     /// and anything else go where macOS sends them.
     static func openInBrowser(_ url: URL) {
+        if ["http", "https"].contains(url.scheme?.lowercased() ?? ""), openHere(url, { openAnyway(url) }) { return }
+        openAnyway(url)
+    }
+
+    private static func openAnyway(_ url: URL) {
         guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
               let browser = NSWorkspace.shared.urlForApplication(toOpen: URL(string: "https://example.com")!) else {
             NSWorkspace.shared.open(url)
@@ -227,6 +236,8 @@ struct LauncherActions {
     /// The browser that can search with its own engine, and doing it.
     var searcher: () -> BrowserPeer? = { nil }
     var searchIn: (String, BrowserPeer) -> Void = { _, _ in }
+    /// An empty tab in a browser, on this workspace.
+    var newTab: (BrowserPeer) -> Void = { _ in }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
     /// reads background tabs only now and then (`Sweep`). They arrive through `rowsChanged`.
     var willShow: () -> Void = {}
@@ -1153,11 +1164,13 @@ final class LauncherModel: ObservableObject {
             ("Take a Screenshot", "camera.viewfinder", "Choose an area, a window or the screen", { System.run("/usr/bin/open", ["-a", "Screenshot"]) }),
             ("New Claude Session", "sparkle", "Another Claude Code session in Ghostty", { [weak self] in self?.actions.newClaude() }),
             ("New Terminal", "plus", "A new Ghostty window", { [weak self] in self?.actions.newTerminal() }),
+            ("New Tab Here", "plus.square.on.square", actions.searcher().map { "In \(Self.appName($0.bundleID)), on this workspace" } ?? "",
+             { [weak self] in if let peer = self?.actions.searcher() { self?.actions.newTab(peer) } }),
             ("Show All Workspaces", "square.grid.3x3", "", { [weak self] in self?.actions.showOverview() }),
             ("Bring Every Window Back", "arrow.uturn.backward.circle", "Gathers every window onto workspace 1", { [weak self] in self?.actions.bringBack() }),
             ("Polycarp Settings", "slider.horizontal.3", "", { [weak self] in self?.actions.showSetup() }),
         ]
-        return all.filter { q.isEmpty || Fuzzy.score(q, $0.0) != nil }.map { c in
+        return all.filter { $0.0 != "New Tab Here" || actions.searcher() != nil }.filter { q.isEmpty || Fuzzy.score(q, $0.0) != nil }.map { c in
             LauncherItem(id: "cmd:\(c.0)", section: "System", title: c.0, subtitle: c.2, icon: .symbol(c.1),
                          run: { [weak self] in self?.close(); DispatchQueue.main.async(execute: c.3) })
         }
