@@ -59,7 +59,8 @@ final class LanesTests: XCTestCase {
     /// server's whole list takes 5 ms.
     func testASwitchAsksTheServerForItsOwnWindowsOnly() throws {
         let moves = try SourceText.code("Sources/BaneySpaces/WindowMoves.swift")
-        let bounds = try XCTUnwrap(SourceText.block(after: "static func bounds(of", in: moves))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "static func bounds(of", in: moves)).contains("describe(ids)"))
+        let bounds = try XCTUnwrap(SourceText.block(after: "static func describe<T>(", in: moves))
         XCTAssertTrue(bounds.contains("CGWindowListCreateDescriptionFromArray("))
         XCTAssertFalse(bounds.contains("serverWindows("), "the whole list is read at every look")
         let spaces = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
