@@ -53,11 +53,13 @@ usage: \(me) <command>
                               what the extension changes on the pages of sites you name
                               (edits help, docs/edits.md)
   style path|show|check [file]|example|set '<sel>' <prop> <value>|unset '<sel>' [prop]|reset [--json]
-                              style.css: restyle the top bar on top of the theme
+                              style.css: restyle the top bar and the tiling outline on top of the theme
                               (style help, docs/style.md)
   defaults [get|candidates|set|reset] [--json]
                               which app does each job: agent, browser, terminal and more
                               (defaults help, docs/default-apps.md)
+  tile status|on|off|<command> [--json]
+                              windows side by side on a workspace (tile help, docs/tiling.md)
   keys [--json]               every Polycarp shortcut, grouped, with your modifier (docs/keys.md)
   update --check|--now        ask Polycarp for a newer release (exit 100 when one is out), or install it
   --version                   this command's version and the commit it was built from
@@ -302,6 +304,8 @@ case "defaults":
 case TerminalJob.verb where remoteHost == nil:
     RunJobCommand.run(rest)
 
+case "tile":
+    TileCommand.run(rest, remote: remoteHost != nil)
 case "keys":
     KeysCommand.run(rest, remote: remoteHost != nil)
 case "contacts", "contact":

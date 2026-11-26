@@ -133,7 +133,7 @@ impl Server {
     }
 }
 
-const TOOLS: [&str; 50] = [
+const TOOLS: [&str; 52] = [
     "theme_schema",
     "theme_list",
     "theme_current",
@@ -177,6 +177,8 @@ const TOOLS: [&str; 50] = [
     "style_preset",
     "style_restore",
     "keys_list",
+    "tiling_status",
+    "tiling_run",
     "filters_list",
     "filter_set",
     "filter_remove",
@@ -1593,6 +1595,71 @@ fn style_tools_check_their_arguments_and_say_when_the_command_is_missing() {
     assert_eq!(
         r["structuredContent"]["error"]["message"],
         "this Polycarp has no style command"
+    );
+    assert_eq!(s.finish(), 0);
+}
+
+/// tiling_status and tiling_run run `polycarp-spaces tile`, and a command or workspace that isn't one runs nothing.
+#[cfg(unix)]
+#[test]
+fn tiling_tools_run_the_spaces_tile_command() {
+    let sb = Sandbox::new();
+    let bin = spaces_stub(&sb);
+    let reply = json!({"ok": true, "data": {"workspace": 3, "tiles": true, "style": "dwindle", "full": false,
+        "windows": [41, 42], "focused": 41, "tiling": [3]}});
+    fs::write(sb.root.join("spaces/reply"), reply.to_string()).unwrap();
+    let mut s = surfaces_server(&sb, &bin);
+    s.initialize("t");
+    let list = s.request("tools/list", json!({}));
+    let tools = list["result"]["tools"].as_array().unwrap().clone();
+    let tool = |n: &str| tools.iter().find(|t| t["name"] == n).cloned().unwrap();
+    assert_eq!(
+        tool("tiling_status")["annotations"],
+        json!({"readOnlyHint": true, "openWorldHint": false})
+    );
+    assert_eq!(tool("tiling_run")["annotations"]["readOnlyHint"], false);
+    assert_eq!(tool("tiling_run")["annotations"]["idempotentHint"], false);
+    let r = s.tool("tiling_status", json!({}));
+    assert_eq!(r["structuredContent"], reply);
+    assert_eq!(stub_args(&sb), ["tile", "status", "--json"]);
+
+    let commands = tool("tiling_run")["inputSchema"]["properties"]["command"]["enum"].clone();
+    for c in commands.as_array().unwrap() {
+        let c = c.as_str().unwrap();
+        let r = s.tool("tiling_run", json!({"command": c, "workspace": null}));
+        assert_eq!(r["structuredContent"], reply, "{c}");
+        let mut want = vec!["tile"];
+        want.extend(c.split(' '));
+        want.push("--json");
+        assert_eq!(stub_args(&sb), want);
+    }
+    s.tool("tiling_run", json!({"command": "off", "workspace": 9}));
+    assert_eq!(stub_args(&sb), ["tile", "off", "9", "--json"]);
+
+    fs::remove_file(sb.root.join("spaces/args")).unwrap();
+    for bad in [
+        json!({"command": "status"}),
+        json!({"command": "help"}),
+        json!({"command": "focus"}),
+        json!({"command": "focus left --json"}),
+        json!({"command": ""}),
+        json!({"workspace": 2}),
+        json!({"command": "on", "workspace": 0}),
+        json!({"command": "on", "workspace": 10}),
+        json!({"command": "on", "workspace": "2"}),
+        json!({"command": "on", "workspace": 2.5}),
+        json!({"command": "balance", "workspace": 2}),
+        json!({"command": "on", "window": 4}),
+    ] {
+        let r = s.tool("tiling_run", bad.clone());
+        assert_eq!(
+            r["structuredContent"]["error"]["code"], "invalid_args",
+            "{bad}"
+        );
+    }
+    assert!(
+        !sb.root.join("spaces/args").exists(),
+        "a refused call ran the command"
     );
     assert_eq!(s.finish(), 0);
 }

@@ -119,6 +119,7 @@ fn the_guide_and_the_server_list_the_same_mcp_tools() {
         "style_",
         "search_",
         "keys_",
+        "tiling_",
         "filters_",
         "filter_",
         "edits_",

@@ -1,7 +1,7 @@
 # Style sheet: restyle the top bar and the tiling outline with CSS
 
 `style.css` restyles Polycarp's top bar, the launcher and the outline of where a dragged tiled window would go
-(surfaces.json's `tiling`) with a small, strict subset of CSS. The theme (`polycarp theme`) sets colors,
+([tiling.md](../../docs/tiling.md)) with a small, strict subset of CSS. The theme (`polycarp theme`) sets colors,
 shape, type and motion everywhere; a rule in the sheet changes them for the bar or one part of it, and anything the sheet leaves out is drawn as before. What each surface shows (which modules, which
 labels) stays in [surfaces.json](surfaces.md). `polycarp look` keeps the sheet with the theme, the surfaces and the paper
 as one look ([looks.md](../../docs/looks.md)); applying one replaces the sheet, and `polycarp look undo` brings it back.

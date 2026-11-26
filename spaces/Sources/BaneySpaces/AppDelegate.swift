@@ -1048,6 +1048,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.window = { [weak self] id in self?.spaces.moveCandidate(id) }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
         session.agentHost = h
+        session.server.later = { [weak self] r, done in
+            guard let self, r.op == .tile, self.started else { return false }
+            self.tiling.answer(r.args ?? []) { reply in
+                let asked = TilingRequest(words: r.args ?? []) == nil ? "?" : (r.args ?? []).joined(separator: " ")
+                Trace.log("tile \(asked) by \(r.caller ?? "unnamed caller"): \(reply.ok ? "done" : reply.error ?? "refused")")
+                done(reply)
+            }
+            return true
+        }
         session.updateHandler = { [weak self] what in self?.updater.answer(what) ?? Wire.Reply(ok: false, error: "the updater isn't ready") }
         // A moment after launch: setting up an observer per app costs the main thread a few
         // hundred milliseconds, which would otherwise land on your first workspace switch.

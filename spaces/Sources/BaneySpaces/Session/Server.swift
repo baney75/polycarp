@@ -5,6 +5,8 @@ import BaneySpacesCore
 /// JSON line in and one out. Requests are handled on the main thread, where the engine lives.
 final class Server {
     var handle: (Wire.Request) -> Wire.Reply = { _ in Wire.Reply(ok: false, error: "not ready") }
+    /// A request answered only once what it asked for is done; false when it isn't one of those. On the main thread.
+    var later: (Wire.Request, @escaping (Wire.Reply) -> Void) -> Bool = { _, _ in false }
     private var listeners: [(fd: Int32, path: String, source: DispatchSourceRead)] = []
     private let io = DispatchQueue(label: "baneyspaces.socket", attributes: .concurrent)
 
@@ -59,13 +61,37 @@ final class Server {
         guard let line = Wire.readLine(client) else { return }
         let reply: Wire.Reply
         if let req = try? JSONDecoder().decode(Wire.Request.self, from: line) {
-            reply = DispatchQueue.main.sync { handle(req) }
+            let late = LateReply()
+            if DispatchQueue.main.sync(execute: { later(req) { late.set($0) } }) {
+                reply = late.wait(3) ?? Wire.Reply(ok: false, error: "Polycarp didn't finish in time")
+            } else {
+                reply = DispatchQueue.main.sync { handle(req) }
+            }
         } else {
             reply = Wire.Reply(ok: false, error: "bad request")
         }
         guard var data = try? JSONEncoder().encode(reply) else { return }
         data.append(0x0A)
         _ = Wire.writeAll(client, data)
+    }
+}
+
+/// A reply another thread makes, waited for.
+private final class LateReply: @unchecked Sendable {
+    private let lock = NSCondition()
+    private var reply: Wire.Reply?
+
+    func set(_ r: Wire.Reply) {
+        lock.lock(); defer { lock.unlock() }
+        if reply == nil { reply = r }
+        lock.signal()
+    }
+
+    func wait(_ seconds: TimeInterval) -> Wire.Reply? {
+        let end = Date().addingTimeInterval(seconds)
+        lock.lock(); defer { lock.unlock() }
+        while reply == nil, lock.wait(until: end) {}
+        return reply
     }
 }
 

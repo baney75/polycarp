@@ -68,6 +68,21 @@ serves the same as `surfaces_schema`, `surfaces_get` and `surfaces_set`, and `se
 (`polycarp theme`), not this file's. `polycarp look save|apply|undo|export|import` keeps and changes all of it at once
 (theme, style.css, these settings' looks and the paper; docs/looks.md). Every field: spaces/docs/surfaces.md.
 
+## Tiling: windows side by side
+
+Off until Donovan turns it on. Run a `tile` command only when he asked for that change: it moves his windows.
+
+```sh
+baneyspaces tile status --json           # what tiles, its style, and its windows in order
+baneyspaces tile on 3                    # tile workspace 3 (no number: the one in use); tile off puts windows back
+baneyspaces tile focus left              # also move, grow, balance, flip, promote, float, full, next display
+baneyspaces tile style columns           # dwindle, columns or main
+baneyspaces surfaces set tiling.gaps.inner 12
+```
+
+`baneyspaces tile help` lists every command. Over MCP: `tiling_status` (read-only) and `tiling_run`. Windows on the agent
+workspace are never tiled. More: docs/tiling.md.
+
 ## Paper: the wallpaper, the new tab and the idle screen
 
 To change the wallpaper (or what lies behind the browser's new tab page and the idle screen), one command does it.

@@ -6,7 +6,7 @@
 //! (spaces/docs/surfaces.md); each style tool does the same with `polycarp-spaces style ... --json`
 //! (spaces/docs/style.md), the search tools with `polycarp-spaces search ... --json`, each paper tool with
 //! `polycarp-spaces paper ... --json`, `keys_list` with `polycarp-spaces keys --json`, whose array it puts in the
-//! same envelope (docs/keys.md), each filter tool with `polycarp-spaces filters ... --json`, and each page
+//! same envelope (docs/keys.md), the tiling tools with `polycarp-spaces tile ... --json` (docs/tiling.md), each filter tool with `polycarp-spaces filters ... --json`, and each page
 //! edit tool with `polycarp-spaces edits ... --json` (spaces/docs/edits.md).
 
 use crate::look;
@@ -66,6 +66,9 @@ Polycarp's launcher and new tab page do (bangs like !yt and the engine in search
 nothing. search_open performs the top result: it brings an open tab or window forward, or opens the page in the \
 default browser. Call it only when the person asked to go there.
 To tell the person which keys do what in Polycarp, read keys_list; it changes nothing.
+To arrange the person's windows side by side, read tiling_status, then call tiling_run with one command, and only when \
+the person asked for that change: it moves their windows. The gaps, the style for new workspaces and the apps that are \
+never tiled are surfaces_set on tiling.
 To hide posts in the person's feeds (X, YouTube, Reddit, Hacker News, Bluesky, LinkedIn, Mastodon) by words, \
 patterns, accounts or kinds (shorts, promoted, reposts), \
 call filters_list, then filter_set one rule by id; filter_remove takes one away. Polycarp's own browser extension \
@@ -479,7 +482,7 @@ pub(crate) fn tools() -> Vec<Tool> {
         },
         Tool {
             name: "style_example",
-            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number with .current and :hover) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar on top of the theme with a strict subset of CSS.",
+            description: "Read this before style_set. Returns a starter style.css that names every selector (bar, its regions .left .center .right, each module and each .workspace number with .current and :hover; tiling, the outline of a dragged window) and every property, with what each takes and where it applies, all commented out. The style sheet restyles the top bar and the tiling outline on top of the theme with a strict subset of CSS.",
             schema: obj(json!({}), &[]),
             read_only: true,
             destructive: false,
@@ -560,6 +563,28 @@ pub(crate) fn tools() -> Vec<Tool> {
             read_only: true,
             destructive: false,
             idempotent: true,
+        },
+        Tool {
+            name: "tiling_status",
+            description: "How window tiling stands on this Mac: the workspace in use, whether it tiles, its style (dwindle, columns or main), whether one window has the whole area (full), its tiled windows' numbers in order, the tiled window in front (focused, or null) and every workspace that tiles. Read-only. Polycarp must be running.",
+            schema: obj(json!({}), &[]),
+            read_only: true,
+            destructive: false,
+            idempotent: true,
+        },
+        Tool {
+            name: "tiling_run",
+            description: "Do one tiling command on the workspace in use, as its key would: on or off tiles that workspace or stops and puts its windows back where they were; the rest need a tiled workspace and act on the window in front. Answers with how tiling stands after it, as tiling_status does. Moves the person's windows, so call it only when they asked. A command with nothing to do is refused with the reason and changes nothing.",
+            schema: obj(
+                json!({
+                    "command": {"type":"string","enum":TILING_COMMANDS,"description":"What to do, as \"on\", \"focus left\" or \"style columns\"."},
+                    "workspace": {"type":"integer","minimum":1,"maximum":9,"description":"For on and off only: the workspace. Left out, the one in use."}
+                }),
+                &["command"],
+            ),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
         },
         Tool {
             name: "filters_list",
@@ -859,6 +884,12 @@ pub(crate) fn call(
             Ok(_) => spaces_run(vec!["keys".into()], "keys"),
         });
     }
+    if name.starts_with("tiling_") {
+        return Some(match Args::new(&tool, args) {
+            Err(e) => theme::envelope(&Err(e)),
+            Ok(a) => tiling_call(name, &a),
+        });
+    }
     if name.starts_with("style_") {
         return Some(match Args::new(&tool, args) {
             Err(e) => theme::envelope(&Err(e)),
@@ -1083,6 +1114,72 @@ fn rules_call(name: &str, a: &Args) -> theme::Envelope {
     };
     match built() {
         Ok(argv) => spaces_run(argv, &format!("{verb} ls")),
+        Err(e) => theme::envelope(&Err(e)),
+    }
+}
+
+/// Every command `tiling_run` takes: those of `polycarp-spaces tile` but status and help. TilingRequestTests in spaces/
+/// fails when the two differ.
+const TILING_COMMANDS: &[&str] = &[
+    "on",
+    "off",
+    "toggle",
+    "focus left",
+    "focus right",
+    "focus up",
+    "focus down",
+    "focus next",
+    "focus previous",
+    "move left",
+    "move right",
+    "move up",
+    "move down",
+    "grow left",
+    "grow right",
+    "grow up",
+    "grow down",
+    "balance",
+    "flip",
+    "style",
+    "promote",
+    "float",
+    "full",
+    "next display",
+    "style dwindle",
+    "style columns",
+    "style main",
+];
+
+/// Runs one tiling tool through `polycarp-spaces tile ... --json` (no shell) and passes its envelope on (docs/tiling.md).
+fn tiling_call(name: &str, a: &Args) -> theme::Envelope {
+    let built = || -> Result<Vec<String>, ApiErr> {
+        let mut argv: Vec<String> = vec!["tile".into()];
+        if name == "tiling_status" {
+            argv.push("status".into());
+            return Ok(argv);
+        }
+        let command = a.need("command")?;
+        if !TILING_COMMANDS.contains(&command) {
+            return Err(ApiErr::usage(format!(
+                "`command` must be one of: {}",
+                TILING_COMMANDS.join(", ")
+            )));
+        }
+        argv.extend(command.split(' ').map(String::from));
+        if let Some(w) = a.map.get("workspace").filter(|w| !w.is_null()) {
+            let n = w.as_u64().filter(|n| (1..=9).contains(n));
+            let Some(n) = n else {
+                return Err(ApiErr::usage("`workspace` must be a number from 1 to 9"));
+            };
+            if command != "on" && command != "off" {
+                return Err(ApiErr::usage("`workspace` goes with on and off only"));
+            }
+            argv.push(n.to_string());
+        }
+        Ok(argv)
+    };
+    match built() {
+        Ok(argv) => spaces_run(argv, "tile status"),
         Err(e) => theme::envelope(&Err(e)),
     }
 }
