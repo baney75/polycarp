@@ -159,23 +159,25 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertTrue(main[step.upperBound...].contains("\n  connector_notice \"$LOG\"\n"), "the notice comes after the install step")
     }
 
-    // Polycarp can install its companions, Silas and Shotate, each from its own installer, only when asked (Donovan,
+    // Polycarp can install its companions, Silas and Yapshot, each from its own installer, only when asked (Donovan,
     // 2026-11-24).
     func testCompanionsAreChosenByNameOrNumberAndNothingIsTheDefault() throws {
         let (said, code) = try functions("""
-            companion_list 'Shotate, silas'; echo '|'; companion_list '2 1'; echo '|'; companion_list 'silas,Silas 1'; echo '|'
+            companion_list 'Yapshot, silas'; echo '|'; companion_list '2 1'; echo '|'; companion_list 'silas,Silas 1'; echo '|'
             companion_list ''; echo '|'; companion_list all; echo '|'; companion_list 'zoom' 2>&1; echo '|'
+            companion_list 'shotate yapshot'; echo '|'
             printf '\\n' | ask_companions 2>/dev/null; echo '|'
             """)
         XCTAssertEqual(code, 0, said)
         let parts = said.components(separatedBy: "|\n")
-        XCTAssertEqual(parts[0], "silas shotate")
-        XCTAssertEqual(parts[1], "silas shotate", "the question's numbers, in the listed order")
+        XCTAssertEqual(parts[0], "silas yapshot")
+        XCTAssertEqual(parts[1], "silas yapshot", "the question's numbers, in the listed order")
         XCTAssertEqual(parts[2], "silas", "each companion once")
         XCTAssertEqual(parts[3], "", "nothing named, nothing installed")
-        XCTAssertEqual(parts[4], "silas shotate")
+        XCTAssertEqual(parts[4], "silas yapshot")
         XCTAssertTrue(parts[5].contains("Not a companion: zoom"), parts[5])
-        XCTAssertEqual(parts[6], "", "Return alone at the question means none")
+        XCTAssertEqual(parts[6], "yapshot", "Shotate, its old name, still picks Yapshot, once")
+        XCTAssertEqual(parts[7], "", "Return alone at the question means none")
     }
 
     func testEachCompanionUsesItsOwnOfficialInstaller() throws {
@@ -183,7 +185,7 @@ final class RootInstallerTests: XCTestCase {
         XCTAssertEqual(code, 0, said)
         XCTAssertEqual(said.split(separator: "\n").map(String.init), [
             "curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh",
-            "curl -fsSL https://raw.githubusercontent.com/baney75/shotate/main/install.sh | bash",
+            "curl -fsSL https://raw.githubusercontent.com/baney75/yapshot/main/install.sh | bash",
         ])
         let main = try installer()
         XCTAssertTrue(main.contains("step_soft \"Installing $(companion_name \"$c\")\""), "a companion failing never stops Polycarp's install")

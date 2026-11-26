@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """What a workspace switch looks like, frame by frame, on the real screen.
 
-Records the screen with Shotate while switching between two workspaces, then counts the separate
+Records the screen with Yapshot while switching between two workspaces, then counts the separate
 visible changes in each switch. A clean switch is one cut: the old workspace, then the new one. Each
 extra change is an in-between frame someone can see: windows arriving one app at a time, a bare desktop,
 two workspaces overlapping, a window popping to the front.
@@ -60,8 +60,8 @@ def go(n):
     subprocess.run(["open", "-g", f"baneyspaces://switch/{n}"], check=False)
 
 
-def shotate(*args):
-    r = subprocess.run(["shotate", *args], capture_output=True, text=True)
+def yapshot(*args):
+    r = subprocess.run(["yapshot", *args], capture_output=True, text=True)
     try:
         return json.loads(r.stdout)
     except json.JSONDecodeError:
@@ -69,7 +69,7 @@ def shotate(*args):
 
 
 def frames(video):
-    """Frame times and small gray frames, menu bar cut off. Shotate records only when the screen changes,
+    """Frame times and small gray frames, menu bar cut off. Yapshot records only when the screen changes,
     so the times are uneven: a frame is a real composited screen, and a still screen gives none."""
     info = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "frame=pts_time", "-of", "csv=p=0", video], capture_output=True, text=True).stdout
     times = np.array([float(x.split(",")[0]) for x in info.split() if x.strip(",")])
@@ -173,16 +173,16 @@ def main():
     if not screen_on():
         print("untested live: the display is asleep, the session is locked, or that can't be read")
         return 3
-    st = shotate("status")
+    st = yapshot("status")
     if not st.get("canRecord"):
-        print(f"untested live: Shotate can't record: {st}")
+        print(f"untested live: Yapshot can't record: {st}")
         return 3
     state = os.path.expanduser("~/Library/Application Support/Polycarp/state.json")
     came_from = json.load(open(state)).get("current", a.a)
     go(a.a)
     time.sleep(0.8)
     began = time.time()
-    rec = shotate("record", "screen")
+    rec = yapshot("record", "screen")
     if rec.get("error") or not rec.get("video"):
         print(f"untested live: {rec}")
         return 3
@@ -203,7 +203,7 @@ def main():
     if not interrupted:
         go(came_from)
     time.sleep(0.5)
-    saved = shotate("stop")
+    saved = yapshot("stop")
     made = saved.get("video") or rec["video"]
     if not os.path.exists(made):
         print(f"untested live: no recording: {saved}")
@@ -215,7 +215,7 @@ def main():
     if clicks and os.path.exists(clicks):
         os.remove(clicks)
     times, gray = frames(path)
-    # The video starts when Shotate's first frame arrives, shortly after `began`: line up on the first switch's change.
+    # The video starts when Yapshot's first frame arrives, shortly after `began`: line up on the first switch's change.
     diffs = (np.abs(gray[1:].astype(np.int16) - gray[:-1].astype(np.int16)) > PIXEL).mean(axis=(1, 2))
     first_change = times[1:][diffs > CHANGE]
     offset = 0.0

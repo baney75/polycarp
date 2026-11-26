@@ -11,8 +11,8 @@
 # Polycarp has no parts to choose: workspaces always run. POLYCARP_FEATURES is read only for the parts that left. One that
 # names browser prints that the agent browser extension was removed (BROWSER_MOVED below) and installs nothing; one that names
 # voice prints where Silas is and carries on. Anything else in it is ignored, and so is an old features.toml.
-# Companion apps, each from its own official installer and only when asked: Silas (dictation) and Shotate (screenshots
-# and recordings). `curl ... | bash -s -- --with silas,shotate` or POLYCARP_WITH=silas,shotate picks them; at a terminal with
+# Companion apps, each from its own official installer and only when asked: Silas (dictation) and Yapshot (screenshots
+# and recordings; its old name Shotate still works). `curl ... | bash -s -- --with silas,yapshot` or POLYCARP_WITH=silas,yapshot picks them; at a terminal with
 # neither, the installer asks once and Return means none. A companion that fails is named; Polycarp stays installed.
 # Everything is inside main(), called on the last line: run through a pipe (curl | bash), a download that
 # stops halfway runs nothing, and no step can read the script's own text from stdin.
@@ -269,21 +269,21 @@ fetch_app() {
 }
 
 # The companions, in the order the question lists them.
-COMPANIONS="silas shotate"
+COMPANIONS="silas yapshot"
 companion_name() {
-  case "$1" in silas) echo Silas ;; shotate) echo Shotate ;; esac
+  case "$1" in silas) echo Silas ;; yapshot) echo Yapshot ;; esac
 }
 companion_blurb() {
   case "$1" in
     silas) echo "dictation anywhere" ;;
-    shotate) echo "screenshots and screen recordings" ;;
+    yapshot) echo "screenshots and screen recordings" ;;
   esac
 }
 # Each companion's own official installer, exactly as its README gives it.
 companion_command() {
   case "$1" in
     silas) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/silas/main/install.sh | sh' ;;
-    shotate) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/shotate/main/install.sh | bash' ;;
+    yapshot) echo 'curl -fsSL https://raw.githubusercontent.com/baney75/yapshot/main/install.sh | bash' ;;
   esac
 }
 # companion_install <companion>: download its installer and run it. pipefail, so a download that fails (a 404, no
@@ -292,7 +292,7 @@ companion_install() {
   bash -o pipefail -c "$(companion_command "$1")" </dev/null
 }
 # companion_list "<list>": the companions a comma- or space-separated list names, each once, in COMPANIONS order.
-# Accepts names (any case), the question's numbers 1 and 2, and "all". Prints
+# Accepts names (any case), Shotate for Yapshot (its old name), the question's numbers 1 and 2, and "all". Prints
 # one line naming anything it doesn't know, on stderr.
 companion_list() {
   local raw w c out="" n
@@ -300,7 +300,7 @@ companion_list() {
   local -a words=()
   read -r -a words <<<"$(printf '%s' "$raw" | tr ',' ' ')" || true # read splits without expanding * or ?
   for w in ${words[@]+"${words[@]}"}; do
-    case "$w" in all) out="$COMPANIONS"; continue ;; esac
+    case "$w" in all) out="$COMPANIONS"; continue ;; shotate) w=yapshot ;; esac
     if [[ "$w" =~ ^[1-2]$ ]]; then n=0; for c in $COMPANIONS; do n=$((n + 1)); if [ "$n" = "$w" ]; then w=$c; fi; done; fi
     if names_part "$w" "${COMPANIONS// /,}"; then out="$out $w"
     else printf '  Not a companion: %s (choose from %s)\n' "$w" "${COMPANIONS// /, }" >&2; fi
