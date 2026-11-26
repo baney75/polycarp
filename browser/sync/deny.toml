@@ -13,6 +13,10 @@ exceptions = [
 
 [advisories]
 yanked = "deny"
+# A timing leak of an RSA private key. `rsa` comes in only through webauthn-rs-core (by crypto-glue), which checks
+# signatures with a passkey's public RSA key; no RSA private key is ever here. Check `cargo tree -i rsa` again when a
+# dependency changes, and drop this once webauthn-rs no longer builds `rsa`.
+ignore = ["RUSTSEC-2023-0071"]
 
 [bans]
 multiple-versions = "allow"
