@@ -146,7 +146,41 @@
         const t = await chrome.tabs.update(m.tab, { active: true });
         if (t) await chrome.windows.update(t.windowId, { focused: true });
       }
+      if (m.op === "browser.open") return open(m);
+      if (m.op === "browser.icon" && typeof m.url === "string") return icon(m.url);
       if (m.op === "browser.show" && Number.isInteger(m.download) && sending.includes("downloads")) await chrome.downloads.show(m.download);
+    }
+
+    // The browser's own copy of a site's icon, as a PNG; nothing is loaded from the network.
+    async function icon(url) {
+      if (!sending.length || !/^https?:\/\//i.test(url) || url.length > 2048) return;
+      const r = await fetch(chrome.runtime.getURL("/_favicon/?size=32&pageUrl=" + encodeURIComponent(url)));
+      if (!r.ok) return;
+      const bytes = new Uint8Array(await r.arrayBuffer());
+      if (bytes.length > 49152) return;
+      let s = "";
+      for (const b of bytes) s += String.fromCharCode(b);
+      post({ op: "browser.icon", url, png: btoa(s) });
+    }
+    // A new tab in a window that isn't private: an address, a search with this browser's engine, or its new tab page.
+    async function open(m) {
+      const url = typeof m.url === "string" && /^https?:\/\//i.test(m.url) ? m.url : undefined;
+      const text = typeof m.text === "string" && m.text.trim() ? cut(m.text.trim(), 2000) : undefined;
+      if (m.url !== undefined && !url) return;
+      const windows = (await chrome.windows.getAll({ windowTypes: ["normal"] })).filter((w) => w.incognito === false);
+      const named = windows.find((w) => w.id === m.window);
+      if (Number.isInteger(m.window) && !named) return;
+      const w = named || (m.window === "new" ? null : windows.find((x) => x.focused) || windows[0]);
+      const opts = url ? { url } : {};
+      let t;
+      if (w) {
+        t = await chrome.tabs.create({ windowId: w.id, active: true, ...opts });
+        await chrome.windows.update(w.id, { focused: true });
+      } else {
+        const made = await chrome.windows.create({ focused: true, ...opts });
+        t = made && made.tabs && made.tabs[0];
+      }
+      if (text && t) await chrome.search.query({ text, tabId: t.id });
     }
 
     // ---------- Changes ----------

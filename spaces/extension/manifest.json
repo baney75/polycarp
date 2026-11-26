@@ -37,7 +37,14 @@
     "activeTab",
     "scripting",
     "alarms",
-    "nativeMessaging"
+    "nativeMessaging",
+    "favicon",
+    "search"
+  ],
+  "optional_permissions": [
+    "bookmarks",
+    "downloads",
+    "history"
   ],
   "host_permissions": [
     "<all_urls>"

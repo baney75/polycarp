@@ -38,6 +38,12 @@
   });
   const raw = (html, bind) => ({ kind: "raw", html, bind });
 
+  const BRIDGE = [
+    ["tabs", "Open tabs", "Titles, sites and which one is in front"],
+    ["bookmarks", "Bookmarks", "Your browser asks before Polycarp can read them"],
+    ["history", "Recent history", "The last 90 days. Your browser asks first"],
+    ["downloads", "Downloads", "File names and how far along they are. Your browser asks first"]
+  ];
   const em = (v) => Number(v).toFixed(2) + " em";
   const GROUPS = [
     ["Reading profile", "A starting point for how you read. Adjust anything below and Polycarp remembers it as your own mix.", [
@@ -68,6 +74,9 @@
     ["Search and your NAS", "", [
       raw('<div class="row"><span class="lbl"><b>Polycarp Search</b><span>Your library, YouTube, free books and papers, and any site you add, in one search. Type pc and a space in the address bar to search from anywhere.</span></span><a class="btn" href="search.html">' + I("search") + '<span>Open Search</span></a></div>' +
         '<div class="row"><span class="lbl"><b>Your NAS</b><span id="nasNote">Not connected</span></span><a class="btn quiet" href="search.html#nasBlock">Set up</a></div>', bindNas)
+    ]],
+    ["In the Polycarp app", "What this browser shows the Polycarp app on this computer, so its launcher can find it and go there. It stays on this computer, in memory, and nothing from a private window is ever shown. The app has its own switches too.", [
+      raw(BRIDGE.map(([k, label, desc]) => '<label class="row" for="b-' + k + '">' + lbl(label, desc) + '<span class="switch"><input type="checkbox" id="b-' + k + '"></span></label>').join(""), bindBridge)
     ]],
     ["Bold anchors", "The start of each word in bold. A careful study found no speed gain from this (Snell 2024), but some readers find it easier on the eyes. Keep it only if it helps you.", [
       toggle("bionic.on", "Bold anchors"),
@@ -318,6 +327,26 @@
         ? items.length + (items.length === 1 ? " item" : " items") + " and " + notes.length + (notes.length === 1 ? " note" : " notes")
         : "Empty so far. Anything you open in the Reader is added.";
     } catch (e) { $("libCount").textContent = "Could not count your items. Open the Library to see them."; }
+  }
+
+  // ---------- The line to the Polycarp app ----------
+  // A switch is on only while the browser's permission for it stands; off gives the permission back.
+  function bindBridge() {
+    const B = globalThis.PolycarpBridge;
+    const read = async () => ({ ...B.DEFAULTS, ...((await chrome.storage.local.get(B.KEY))[B.KEY] || {}) });
+    const has = async (k) => !B.NEEDS[k].length || await chrome.permissions.contains({ permissions: B.NEEDS[k] }).catch(() => false);
+    const show = async () => { const set = await read(); for (const k of B.SOURCES) $("b-" + k).checked = set[k] === true && await has(k); };
+    for (const k of B.SOURCES) $("b-" + k).addEventListener("change", async (e) => {
+      const on = e.target.checked;
+      const permissions = B.NEEDS[k];
+      // Asked for before anything is awaited: the browser takes the request only from the click itself.
+      const given = !on || !permissions.length || await chrome.permissions.request({ permissions }).catch(() => false);
+      await chrome.storage.local.set({ [B.KEY]: { ...(await read()), [k]: on && given } });
+      if (!on && permissions.length) await chrome.permissions.remove({ permissions }).catch(() => false);
+      show();
+    });
+    show();
+    if (chrome.permissions.onRemoved) chrome.permissions.onRemoved.addListener(show);
   }
 
   // ---------- About ----------
