@@ -58,6 +58,22 @@ public struct KeyChord: Hashable, Sendable {
         return .success(chord)
     }
 
+    /// The chord a key press is, or what is wrong with it as one.
+    public static func read(keyCode: Int, ctrl: Bool, opt: Bool, shift: Bool, cmd: Bool) -> Result<KeyChord, Problem> {
+        guard let key = keyCodes.first(where: { $0.value == keyCode })?.key ?? (digits.firstIndex(of: keyCode).map { String($0 + 1) }) else {
+            return .failure(Problem(message: "that key can't be a shortcut"))
+        }
+        var parts: [String] = []
+        if ctrl { parts.append("ctrl") }
+        if opt { parts.append("opt") }
+        if shift { parts.append("shift") }
+        if cmd { parts.append("cmd") }
+        return read((parts + [key]).joined(separator: "+"))
+    }
+
+    /// The key codes of 1 to 9, which are the workspaces'.
+    private static let digits = [18, 19, 20, 21, 23, 22, 26, 28, 25]
+
     public init?(_ text: String) {
         guard case .success(let c) = Self.read(text) else { return nil }
         self = c

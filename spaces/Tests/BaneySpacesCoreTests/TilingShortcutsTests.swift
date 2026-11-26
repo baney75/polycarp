@@ -99,3 +99,51 @@ final class TilingShortcutsTests: XCTestCase {
         XCTAssertTrue(code.contains("guard let self, self.stillTrusted() else { return }\n                self.tiling.run(command)"))
     }
 }
+
+final class KeyPressTests: XCTestCase {
+    func testAPressReadsAsTheChordItIs() {
+        func press(_ code: Int, ctrl: Bool = false, opt: Bool = false, shift: Bool = false, cmd: Bool = false) -> Result<KeyChord, KeyChord.Problem> {
+            KeyChord.read(keyCode: code, ctrl: ctrl, opt: opt, shift: shift, cmd: cmd)
+        }
+        XCTAssertEqual(press(17, ctrl: true, opt: true), .success(KeyChord("ctrl+opt+T")!))
+        XCTAssertEqual(press(17, ctrl: true, cmd: true), .success(KeyChord("ctrl+cmd+T")!))
+        XCTAssertEqual(press(123, ctrl: true, shift: true), .success(KeyChord("ctrl+shift+Left")!))
+        for (name, code) in KeyChord.keyCodes { XCTAssertEqual(press(code, ctrl: true, opt: true, shift: true), .success(KeyChord("ctrl+opt+shift+\(name)")!), name) }
+        guard case .failure(let digit) = press(18, ctrl: true, opt: true) else { return XCTFail("1 is a workspace's") }
+        XCTAssertEqual(digit.message, "1 to 9 are the workspaces'")
+        guard case .failure = press(17, cmd: true) else { return XCTFail("Command-T is the app's") }
+        guard case .failure(let odd) = press(200, ctrl: true, opt: true) else { return XCTFail("no such key") }
+        XCTAssertEqual(odd.message, "that key can't be a shortcut")
+    }
+}
+
+final class TilingKeyWritesTests: XCTestCase {
+    /// Settings > Keys moves a key from one command to another; each write must leave a file `surfaces set` accepts.
+    func testAKeyMovesToAnotherCommandInWritesTheFileTakes() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let file = dir.appendingPathComponent("surfaces.json").path
+        func keys() -> [String: KeyChord] {
+            if case .document(let d) = SurfacesFile.load(path: file) { return d.surfaces.tiling.keys }
+            return Surfaces.defaults.tiling.keys
+        }
+        func give(_ name: String, _ text: String) {
+            var now = Surfaces.defaults.tiling
+            now.keys = keys()
+            for w in now.keyWrites(giving: name, text) {
+                guard case .success = SurfacesOps.set(w.path, w.value, file: file) else { return XCTFail("\(w.path) = \(w.value) was refused") }
+            }
+        }
+        give("balance", "ctrl+opt+X")
+        XCTAssertEqual(keys()["balance"], KeyChord("ctrl+opt+X"))
+        give("flip", "ctrl+opt+X")
+        XCTAssertEqual(keys()["flip"], KeyChord("ctrl+opt+X"), "the key moved")
+        XCTAssertNil(keys()["balance"], "and the one that had it has none")
+        give("balance", "ctrl+opt+T")
+        XCTAssertEqual(keys()["balance"], KeyChord("ctrl+opt+T"), "a key Polycarp comes with moves too")
+        XCTAssertNil(keys()["toggle"])
+        XCTAssertEqual(Surfaces.defaults.tiling.keyWrites(giving: "flip", "ctrl+opt+Y").map(\.path), ["tiling.keys.flip"], "a free key is one write")
+        XCTAssertEqual(Surfaces.defaults.tiling.keyWrites(giving: "flip", "").map(\.path), ["tiling.keys.flip"], "and so is none")
+    }
+}
