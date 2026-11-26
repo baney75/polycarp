@@ -66,6 +66,13 @@
         },
         "target": "a panel already built"
       },
+      "tile": {
+        "p50": 20,
+        "p90": 50,
+        "p99": 120,
+        "measured": null,
+        "target": "8 windows, from the look to the last frame sent, under 50 ms of our own time"
+      },
       "launcher-first": {
         "p50": 150,
         "p90": 250,

@@ -20,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// The top bar (`bar.*` in surfaces.json); draws nothing until `bar.enabled`.
     private lazy var topBar = TopBar(spaces: spaces)
     private lazy var switcher = WorkspaceSwitcher(spaces: spaces)
+    /// Windows side by side (`tiling.*` in surfaces.json); reads and moves nothing until a workspace tiles.
+    private lazy var tiling = Tiling(spaces: spaces)
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
     /// one up again bumps its generation, so its stale move never runs, even one queued.
     private var settling: [WindowID: Timer] = [:]
@@ -496,7 +498,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.updateIcon()
             self.topBar.workspacesChanged()
             self.switcher.titlesChanged()
+            self.tiling.lookSoon(0.02)
         }
+        spaces.onSettled = { [weak self] in self?.tiling.look() }
+        spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
+        NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object: nil, queue: .main) { [weak self] _ in
+            self?.tiling.settingsChanged()
+        }
+        tiling.settingsChanged()
         // It reads surfaces.json and stays away while `bar.enabled` is off.
         topBar.start()
         // A new theme redraws the menu bar indicator as well as the panels.
@@ -630,6 +639,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if started { spaces.restoreAll() }
         // ⌘Space goes back to Spotlight while BaneySpaces isn't running; the next launch takes it again.
         SystemShortcuts.spotlightQueue.sync { SystemShortcuts.restoreSpotlight() }
+        tiling.save()
         spaces.flushWrites()
         // A clean quit, not a crash, for the next launch's crash-loop check.
         CrashLoop.launchEnded()
