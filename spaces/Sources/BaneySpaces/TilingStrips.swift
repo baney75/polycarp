@@ -87,7 +87,9 @@ extension Tiling {
         let tabs = spaces.active ? spaces.shownWorkspaces.sorted().flatMap(engine.tabs) : []
         guard !tabs.isEmpty || strips != nil else { return }
         if strips == nil { strips = TilingStrips() }
-        strips?.show(TilingTabs.drawn(tabs, moving: moving) { id in
+        // Asked only while there are strips: the window list is no small call.
+        let onScreen = tabs.isEmpty ? [] : Windows.onScreenIDs()
+        strips?.show(TilingTabs.drawn(tabs, moving: moving, onScreen: onScreen) { id in
             let pid = spaces.window(id)?.pid ?? 0
             return (spaces.title(of: id), NSRunningApplication(processIdentifier: pid)?.localizedName ?? "", pid)
         }) { [weak self] id in

@@ -41,10 +41,11 @@ public struct TilingTabs: Equatable, Sendable {
         public var tabs: [Tab]
     }
 
-    /// The strips to draw: none for a group whose front is on the move, as it is let go somewhere else.
-    public static func drawn(_ all: [TilingTabs], moving: WindowID?,
+    /// The strips to draw: none for a group whose front is on the move, as it is let go somewhere else, and none for one
+    /// whose front isn't on screen, as on another macOS desktop: the strips show on every desktop.
+    public static func drawn(_ all: [TilingTabs], moving: WindowID?, onScreen: Set<WindowID>,
                              window: (WindowID) -> (title: String, app: String, pid: Int32)) -> [Drawn] {
-        all.filter { $0.front != moving }.map { t in
+        all.filter { $0.front != moving && onScreen.contains($0.front) }.map { t in
             Drawn(frame: t.frame, tabs: t.windows.map { id in
                 let w = window(id)
                 return Tab(id: id, title: w.title.isEmpty ? w.app : w.title, pid: w.pid, front: id == t.front)
