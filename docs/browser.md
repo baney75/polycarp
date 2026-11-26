@@ -11,6 +11,7 @@ polycarp browser install            # make it and put it in
 polycarp browser update             # put in a newer one, when there is one
 polycarp browser status             # which one you have, and how far behind it is
 polycarp browser open https://example.com
+polycarp browser import             # list the browsers on this Mac and their profiles
 polycarp browser uninstall          # remove the app; your profile stays
 ```
 
@@ -19,6 +20,7 @@ polycarp browser uninstall          # remove the app; your profile stays
 | `install` | `--dry-run` downloads, checks, builds and starts it, then throws it away. `--rollback` puts back the build before this one |
 | `update` | `--when-quit`: if the browser is open, the new build goes in once you quit it. Without it, an open browser is a refusal |
 | `status` | `--json` for scripts |
+| `import` | `helium [--profile NAME] --yes` copies a Helium profile |
 | `uninstall` | `--profile` names the folders your profile is in and removes nothing. `--profile --yes` removes them with the app |
 | all | `--app-dir DIR`, the folder the app is in |
 
@@ -34,6 +36,19 @@ days. Browser releases fix security holes, so being behind matters.
 A new build is made beside the old one and swapped in as one step, so a crash or a power cut leaves the old browser or the
 new one, whole. The build before is kept for `install --rollback`. After you go back, updates leave out the build you went
 back from until a newer one is out or you run `install`.
+
+## Importing
+
+`polycarp browser import` lists the Chromium browsers on this Mac and their profiles by name, and reads nothing else of them.
+The browser you import from is only ever read, and only while it is closed.
+
+- **Helium.** `polycarp browser import helium --yes` copies the whole profile, with its sign-ins and extensions. The copy
+  takes the place of an empty first profile; after that each import is a profile of its own. Caches are left out.
+  When Polycarp Browser next opens, macOS asks whether it may use `Helium Storage Key`. Say no and the copied
+  passwords and sign-ins can't be read; the rest of the profile works.
+- **Firefox and Safari.** Open `chrome://settings/importData` in Polycarp Browser. Chromium's own importer reads them.
+
+Without an import the browser starts with an empty profile.
 
 ## What is checked
 

@@ -88,6 +88,7 @@ impl Fake {
             extension: self.extension(),
             spot: self.spot(),
             data: self.root.join("Support/Polycarp/Browser"),
+            home: self.root.join("home"),
             page_cache: self.root.join("Caches/Polycarp/Browser"),
             host: Some("/Applications/Polycarp.app/Contents/Resources/bin/polycarp-spaces".into()),
         }

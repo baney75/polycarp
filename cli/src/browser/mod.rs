@@ -4,6 +4,7 @@
 
 mod change;
 mod gone;
+mod import;
 mod install;
 mod pages;
 mod pak;
@@ -66,6 +67,7 @@ pub struct Place {
     pub spot: spot::Spot,
     /// The browser's own data folder.
     pub data: PathBuf,
+    pub home: PathBuf,
     /// The pages Chromium keeps for that data folder.
     pub page_cache: PathBuf,
     /// What answers the new tab page; None where Polycarp.app isn't installed.
@@ -188,7 +190,9 @@ struct Asked {
     verb: String,
     flags: Vec<String>,
     app_dir: Option<PathBuf>,
-    url: Option<String>,
+    /// The address to open, or the browser to import from.
+    what: Option<String>,
+    profile: Option<String>,
 }
 
 /// Err is the line to print.
@@ -202,12 +206,15 @@ fn read_args(args: &[OsString]) -> Result<Asked, String> {
         if word == "--app-dir" {
             let folder = args.next().ok_or("--app-dir needs a folder")?;
             asked.app_dir = Some(folder.into());
+        } else if word == "--profile" && asked.verb == "import" {
+            let name = args.next().and_then(|n| n.to_str());
+            asked.profile = Some(name.ok_or("--profile needs a name")?.into());
         } else if word.starts_with('-') {
             asked.flags.push(word.into());
         } else if asked.verb.is_empty() {
             asked.verb = word.into();
-        } else if asked.verb == "open" && asked.url.is_none() {
-            asked.url = Some(word.into());
+        } else if ["open", "import"].contains(&asked.verb.as_str()) && asked.what.is_none() {
+            asked.what = Some(word.into());
         } else {
             return Err(format!("{word} is not an option"));
         }
@@ -217,6 +224,7 @@ fn read_args(args: &[OsString]) -> Result<Asked, String> {
         "update" => &["--when-quit"],
         "status" => &["--json"],
         "uninstall" => &["--profile", "--yes"],
+        "import" => &["--yes"],
         _ => &[],
     };
     if let Some(flag) = asked.flags.iter().find(|f| !allowed.contains(&f.as_str())) {
@@ -227,7 +235,7 @@ fn read_args(args: &[OsString]) -> Result<Asked, String> {
         return Err(format!("{flag} is given twice"));
     }
     let has = |f: &str| asked.flags.iter().any(|x| x == f);
-    if has("--yes") && !has("--profile") {
+    if asked.verb == "uninstall" && has("--yes") && !has("--profile") {
         return Err("--yes goes with --profile".into());
     }
     if has("--dry-run") && has("--rollback") {
@@ -248,7 +256,15 @@ pub fn doctor(home: &Path, cache: &Path, app: Option<&Path>) -> Option<String> {
 }
 
 /// The first words this command answers. Anything else is the old agent browser's command.
-const VERBS: [&str; 6] = ["install", "update", "status", "open", "uninstall", "finish"];
+const VERBS: [&str; 7] = [
+    "install",
+    "update",
+    "status",
+    "open",
+    "import",
+    "uninstall",
+    "finish",
+];
 
 const HELP: &str = "\
 polycarp browser: Polycarp Browser, made on this Mac from Helium's own release
@@ -258,6 +274,9 @@ Usage:
   polycarp browser update        put in a newer one (--when-quit waits until you quit the browser)
   polycarp browser status        which one you have, and how far behind it is (--json)
   polycarp browser open [address]
+  polycarp browser import        list the browsers on this Mac and their profiles, by name
+  polycarp browser import helium [--profile NAME] --yes
+                                 copy a Helium profile; Helium's own stays as it is
   polycarp browser uninstall     remove the app; your profile stays unless you add --profile --yes
 
   --app-dir DIR                  where the app is, instead of beside Polycarp.app or in ~/Applications
@@ -313,6 +332,7 @@ pub fn run(
                 extension: resources.join("extension"),
                 spot,
                 data: gone::profile(&home)[0].clone(),
+                home: home.clone(),
                 page_cache: gone::profile(&home)[1].clone(),
                 host: app.map(|a| a.join("Contents/Resources/bin/polycarp-spaces")),
             };
@@ -352,7 +372,8 @@ fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Ref
                 false => Ok(status.text()),
             };
         }
-        "open" => return gone::open(tools, &place.spot, asked.url.as_deref()),
+        "open" => return gone::open(tools, &place.spot, asked.what.as_deref()),
+        "import" => return import::answer(place, asked),
         "uninstall" => return gone::uninstall(place, flag("--profile")),
         "install" if flag("--dry-run") => return dry_run(tools, place, arch),
         "install" if flag("--rollback") => install::roll_back(tools, place)?,
@@ -452,7 +473,7 @@ mod tests {
         assert_eq!(asked.app_dir.unwrap(), Path::new("/x"));
         assert_eq!(asked.flags, ["--when-quit"]);
         let asked = read_args(&words(&["open", "https://a.example"])).unwrap();
-        assert_eq!(asked.url.unwrap(), "https://a.example");
+        assert_eq!(asked.what.unwrap(), "https://a.example");
     }
 
     /// Asked for the profile without --yes, it says what would go and removes nothing.
