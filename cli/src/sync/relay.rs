@@ -62,10 +62,11 @@ impl Relay {
     pub fn get(&self, name: &str) -> Result<Option<Vec<u8>>, String> {
         assert!(valid_name(name), "relay names are fixed by the caller");
         match self {
-            Relay::Dir(d) => match fs::read(d.join(name)) {
+            Relay::Dir(d) => match there(d).and_then(|_| fs::read(d.join(name)).map_err(Some)) {
                 Ok(b) => Ok(Some(b)),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-                Err(e) => Err(format!("could not read the relay at {}: {e}", d.display())),
+                Err(Some(e)) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+                Err(Some(e)) => Err(format!("could not read the relay at {}: {e}", d.display())),
+                Err(None) => Err(gone(d)),
             },
             Relay::Ssh { host, dir } => {
                 // `test -e` first, so a missing file (exit 3) is told apart from an unreachable host (255).
@@ -86,16 +87,15 @@ impl Relay {
         assert!(valid_name(name), "relay names are fixed by the caller");
         match self {
             Relay::Dir(d) => {
-                fs::create_dir_all(d)
-                    .map_err(|e| format!("could not make the relay {}: {e}", d.display()))?;
-                let tmp = d.join(format!("{name}.tmp"));
+                there(d).map_err(|_| gone(d))?;
+                let tmp = d.join(format!("{name}.{}.tmp", std::process::id()));
                 fs::write(&tmp, bytes)
                     .and_then(|_| fs::rename(&tmp, d.join(name)))
                     .map_err(|e| format!("could not write the relay at {}: {e}", d.display()))
             }
             Relay::Ssh { host, dir } => {
                 let script =
-                    format!("umask 077 && mkdir -p {dir} && cat > {dir}/{name}.tmp && mv {dir}/{name}.tmp {dir}/{name}");
+                    format!("umask 077 && mkdir -p {dir} && cat > {dir}/{name}.$$.tmp && mv {dir}/{name}.$$.tmp {dir}/{name}");
                 match ssh(host, &script, Some(bytes))? {
                     (0, _) => Ok(()),
                     (c, _) => Err(format!(
@@ -109,11 +109,14 @@ impl Relay {
     pub fn remove(&self, name: &str) -> Result<(), String> {
         assert!(valid_name(name), "relay names are fixed by the caller");
         match self {
-            Relay::Dir(d) => match fs::remove_file(d.join(name)) {
-                Ok(()) => Ok(()),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-                Err(e) => Err(format!("could not remove {name} from the relay: {e}")),
-            },
+            Relay::Dir(d) => {
+                there(d).map_err(|_| gone(d))?;
+                match fs::remove_file(d.join(name)) {
+                    Ok(()) => Ok(()),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                    Err(e) => Err(format!("could not remove {name} from the relay: {e}")),
+                }
+            }
             Relay::Ssh { host, dir } => match ssh(host, &format!("rm -f {dir}/{name}"), None)? {
                 (0, _) => Ok(()),
                 (c, _) => Err(format!(
@@ -122,6 +125,25 @@ impl Relay {
             },
         }
     }
+}
+
+/// A folder relay must already be there. A share that is not mounted leaves an empty folder or none, and either must
+/// read as a relay that can't be reached, never as one with no files, or a device would start over on its own disk.
+fn there(d: &std::path::Path) -> Result<(), Option<std::io::Error>> {
+    if d.is_dir() && fs::read_dir(d).is_ok_and(|mut r| r.next().is_some()) {
+        Ok(())
+    } else {
+        Err(None)
+    }
+}
+
+fn gone(d: &std::path::Path) -> String {
+    format!(
+        "the relay folder {} is missing or empty; if it is a share, mount it. A new relay folder needs one file to \
+         start: create it with `touch {}/polycarp-sync`",
+        d.display(),
+        d.display()
+    )
 }
 
 fn ssh_program() -> PathBuf {
@@ -139,6 +161,10 @@ pub fn ssh_args(host: &str, script: &str) -> Vec<String> {
         "BatchMode=yes",
         "-o",
         "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=10",
+        "-o",
+        "ServerAliveCountMax=3",
         "--",
         host,
         script,
@@ -211,7 +237,7 @@ mod tests {
                 && !valid_name(".x")
                 && !valid_name("a b")
         );
-        assert_eq!(ssh_args("parish1", "true")[4], "--");
+        assert_eq!(ssh_args("parish1", "true")[8], "--");
     }
 
     #[test]
@@ -219,6 +245,12 @@ mod tests {
         let d = std::env::temp_dir().join(format!("polycarp-relay-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         let r = Relay::Dir(d.clone());
+        // Not there, or there and empty, as an unmounted share is: unreachable, never "no such file".
+        assert!(r.get("devices.json").is_err() && r.put("devices.json", b"x").is_err());
+        fs::create_dir_all(&d).unwrap();
+        assert!(r.get("devices.json").unwrap_err().contains("mount"));
+        assert!(r.put("devices.json", b"x").is_err() && r.remove("devices.json").is_err());
+        fs::write(d.join("polycarp-sync"), b"").unwrap();
         assert_eq!(r.get("devices.json").unwrap(), None);
         r.put("devices.json", b"x").unwrap();
         assert_eq!(r.get("devices.json").unwrap().unwrap(), b"x");
