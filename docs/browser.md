@@ -86,6 +86,9 @@ is signed ad hoc and the command says so: macOS then asks for permissions and sa
 
 - Its name, identifier (`com.baney.polycarp.browser`), icon and data folder. It can be open beside Helium and shares no
   profile with it.
+- Its icon is Polycarp's olive branch. While a Polycarp theme is in force it is drawn in the theme's colors, the same as
+  Polycarp's own: `install` and `update` build it in from `browser-theme/icon.icns` in Polycarp's folder, and sign it with
+  the rest.
 - Polycarp's extension is inside the app and loads at every start. It needs no developer mode and can't be lost in an update.
 - Helium's own updater does nothing: it has no key, no address and no schedule left.
 - A new profile starts at Polycarp's new tab, without the welcome tour. Helium's online services stay off until you choose

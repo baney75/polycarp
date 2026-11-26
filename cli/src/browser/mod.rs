@@ -176,6 +176,7 @@ fn build(
     progress.end(None);
     progress.begin(Step::Build);
     change::apply(tools, &app, &place.parts, &changes)?;
+    change::put_theme_icon(&app, &place.home, &changes)?;
     pages::put_in(tools, &app, place, &changes)?;
     let built = spot::Built {
         helium: release.version.clone(),
