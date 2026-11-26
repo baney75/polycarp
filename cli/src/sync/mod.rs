@@ -4,5 +4,6 @@
 //! Until the command lands, these parts are only reached from their tests.
 #![allow(dead_code)]
 
+pub mod crypto;
 pub mod model;
 pub mod settings;
