@@ -9,7 +9,10 @@
   const FIELDS = { from: "f:", to: "t:", cc: "t:", subject: "s:", list: "l:" };
   const IS = {
     unread: (d) => d.unread, read: (d) => !d.unread, flagged: (d) => d.flagged, starred: (d) => d.flagged,
-    snoozed: (d) => d.snoozeUntil > Date.now()
+    // A snooze or a reminder belongs to the thread and is read from its newest message (`t`, in the index), since a
+    // newer message ends it.
+    snoozed: (d) => (d.t || d).snoozeUntil > Date.now(), waiting: (d) => (d.t || d).remindAt > Date.now(),
+    due: (d) => { const s = d.t || d; return (s.snoozeUntil > 0 && s.snoozeUntil <= Date.now()) || (s.remindAt > 0 && s.remindAt <= Date.now()); }
   };
 
   // Lowercase words without accents. Letters need two or more; numbers count at any length.
@@ -48,7 +51,7 @@
     return out;
   }
   const docOf = (m) => ({ id: m.id, threadId: m.threadId || m.id, date: m.date || m.lastDate || 0, folder: m.folder, unread: !!m.unread, flagged: !!m.flagged,
-    att: !!((m.attachments && m.attachments.length) || m.hasAttachments), snoozeUntil: m.snoozeUntil || 0 });
+    att: !!((m.attachments && m.attachments.length) || m.hasAttachments), snoozeUntil: m.snoozeUntil || 0, remindAt: m.remindAt || 0 });
 
   // Whether one message or thread summary matches a parsed query, whole words only.
   function matches(parsed, m) {
@@ -65,7 +68,7 @@
   //   from:ada  to:bo     a word or the whole address in that field
   //   subject:"roof"      in the subject; quotes hold several words, each required
   //   list:almanac       a word of the List-Id
-  //   in:inbox is:unread is:flagged has:attachment
+  //   in:inbox is:unread is:flagged is:snoozed is:waiting has:attachment
   // The last word is a prefix unless the query ends in a space.
   function parse(q) {
     const s = String(q || "");
@@ -99,11 +102,17 @@
     let keys = null;          // sorted tokens, built at the first prefix query
     let fresh = [];           // tokens added since, merged in at the next one
     const byThread = new Map(); // thread id -> doc numbers
+    const newest = new Map();   // thread id -> {date, snoozeUntil, remindAt} of its newest message, shared by its docs
     let dead = 0;
 
     function addOne(m) {
       const d = docs.length;
-      docs.push(docOf(m));
+      const doc = docOf(m);
+      let s = newest.get(doc.threadId);
+      if (!s) newest.set(doc.threadId, (s = { date: -Infinity, snoozeUntil: 0, remindAt: 0 }));
+      if (doc.date >= s.date) Object.assign(s, { date: doc.date, snoozeUntil: doc.snoozeUntil, remindAt: doc.remindAt });
+      doc.t = s;
+      docs.push(doc);
       for (const t of tokensOf(m)) {
         let p = post.get(t);
         if (!p) { p = []; post.set(t, p); if (keys) fresh.push(t); }
@@ -125,6 +134,7 @@
       if (!set) return;
       for (const d of set) if (docs[d]) { docs[d] = null; dead++; }
       byThread.delete(t);
+      newest.delete(t);
     }
     function compact() {
       const old = { docs, post };
@@ -199,7 +209,7 @@
 
     return {
       setThreads, dropThread, query,
-      clear() { docs = []; post = new Map(); keys = null; fresh = []; byThread.clear(); dead = 0; },
+      clear() { docs = []; post = new Map(); keys = null; fresh = []; byThread.clear(); newest.clear(); dead = 0; },
       get size() { return docs.length - dead; },
       get tokens() { return post.size; }
     };
