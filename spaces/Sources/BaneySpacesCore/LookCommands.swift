@@ -10,9 +10,10 @@ public enum LookCommands {
     public static let undo = ["look", "undo", "--json"]
     public static func apply(_ name: String) -> [String] { ["look", "apply", name, "--json"] }
 
-    /// `replace` only after the person said yes to it.
+    /// `replace` only after the person said yes to it. The title is joined to its flag, so one such as "--force" is never read
+    /// as an option.
     public static func save(_ name: String, title: String, replace: Bool) -> [String] {
-        ["look", "save", name, "--title", title] + (replace ? ["--force"] : []) + ["--json"]
+        ["look", "save", name, "--title=\(title)"] + (replace ? ["--force"] : []) + ["--json"]
     }
 
     /// The save panel has already asked before it returns a file that is there.

@@ -8,8 +8,8 @@ final class LooksTests: XCTestCase {
         XCTAssertEqual(LookCommands.list, ["look", "list", "--json"])
         XCTAssertEqual(LookCommands.apply("desk"), ["look", "apply", "desk", "--json"])
         XCTAssertEqual(LookCommands.undo, ["look", "undo", "--json"])
-        XCTAssertEqual(LookCommands.save("desk", title: "Desk", replace: false), ["look", "save", "desk", "--title", "Desk", "--json"])
-        XCTAssertEqual(LookCommands.save("desk", title: "Desk", replace: true), ["look", "save", "desk", "--title", "Desk", "--force", "--json"])
+        XCTAssertEqual(LookCommands.save("desk", title: "Desk", replace: false), ["look", "save", "desk", "--title=Desk", "--json"])
+        XCTAssertEqual(LookCommands.save("desk", title: "Desk", replace: true), ["look", "save", "desk", "--title=Desk", "--force", "--json"])
         XCTAssertEqual(LookCommands.importFile("/a b.polycarp-look", replace: false), ["look", "import", "/a b.polycarp-look", "--json"])
         XCTAssertEqual(LookCommands.importFile("/a.polycarp-look", replace: true), ["look", "import", "/a.polycarp-look", "--force", "--json"])
         XCTAssertEqual(LookCommands.export("desk", to: "/d.polycarp-look"), ["look", "export", "desk", "/d.polycarp-look", "--force", "--json"])
@@ -75,7 +75,7 @@ final class LooksTests: XCTestCase {
         let group = try Repo.code("Sources/BaneySpaces/Appearance/LooksGroup.swift")
         XCTAssertEqual(group.components(separatedBy: "library.replace(").count - 1, 1)
         XCTAssertTrue(group.contains(#"Button("Replace") { library.replace(r) }"#))
-        XCTAssertTrue(library.contains("guard busy == nil else { return }"))
+        XCTAssertTrue(library.contains(#"if let busy { notice = ("\(busy) Try again when it is done.", .quiet); return }"#))
         XCTAssertTrue(group.contains(".disabled(library.busy != nil)"))
     }
 
@@ -84,9 +84,12 @@ final class LooksTests: XCTestCase {
         let library = try Repo.code("Sources/BaneySpaces/Appearance/LookLibrary.swift")
         XCTAssertEqual(library.components(separatedBy: "command.run(").count - 1, 2)
         XCTAssertEqual(library.components(separatedBy: "ThemeCommand.background({ command.run(").count - 1, 2)
-        XCTAssertTrue(library.contains("guard let self, read == self.reads, r.ok else { return }"))
+        XCTAssertTrue(library.contains("guard let self, read == self.reads else { return }"))
         let group = try Repo.code("Sources/BaneySpaces/Appearance/LooksGroup.swift")
         XCTAssertTrue(group.contains("private var appearance = Appearance.shared"), "the group redraws when the look changes")
+        // A look applied elsewhere may change only the sheet, the surfaces or the paper.
+        XCTAssertTrue(group.contains("publisher(for: SurfacesStore.didChange)) { _ in library.reload() }"))
+        XCTAssertTrue(group.contains("publisher(for: StyleSheetStore.didChange)) { _ in library.reload() }"))
     }
 
     // MARK: The real command
@@ -124,6 +127,9 @@ final class LooksTests: XCTestCase {
         XCTAssertEqual(try run(LookCommands.save(name, title: "Evening desk", replace: false)).code, "exists")
         XCTAssertTrue(try run(LookCommands.save(name, title: "Evening desk", replace: true)).ok)
         XCTAssertEqual(try run(LookCommands.list).looks.first { $0.name == name }?.title, "Evening desk")
+        // A title that looks like an option is still a title.
+        XCTAssertTrue(try run(LookCommands.save("odd", title: "--force", replace: false)).ok)
+        XCTAssertEqual(try run(LookCommands.list).looks.first { $0.name == "odd" }?.title, "--force")
 
         let file = dir.appendingPathComponent("desk.\(LookCommands.fileExtension)")
         XCTAssertTrue(try run(LookCommands.export(name, to: file.path)).ok)
@@ -138,6 +144,10 @@ final class LooksTests: XCTestCase {
         XCTAssertTrue(try run(LookCommands.list).canUndoLook)
         XCTAssertTrue(try run(LookCommands.undo).ok)
         XCTAssertEqual(try run(["theme", "current", "--json"]).data["theme"] as? String, "evening")
+        // Undo stays on, so the notice's "Undo again to come forward" can be done from Settings.
+        XCTAssertTrue(try run(LookCommands.list).canUndoLook)
+        XCTAssertTrue(try run(LookCommands.undo).ok)
+        XCTAssertEqual(try run(["theme", "current", "--json"]).data["theme"] as? String, "polycarp")
         XCTAssertTrue(try run(LookCommands.apply("gone")).message.contains("gone"))
 
         // A damaged look is in the list with the command's own words for why.

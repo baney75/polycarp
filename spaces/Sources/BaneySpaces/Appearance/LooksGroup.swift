@@ -24,6 +24,9 @@ struct LooksGroup: View {
         .onAppear { library.reload() }
         // A theme picked below, or by an agent, changes which look is in force.
         .onChange(of: appearance.polycarp) { _ in library.reload() }
+        // A look applied elsewhere may keep the theme and change the sheet, the surfaces or the paper (in surfaces.json).
+        .onReceive(NotificationCenter.default.publisher(for: SurfacesStore.didChange)) { _ in library.reload() }
+        .onReceive(NotificationCenter.default.publisher(for: StyleSheetStore.didChange)) { _ in library.reload() }
     }
 
     private var shelf: some View {

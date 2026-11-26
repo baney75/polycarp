@@ -36,7 +36,12 @@ final class LookLibrary: ObservableObject {
         reads += 1
         let read = reads, command = command
         ThemeCommand.background({ command.run(LookCommands.list) }) { [weak self] r in
-            guard let self, read == self.reads, r.ok else { return }
+            guard let self, read == self.reads else { return }
+            // A failed read says why, unless a command's answer is already showing.
+            guard r.ok else {
+                if self.busy == nil, self.notice == nil { self.notice = (r.message, .urgent) }
+                return
+            }
             if r.looks != self.looks { self.looks = r.looks }
             if r.canUndoLook != self.canUndo { self.canUndo = r.canUndoLook }
             if let p = self.picked, !r.looks.contains(where: { $0.name == p }) { self.picked = nil }
@@ -93,7 +98,7 @@ final class LookLibrary: ObservableObject {
     /// Runs one command, then reads the list again. `taken` is what to ask about when the name is one of the person's own.
     private func run(_ args: [String], _ doing: String, taken: Replace.What? = nil,
                      then: @escaping @MainActor (LookLibrary, ThemeCommandReply) -> String) {
-        guard busy == nil else { return }
+        if let busy { notice = ("\(busy) Try again when it is done.", .quiet); return }
         busy = doing
         notice = nil
         replacing = nil
