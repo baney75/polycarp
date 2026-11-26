@@ -23,13 +23,13 @@ enum OpenTiming {
         }
         // One unmeasured round of each warms the fonts and the icons.
         for _ in 0..<2 {
-            _ = closing(open(LauncherView(model: launcher), NSSize(width: 700, height: 512)))
+            _ = closing(open(LauncherView(model: launcher), LauncherView.size(Styles.shared.book.launcher.panel, within: 1512)))
             _ = closing(open(SwitcherView(model: switcher), NSSize(width: 960, height: 280)))
         }
         var times: [(String, [Cost])] = []
-        times.append(("launcher open", (0..<rounds).map { _ in closing(open(LauncherView(model: launcher), NSSize(width: 700, height: 512))) }))
+        times.append(("launcher open", (0..<rounds).map { _ in closing(open(LauncherView(model: launcher), LauncherView.size(Styles.shared.book.launcher.panel, within: 1512))) }))
         times.append(("switcher open", (0..<rounds).map { _ in closing(open(SwitcherView(model: switcher), NSSize(width: 960, height: 280))) }))
-        let l = open(LauncherView(model: launcher), NSSize(width: 700, height: 512)).window
+        let l = open(LauncherView(model: launcher), LauncherView.size(Styles.shared.book.launcher.panel, within: 1512)).window
         let count = max(launcher.items.count, 1)
         times.append(("launcher step", (0..<rounds).map { r in step(l) { launcher.selected = (r + 1) % min(count, 6) } }))
         let s = open(SwitcherView(model: switcher), NSSize(width: 960, height: 280)).window

@@ -56,7 +56,7 @@ final class TilingOutline {
 }
 
 /// Read each time it comes up, so a theme or a sheet changed since the last drag shows.
-private struct TilingOutlineView: View {
+struct TilingOutlineView: View {
     private var style: ComputedStyle {
         let line = WindowBorderStyle(Chrome.look)
         let color = StyleColor(line.focused)

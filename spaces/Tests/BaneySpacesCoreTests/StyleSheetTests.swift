@@ -677,6 +677,69 @@ final class StyleSheetTests: XCTestCase {
         let none = StyleBook(sheet("bar { color: red; }"), dark: true, roles: [:]).launcher
         XCTAssertTrue([none.panel, none.field, none.section, none.footer, none.row(selected: true, hover: true).title].allSatisfy(\.isEmpty))
     }
+
+    func testTheLauncherDrawsFromTheSheet() throws {
+        let code = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let controller = try XCTUnwrap(SourceText.block(after: "final class LauncherController", in: code))
+        XCTAssertTrue(controller.contains("LauncherView.size(Styles.shared.book.launcher.panel"), "the panel's width comes from the sheet")
+        let watch = try XCTUnwrap(SourceText.block(after: "forName: StyleSheetStore.didChange, object: nil, queue: .main)", in: controller))
+        XCTAssertTrue(watch.contains("Styles.shared.sync()"))
+        XCTAssertTrue(watch.contains("place("), "an open panel takes a new width")
+        let view = try XCTUnwrap(SourceText.block(after: "struct LauncherView", in: code))
+        for part in ["@ObservedObject private var styles = Styles.shared", "sheet.panel", "sheet.field", "sheet.section", "sheet.footer", "c.box", "c.title",
+                     "c.subtitle", "c.badge", "c.icon", "hover: hovered == item.id", "D.hover(on: sheet.hovers)", "!footer.isHidden"] {
+            XCTAssertTrue(view.contains(part), part)
+        }
+        XCTAssertFalse(view.contains("lookup") || view.contains("computed("), "no row asks the cascade")
+    }
+
+    /// The launcher opens no slower where no rule names it: its rows are the theme's pieces alone.
+    func testAPanelNoRuleNamesIsDrawnBare() throws {
+        func book(_ css: String) -> StyleBook { StyleBook(sheet(css), dark: true, roles: [:]) }
+        XCTAssertTrue(StyleBook.empty.launcher.plain)
+        XCTAssertTrue(book("bar { color: #010101; }").launcher.plain)
+        for css in ["launcher .badge.selected { color: #010101; }", "launcher { gap: 4px; }", "launcher .row:hover { color: #010101; }"] {
+            XCTAssertFalse(book(css).launcher.plain, css)
+        }
+        for (file, view, name) in [("Launcher", "struct LauncherView", "list")] {
+            let code = try XCTUnwrap(SourceText.block(after: view, in: try SourceText.code("Sources/BaneySpaces/\(file).swift")))
+            let body = try XCTUnwrap(SourceText.block(after: "var body: some View", in: code))
+            XCTAssertTrue(body.contains("if sheet.plain { \(name)(Bare.self) } else { \(name)(Dressed.self) }"), file)
+            XCTAssertEqual(code.components(separatedBy: "Bare.self").count, 2, "picked once")
+            let drawn = code.replacingOccurrences(of: ".background { StyledBack(field) }", with: "")
+            XCTAssertFalse(["StyledBack", "StyledHover", ".corners(", "ViewThatFits"].contains(where: drawn.contains), "\(file) draws its rows through the dress")
+        }
+        // The search field keeps the keyboard when a sheet first names the launcher.
+        let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        let body = try XCTUnwrap(SourceText.block(after: "var body: some View", in: try XCTUnwrap(SourceText.block(after: "struct LauncherView", in: launcher))))
+        XCTAssertLessThan(try XCTUnwrap(body.range(of: "searchBar")).lowerBound, try XCTUnwrap(body.range(of: "if sheet.plain")).lowerBound)
+        let styled = try SourceText.code("Sources/BaneySpaces/Styled.swift")
+        let bare = try XCTUnwrap(SourceText.block(after: "enum Bare: Dress", in: styled))
+        XCTAssertFalse(bare.contains("Styled") || bare.contains("if "), "nothing of the sheet's")
+        for part in ["struct StyledPart", "struct StyledPlate"] {
+            XCTAssertTrue(try XCTUnwrap(SourceText.block(after: part, in: styled)).contains("if !style.isHidden {"), "\(part): display: none")
+        }
+        let fit = try XCTUnwrap(SourceText.block(after: "struct StyledFit", in: styled))
+        XCTAssertTrue(fit.contains("ViewThatFits(in: .vertical) { content; short() }"), "a row too short for its subtitle drops it")
+        XCTAssertTrue(styled.contains("if c.border == nil || marking {"), "a sheet's border takes the place of the theme's edge, but not of its mark")
+    }
+
+    /// `launcher .row { background: ... }` alone paints every row alike: the theme's mark must still say which is selected.
+    func testAStateTheSheetSaysNothingAboutKeepsTheThemesMark() throws {
+        func book(_ css: String) -> StyleBook { StyleBook(sheet(css), dark: true, roles: [:]) }
+        for plain in ["background: #222222;", "border: 1px solid #333333;", "border-bottom: 1px solid #333333;"] {
+            let b = book("launcher .row { \(plain) } launcher .row.selected { color: #ffffff; }")
+            XCTAssertFalse(b.launcher.row(selected: true).marked, plain)
+            XCTAssertFalse(b.launcher.row(selected: true, hover: true).marked, plain)
+            let own = book("launcher .row.selected { \(plain) }")
+            XCTAssertTrue(own.launcher.row(selected: true).marked, plain)
+            XCTAssertTrue(own.launcher.row(selected: true, hover: true).marked, plain)
+        }
+        XCTAssertFalse(book("launcher .row:hover { background: #222222; }").launcher.row(selected: true, hover: true).marked, "hover's fill is not the selection's")
+        let launcher = try SourceText.code("Sources/BaneySpaces/Launcher.swift")
+        XCTAssertTrue(launcher.contains(".marking(selected && !c.marked)") && launcher.contains("if selected, !c.marked ||"))
+    }
+
     func testTheAppStartsTheSheetAndTheBarFollowsIt() throws {
         let app = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(app.contains("StyleSheetStore.shared.start("), "AppDelegate starts the style sheet store")

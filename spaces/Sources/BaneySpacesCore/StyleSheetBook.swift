@@ -77,21 +77,27 @@ public final class LauncherStyles {
     /// A row and what it holds, in one state. A class, so a view takes a reference and copies nothing.
     public final class Row {
         public let box, title, subtitle, badge, icon: ComputedStyle
+        /// The sheet marks this state itself (`ComputedStyle.marks`).
+        public let marked: Bool
 
         init(_ l: StyleLookup, _ states: Set<StyleState>) {
             func part(_ name: String) -> ComputedStyle { l.computed(surface: .launcher, part: name, states: states) }
             box = part("row"); title = part("title"); subtitle = part("subtitle"); badge = part("badge"); icon = part("icon")
+            marked = box.marks(over: l.computed(surface: .launcher, part: "row", states: states.subtracting([.selected])))
         }
 
         fileprivate var all: [ComputedStyle] { [box, title, subtitle, badge, icon] }
     }
 
     public let panel, field, section, footer: ComputedStyle
+    /// No rule names the launcher.
+    public let plain: Bool
     /// A rule changes something under the pointer, so rows watch for it.
     public let hovers: Bool
     private let rows: [Row]
 
     init(_ l: StyleLookup) {
+        plain = !l.named.contains(.launcher)
         panel = l.computed(surface: .launcher)
         field = l.computed(surface: .launcher, part: "field")
         section = l.computed(surface: .launcher, part: "section")
@@ -104,6 +110,13 @@ public final class LauncherStyles {
 }
 
 extension ComputedStyle {
+    /// The sheet's rules for a state change the box, so it carries the sheet's mark. Until they do, the theme's own mark of
+    /// the state (a selected row's fill, a tile's ring) is drawn over the part's box: a sheet never hides which row is
+    /// selected by painting them all.
+    public func marks(over plain: ComputedStyle) -> Bool {
+        background != plain.background || border != plain.border || borderBottom != plain.borderBottom
+    }
+
     /// `text` as `text-transform` says.
     public func cased(_ text: String) -> String {
         switch textTransform {
