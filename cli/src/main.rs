@@ -15,6 +15,7 @@ mod features;
 mod files;
 mod local_studio;
 mod look;
+mod mail;
 mod mcp;
 mod retire;
 mod theme;
@@ -122,6 +123,7 @@ fn main() {
         Some("mcp") => mcp::run(&rest),
         Some("files") => files::run(&rest),
         Some("agent") => agent::run(&rest),
+        Some("mail") => mail::run(&rest),
         Some("install") => local_studio::run(&rest, local_studio_command()),
         Some("doctor") => doctor(),
         Some("version") => version::run(&rest, &version_device()),
