@@ -1073,7 +1073,8 @@ final class LauncherModel: ObservableObject {
     /// person picked. Typing matches the title, the group, where it works and the keys themselves ("⌘1", "tab").
     private func keyItems(_ q: String) -> [LauncherItem] {
         let mod = Modifier.current.symbol
-        let rows = KeyBinding.Group.allCases.flatMap { group in Keymap.all.filter { $0.group == group } }
+        let mine = Keymap.rows(SurfacesStore.shared.current)
+        let rows = KeyBinding.Group.allCases.flatMap { group in mine.filter { $0.group == group } }
         return rows.compactMap { b in
             let keys = b.display(modifierSymbol: mod)
             if !q.isEmpty {

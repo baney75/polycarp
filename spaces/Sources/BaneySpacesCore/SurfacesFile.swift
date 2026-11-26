@@ -186,9 +186,10 @@ public enum SurfacesOps {
     /// `get [path]`: the value in force (the file over the defaults), and whether the file sets it.
     public static func get(_ path: String?, file: String) -> Result {
         let tree: SurfaceValue
+        var surfaces = Surfaces.defaults
         switch SurfacesFile.load(path: file) {
         case .missing: tree = .object([:])
-        case .document(let d): tree = d.tree
+        case .document(let d): (tree, surfaces) = (d.tree, d.surfaces)
         case .invalid(let e, _):
             return .failure(SurfacesFailure("invalid_file", "\(display(file)) is invalid, so the app keeps its last good config: \(e.summary)",
                                             suggestion: "run `surfaces validate` on it, then fix or `surfaces reset` the paths it names", issues: e.issues))
@@ -200,7 +201,10 @@ public enum SurfacesOps {
             // What the app reads: a retired value or group the file still holds isn't in force.
             var gone: [SurfacesIssue] = []
             let live = SurfaceCheck.retire(tree, warnings: &gone)
-            let value = SurfaceField.defaultTree.merged(with: live).at(k) ?? .null
+            var whole = SurfaceField.defaultTree.merged(with: live)
+            // A command whose key the file gives to another has none.
+            for name in TilingKeys.all.map(\.name) where surfaces.tiling.keys[name] == nil { whole = whole.setting(["tiling", "keys", name], to: .string("")) }
+            let value = whole.at(k) ?? .null
             return .success(.object(["path": .string(k.isEmpty ? "$" : k.joined(separator: ".")), "value": value,
                                      "set": .bool(!k.isEmpty && live.at(k) != nil), "file": .string(display(file))]))
         }

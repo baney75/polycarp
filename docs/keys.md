@@ -60,6 +60,19 @@ only while a Settings switch is on; Always means it always works there.
 | ⌘⇧Tab | Step back in the ⌘Tab switcher | Anywhere | Unless Settings leaves ⌘Tab to macOS |
 | ←→↑↓ | Step through the switcher (among windows ↑ ↓ go by row) | While the ⌘Tab switcher is up | Always |
 | Esc | Close the switcher without switching | While the ⌘Tab switcher is up | Always |
+| ⌃⌥T | Tile this workspace, or stop | Anywhere | Always |
+| ⌃⌥←→↑↓ | Focus the window that way | Anywhere | While this workspace tiles |
+| ⌃⌥] | Focus the next tiled window | Anywhere | While this workspace tiles |
+| ⌃⌥[ | Focus the previous tiled window | Anywhere | While this workspace tiles |
+| ⌃⌥⇧←→↑↓ | Move the tiled window that way | Anywhere | While this workspace tiles |
+| ⌃⌥⌘←→↑↓ | Move the tiled window's edge that way | Anywhere | While this workspace tiles |
+| ⌃⌥B | Even out every split | Anywhere | While this workspace tiles |
+| ⌃⌥R | Turn the window's split | Anywhere | While this workspace tiles |
+| ⌃⌥S | Next tiling style: dwindle, columns, main | Anywhere | While this workspace tiles |
+| ⌃⌥Return | Make the window the main one | Anywhere | While this workspace tiles |
+| ⌃⌥F | Float the window, or tile it again | Anywhere | While this workspace tiles |
+| ⌃⌥M | Give the window the whole area, or put it back | Anywhere | While this workspace tiles |
+| ⌃⌥N | Send the window to the next display | Anywhere | While this workspace tiles |
 
 ## Terminal
 
