@@ -87,6 +87,8 @@ only while a Settings switch is on; Always means it always works there.
 | ⌃⌥N | Send the window to the next display | Anywhere | While this workspace tiles |
 | ⌃⌥- | Show the scratchpad, or put it away | Anywhere | While this workspace tiles |
 | ⌃⌥⇧- | Send the window to the scratchpad, or take it out | Anywhere | While this workspace tiles |
+| ⌃⌥O | Pop the window out over every workspace, or put it back | Anywhere | While this workspace tiles |
+| ⌃⌥P | Pin the window over every workspace where it is, or put it back | Anywhere | While this workspace tiles |
 
 ## Terminal
 

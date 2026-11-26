@@ -367,6 +367,8 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.keys.next-display` | `"ctrl+opt+N"` | Send the window to the next display. |
 | `tiling.keys.scratchpad` | `"ctrl+opt+-"` | Show the scratchpad, or put it away. |
 | `tiling.keys.scratchpad-send` | `"ctrl+opt+shift+-"` | Send the window to the scratchpad, or take it out. |
+| `tiling.keys.pop` | `"ctrl+opt+O"` | Pop the window out over every workspace, or put it back. |
+| `tiling.keys.pin` | `"ctrl+opt+P"` | Pin the window over every workspace where it is, or put it back. |
 | `tiling.keys.style-dwindle` | `""` | Tile in the dwindle style. |
 | `tiling.keys.style-columns` | `""` | Tile in the columns style. |
 | `tiling.keys.style-main` | `""` | Tile in the main style. |

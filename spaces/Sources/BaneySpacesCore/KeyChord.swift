@@ -123,6 +123,8 @@ public enum TilingKeys {
         add("next-display", "Send the window to the next display", "ctrl+opt+N")
         add("scratchpad", "Show the scratchpad, or put it away", "ctrl+opt+-")
         add("scratchpad-send", "Send the window to the scratchpad, or take it out", "ctrl+opt+shift+-")
+        add("pop", "Pop the window out over every workspace, or put it back", "ctrl+opt+O")
+        add("pin", "Pin the window over every workspace where it is, or put it back", "ctrl+opt+P")
         for style in ["dwindle", "columns", "main", "scrolling", "floating"] { add("style-" + style, "Tile in the " + style + " style", "") }
         return rows
     }()

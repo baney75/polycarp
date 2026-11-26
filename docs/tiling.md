@@ -51,6 +51,8 @@ The same list with your changes: `polycarp-spaces keys`.
 | ⌃⌥N | Send the window to the next display |
 | ⌃⌥- | Show the scratchpad, or put it away |
 | ⌃⌥⇧- | Send the window to the scratchpad, or take it out |
+| ⌃⌥O | Pop the window out over every workspace, or put it back |
+| ⌃⌥P | Pin the window over every workspace where it is, or put it back |
 
 While VoiceOver is on it keeps the keys it uses (⌃⌥ with the arrows and more); Settings > Keys marks them.
 
@@ -69,6 +71,14 @@ window in front to the scratchpad, ⌃⌥- shows all of it over the workspace yo
 their own size. Going to another workspace puts them away, and ⌃⌥⇧- on one of them makes it an ordinary window again.
 
 The two keys work on workspaces that don't tile, as long as something tiles or the scratchpad holds a window.
+
+## Pop out and pin
+
+⌃⌥O pops the window in front out of the tiles: it floats in the middle, at most 1300 by 900 points, and stays in sight on
+every workspace of its display. ⌃⌥P pins it just where it is. Either key puts it back, in its old place when it still is on
+its workspace, beside the focused tile on another. A floated window (⌃⌥F) goes back to its old place the same way.
+
+A pinned window is never on the agent workspace, and sending it to a workspace lets it go. Pins are kept across restarts.
 
 ## The pointer
 

@@ -15,6 +15,7 @@ extension Workspaces {
     public mutating func toScratchpad(_ id: WindowID) {
         guard home[id] != nil else { return }
         leave(id)
+        pinned.remove(id)
         home[id] = Self.scratchpad
         lastFocused[Self.scratchpad] = id
     }
@@ -60,8 +61,8 @@ extension Workspaces {
         }
     }
 
-    /// A window leaves its workspace; the focus there goes back to the window that had it before the scratchpad came out.
-    private mutating func leave(_ id: WindowID) {
+    /// A window leaves its workspace; the focus there goes back to the window that had it without it.
+    mutating func leave(_ id: WindowID) {
         out.remove(id)
         guard let n = home[id] else { return }
         if under[n] == id { under[n] = nil }

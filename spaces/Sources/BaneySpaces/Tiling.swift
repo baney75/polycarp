@@ -104,6 +104,7 @@ final class Tiling {
         (shot.displays, shot.corner) = (view.displays, Geometry.hidingSpot(screens: view.displays))
         let moves = engine.plan(shot)
         spaces.stowed = engine.stowed
+        for (old, new) in engine.swaps { spaces.model.tab(old, became: new) }
         waitForLate(facts, Set(view.shown.keys))
         forget(facts)
         saveSoon()

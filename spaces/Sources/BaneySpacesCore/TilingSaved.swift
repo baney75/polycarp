@@ -65,7 +65,7 @@ extension TilingEngine {
         for (key, slot) in slots.sorted(by: { $0.key < $1.key }) {
             var s = slot
             // The windows that are away are kept in their places.
-            for id in slot.away.keys.sorted() { if let was = s.away.removeValue(forKey: id) { bring(id, back: was, [], &s) } }
+            for id in slot.away.keys.sorted() { if let was = s.away.removeValue(forKey: id), !was.floating { bring(id, back: was, [], &s) } }
             let unknown = Set(s.all.filter { know($0) == nil })
             s.ungroup(unknown)
             for id in unknown { s.layout.remove(id, area: s.area) }

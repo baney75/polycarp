@@ -9,11 +9,11 @@ public struct TilingShortcuts: Equatable, Sendable {
     /// Commands whose key is left to VoiceOver while it is on: ⌃⌥ is how it is spoken to.
     public let toVoiceOver: [String]
 
-    /// Only the key that turns tiling on is taken while no workspace tiles, so the rest stay the front app's. One that gets
-    /// a window off the scratchpad stays as long as there is one on it.
-    public init(_ t: Surfaces.Tiling, voiceOver: Bool, scratch: Bool = false) {
+    /// Only the key that turns tiling on is taken while no workspace tiles, so the rest stay the front app's. `keep` are
+    /// commands whose key stays: a window off the scratchpad, or one pinned, can always be got back.
+    public init(_ t: Surfaces.Tiling, voiceOver: Bool, keep: Set<String> = []) {
         var mine: [Key] = [], its: [String] = []
-        for command in TilingKeys.all where t.anywhere || command.name == "toggle" || scratch && command.name.hasPrefix("scratchpad") {
+        for command in TilingKeys.all where t.anywhere || command.name == "toggle" || keep.contains(command.name) {
             guard let chord = t.keys[command.name] else { continue }
             if voiceOver, chord.modifiers.isSuperset(of: [.ctrl, .opt]) { its.append(command.name) } else { mine.append(Key(name: command.name, chord: chord)) }
         }

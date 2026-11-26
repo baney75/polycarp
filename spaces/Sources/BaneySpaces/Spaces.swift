@@ -177,7 +177,8 @@ final class Spaces {
         // a restart), and return to the workspace you were on, on each display.
         if let layout = SavedLayout.load(from: Spaces.layoutURL) {
             model.restore(current: layout.current, home: layout.homes(livePids: windows.mapValues(\.pid)),
-                          lastFocused: layout.lastFocused, displays: layout.displays ?? [:])
+                          lastFocused: layout.lastFocused, displays: layout.displays ?? [:],
+                          pinned: layout.pins(livePids: windows.mapValues(\.pid)))
             // Window numbers are reused after a restart, so a waiting window must still belong
             // to the same app; otherwise its entry would unhide a stranger.
             let server = Windows.serverWindows()
@@ -472,6 +473,7 @@ final class Spaces {
             }
             guard let entry = pendingLayout.removeValue(forKey: id), windows[id]?.pid == entry.pid else { continue }
             model.putBack(id, on: entry.workspace)
+            if entry.pinned == true { model.pin(id, true) }
             // A held window is a new one: a claim or an agent's app may still send it elsewhere. A saved one isn't.
             if heldWindows.remove(id) == nil { fromLayout.insert(id) }
             // Its app hidden while it waited (it had windows elsewhere), the window landing here must come back.
@@ -2588,7 +2590,7 @@ final class Spaces {
 
     /// Saves the parked-window record and state.json. The snapshot is taken here; the disk
     /// writes happen off the main thread so they never delay a switch.
-    private func persist() {
+    func persist() {
         let frames = saved
         // state.json is for scripts and checks: the current workspace and where each window lives.
         let state: [String: Any] = [
@@ -2608,7 +2610,8 @@ final class Spaces {
                 (String(n), model.windows(on: n).map { ["id": $0, "app": windows[$0]?.appName ?? ""] as [String: Any] })
             }),
         ]
-        let known = model.home.compactMap { id, ws in windows[id].map { SavedLayout.Entry(window: id, pid: $0.pid, workspace: model.isScratch(id) ? Workspaces.scratchpad : ws) } }
+        let known = model.home.compactMap { id, ws in windows[id].map { SavedLayout.Entry(window: id, pid: $0.pid, workspace: model.isScratch(id) ? Workspaces.scratchpad : ws,
+                                                                                                    pinned: model.pinned.contains(id) ? true : nil) } }
         let layout = SavedLayout(current: model.current,
                                  entries: known + pendingLayout.values.filter { model.workspace(of: $0.window) == nil },
                                  lastFocused: model.lastFocused, displays: model.shown)

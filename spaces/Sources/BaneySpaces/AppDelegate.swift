@@ -34,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var tiling = Tiling(spaces: spaces)
     /// The tiling keys registered last; nil before the first time.
     private var tilingShortcuts: TilingShortcuts?
-    private var scratchHeld = false
+    private var tilingKeysKept: Set<String> = []
     private var voiceOver: NSKeyValueObservation?
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
     /// one up again bumps its generation, so its stale move never runs, even one queued.
@@ -567,8 +567,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.switcher.titlesChanged()
             self.tiling.drawStrips()
             self.tiling.lookSoon(0.02)
-            // The first window went to the scratchpad, or the last one left it.
-            if self.scratchHeld == self.spaces.model.scratch.isEmpty { self.tilingKeysMayHaveChanged() }
+            // The first window went to the scratchpad or was pinned, or the last one left it.
+            if self.tilingKeysKept != self.tilingKeysToKeep { self.tilingKeysMayHaveChanged() }
         }
         spaces.onSettled = { [weak self] in self?.tiling.look() }
         spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
@@ -942,12 +942,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func tilingKeysNow() -> TilingShortcuts {
-        scratchHeld = !spaces.model.scratch.isEmpty
-        return TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled, scratch: scratchHeld)
+        tilingKeysKept = tilingKeysToKeep
+        return TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled, keep: tilingKeysKept)
     }
 
-    /// The tiling keys changed, the first or last workspace started or stopped tiling, the scratchpad filled or emptied, or
-    /// VoiceOver came or went.
+    private var tilingKeysToKeep: Set<String> {
+        Set((spaces.model.scratch.isEmpty ? [] : ["scratchpad", "scratchpad-send"]) + (spaces.model.pinned.isEmpty ? [] : ["pop", "pin"]))
+    }
+
+    /// The tiling keys changed, the first or last workspace started or stopped tiling, a window went to the scratchpad or
+    /// was pinned or the last one left, or VoiceOver came or went.
     private func tilingKeysMayHaveChanged() {
         let now = tilingKeysNow()
         if let was = tilingShortcuts, was != now { registerShortcuts() }

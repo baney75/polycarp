@@ -1,7 +1,7 @@
 import CoreGraphics
 
 /// Why a window is over the workspace it shows on.
-public enum TilingOver: Equatable, Sendable { case scratchpad }
+public enum TilingOver: Equatable, Sendable { case scratchpad, pinned }
 
 /// One window as the engine's scan found it. Sheets, dialogs, panels and popovers never get this far: the scan lists
 /// standard windows only.
@@ -118,13 +118,16 @@ public struct TilingEngine: Equatable, Sendable {
     /// A window this much over its target at most rounded up to its own grid, as a terminal does to whole cells.
     public static let grid = 24.0
 
-    /// A window that left the tree but not the workspace.
+    /// A window that left the tree: for the Dock or hiding, or to float.
     struct Away: Equatable, Sendable {
         /// The layout it left, with it.
         var whole: TileLayout
         var beside: WindowID?
         /// The windows of the group it was in, itself among them.
         var mates: [WindowID] = []
+        /// It floats: its place is kept on any workspace, and its frame from before tiling with it.
+        var floating = false
+        var before: CGRect?
     }
 
     struct Slot: Equatable, Sendable {
@@ -176,6 +179,8 @@ public struct TilingEngine: Equatable, Sendable {
     var claimed: Set<WindowID> = []
     /// Windows scrolled out of sight, and where each comes back in reach when tiling lets go of it.
     public internal(set) var stowed: [WindowID: CGRect] = [:]
+    /// Windows over a workspace that are another native tab since the last look: the one before, and the one now.
+    public private(set) var swaps: [WindowID: WindowID] = [:]
 
     public init() {}
 
@@ -205,9 +210,15 @@ public struct TilingEngine: Equatable, Sendable {
     /// Brings every layout in sight in line with the windows there are and says which frames to write: none when nothing
     /// changed.
     public mutating func plan(_ shot: TilingShot) -> [TilingMove] {
-        let windows = Dictionary(shot.windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var shot = shot
+        var windows = Dictionary(shot.windows.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         inSight = Set(shot.shown.keys)
-        swapTabs(windows)
+        swaps = swapTabs(windows).filter { seen[$0.key]?.over != nil }
+        for i in shot.windows.indices {
+            guard let old = swaps.first(where: { $0.value == shot.windows[i].id })?.key else { continue }
+            shot.windows[i].over = seen[old]!.over
+            windows[shot.windows[i].id] = shot.windows[i]
+        }
         forget(windows)
         if let f = shot.focused, windows[f] != nil, recent.first != f { recent = [f] + recent.filter { $0 != f } }
         var moves: [TilingMove] = []
@@ -295,7 +306,7 @@ public struct TilingEngine: Equatable, Sendable {
     private mutating func arrange(_ workspace: Int, _ place: TilingShot.Place, _ here: [TilingWindow], focused: WindowID?) {
         let key = TilingKey(workspace, place.display)
         var slot = slots[key] ?? self.key(workspace).flatMap { slots[$0] } ?? Slot(layout: TileLayout(style: options.style))
-        let fresh = slot.layout.windows.isEmpty && slot.away.isEmpty
+        let fresh = slot.layout.windows.isEmpty && slot.away.values.allSatisfy(\.floating)
         slot.area = place.area
         let tiling = here.filter { !floats($0) }
         let gone = Set(tiling.filter(\.away).map(\.id)).union(waiting.keys), present = Set(tiling.filter { !$0.away }.map(\.id))
@@ -304,8 +315,12 @@ public struct TilingEngine: Equatable, Sendable {
         slot.remember(gone, beside: { Self.sibling(of: $0, in: whole) })
         slot.ungroup(Set(slot.all).subtracting(present))
         for id in slot.layout.windows where !present.contains(id) { slot.layout.remove(id, area: place.area) }
-        slot.away = slot.away.filter { gone.contains($0.key) || present.contains($0.key) }
-        for w in tiling where !w.away { if let was = slot.away.removeValue(forKey: w.id) { bring(w.id, back: was, present, &slot) } }
+        slot.away = slot.away.filter { gone.contains($0.key) || present.contains($0.key) || $0.value.floating }
+        for w in tiling where !w.away {
+            guard let was = slot.away.removeValue(forKey: w.id) else { continue }
+            bring(w.id, back: was, present, &slot)
+            if let b = was.before { before[w.id] = b }
+        }
         // Windows tiled for the first time keep the order they stand in; later ones come beside the focused one.
         let new = tiling.filter { !$0.away && !slot.holds($0.id) }
         let order = fresh ? new.sorted { ($0.frame.minX, $0.frame.minY, $0.id) < ($1.frame.minX, $1.frame.minY, $1.id) }
@@ -381,7 +396,7 @@ public struct TilingEngine: Equatable, Sendable {
         }
     }
 
-    private static func sibling(of id: WindowID, in layout: TileLayout) -> WindowID? {
+    static func sibling(of id: WindowID, in layout: TileLayout) -> WindowID? {
         let order = layout.windows
         guard let i = order.firstIndex(of: id) else { return nil }
         return i > 0 ? order[i - 1] : order.dropFirst().first
@@ -497,16 +512,20 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// A native tab that comes to the front is another window of the app at the place of one that went (closed, or no
     /// longer drawn): it takes its slot.
-    private mutating func swapTabs(_ now: [WindowID: TilingWindow]) {
+    private mutating func swapTabs(_ now: [WindowID: TilingWindow]) -> [WindowID: WindowID] {
+        var swapped: [WindowID: WindowID] = [:]
         var came = now.values.filter { !$0.away && seen[$0.id]?.away != false }.sorted { $0.id < $1.id }
-        guard !came.isEmpty else { return }
+        guard !came.isEmpty else { return swapped }
         for gone in seen.values.filter({ !$0.away && now[$0.id]?.away != false }).sorted(by: { $0.id < $1.id }) {
             let spots = [gone.frame, asked[gone.id]?.target, asked[gone.id]?.landed].compactMap { $0 }
             guard let i = came.firstIndex(where: { w in
                 w.pid == gone.pid && w.workspace == gone.workspace && spots.contains { Self.near($0, w.frame) }
             }) else { continue }
-            rename(gone.id, to: came.remove(at: i).id)
+            let new = came.remove(at: i).id
+            swapped[gone.id] = new
+            rename(gone.id, to: new)
         }
+        return swapped
     }
 
     /// `new` has the place of `old`, and floats as it did: to a person they are one window. What else is known of `new`
@@ -522,7 +541,7 @@ public struct TilingEngine: Equatable, Sendable {
             if let a = slots[key]!.away.removeValue(forKey: old) {
                 var whole = a.whole
                 whole.replace(old, with: new)
-                slots[key]!.away[new] = Away(whole: whole, beside: a.beside, mates: a.mates)
+                slots[key]!.away[new] = Away(whole: whole, beside: a.beside, mates: a.mates, floating: a.floating, before: a.before)
             }
             for id in slots[key]!.away.keys {
                 slots[key]!.away[id]!.whole.replace(old, with: new)
@@ -549,7 +568,7 @@ public struct TilingEngine: Equatable, Sendable {
             let left = Set(slots[key]!.all.filter { now[$0]?.workspace != key.workspace && waiting[$0] == nil })
             if !left.isEmpty { slots[key]!.ungroup(left) }
             for id in left { slots[key]!.layout.remove(id, area: slots[key]!.area) }
-            slots[key]!.away = slots[key]!.away.filter { now[$0.key]?.workspace == key.workspace || waiting[$0.key] != nil }
+            slots[key]!.away = slots[key]!.away.filter { $0.value.floating ? now[$0.key] != nil : now[$0.key]?.workspace == key.workspace || waiting[$0.key] != nil }
         }
     }
 

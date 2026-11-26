@@ -13,7 +13,7 @@ final class TilingEnginePropertyTests: XCTestCase {
     private func step(_ f: inout FakeWindows, _ r: inout TileRandom, _ next: inout WindowID) {
         let ids = f.wins.keys.sorted()
         let id = ids.isEmpty ? 0 : ids[r.below(ids.count)]
-        switch r.below(18) {
+        switch r.below(19) {
         case 0, 1, 2:
             guard ids.count < 12 else { return }
             next += 1
@@ -66,6 +66,11 @@ final class TilingEnginePropertyTests: XCTestCase {
         case 17:
             guard let w = f.wins[id]?.w, let strip = f.engine.tabs(w.workspace).first?.frame else { return }
             f.engine.drop(id, on: CGPoint(x: strip.midX, y: strip.midY))
+        case 18:
+            // Popped out, pinned or let go, and carried to another workspace on the way.
+            guard let w = f.wins[id]?.w else { return }
+            if w.over == nil { f.engine.popOut(id, sized: r.below(2) == 0) } else if r.below(3) == 0 { f.wins[id]!.w.workspace = 1 + r.below(3) }
+            f.wins[id]!.w.over = w.over == nil ? .pinned : nil
         case 14: if f.wins[id] != nil { f.engine.choice[id] = r.below(2) == 0 }
         default:
             guard f.wins[id] != nil else { return }
