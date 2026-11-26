@@ -160,11 +160,16 @@ public struct TilingEngine: Equatable, Sendable {
     var recent: [WindowID] = []
     /// Where a window dragged to another display was let go, until it joins the layout there.
     var landing: [WindowID: CGPoint] = [:]
+    /// Saved windows still to turn up, each under a number no window has, and the windows that were (TilingSaved.swift).
+    var waiting: [WindowID: Waiting] = [:]
+    var claimed: Set<WindowID> = []
 
     public init() {}
 
     /// Whether anything is left to do for tiling: while false, the app takes no look at all.
-    public func wanted(on shown: [Int]) -> Bool { shown.contains { options.tiles($0) } || !before.isEmpty }
+    public func wanted(on shown: [Int]) -> Bool {
+        shown.contains { options.tiles($0) } || !before.isEmpty || waiting.values.contains { $0.before != nil }
+    }
 
     /// Takes new settings. A layout still in the old default style takes the new one.
     public mutating func apply(_ new: TilingOptions) {
@@ -217,6 +222,7 @@ public struct TilingEngine: Equatable, Sendable {
             }
             if !tiled, slots.keys.contains(where: { $0.workspace == workspace }) {
                 slots = slots.filter { $0.key.workspace != workspace }
+                dropUnneeded()
             }
         }
         seen = windows
@@ -278,7 +284,7 @@ public struct TilingEngine: Equatable, Sendable {
         let fresh = slot.layout.windows.isEmpty && slot.away.isEmpty
         slot.area = place.area
         let tiling = here.filter { !floats($0) }
-        let gone = Set(tiling.filter(\.away).map(\.id)), present = Set(tiling.filter { !$0.away }.map(\.id))
+        let gone = Set(tiling.filter(\.away).map(\.id)).union(waiting.keys), present = Set(tiling.filter { !$0.away }.map(\.id))
         // Windows that leave together each remember the layout with all of them in it.
         let whole = slot.layout
         for id in whole.windows where !present.contains(id) {
@@ -483,11 +489,12 @@ public struct TilingEngine: Equatable, Sendable {
         func alive<T>(_ d: inout [WindowID: T]) { if d.keys.contains(where: { now[$0] == nil }) { d = d.filter { now[$0.key] != nil } } }
         alive(&before); alive(&choice); alive(&minimums); alive(&rounded); alive(&lessons); alive(&roundings); alive(&asked); alive(&landing)
         recent.removeAll { now[$0] == nil }
+        claimed.formIntersection(now.keys)
         for key in slots.keys {
-            for id in slots[key]!.layout.windows where now[id]?.workspace != key.workspace {
+            for id in slots[key]!.layout.windows where now[id]?.workspace != key.workspace && waiting[id] == nil {
                 slots[key]!.layout.remove(id, area: slots[key]!.area)
             }
-            slots[key]!.away = slots[key]!.away.filter { now[$0.key]?.workspace == key.workspace }
+            slots[key]!.away = slots[key]!.away.filter { now[$0.key]?.workspace == key.workspace || waiting[$0.key] != nil }
         }
     }
 
