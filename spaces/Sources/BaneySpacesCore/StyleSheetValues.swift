@@ -664,6 +664,8 @@ public final class StyleLookup {
     /// The typed value of each `var()` declaration that works in this mode, by where its value was written.
     private var resolved: [Place: StyleValue] = [:]
     private var memo: [Key: ComputedStyle] = [:]
+    /// The surfaces a rule names: nothing reaches any other.
+    let named: Set<StyleSurface>
 
     struct Place: Hashable { let line: Int, column: Int }
     private struct Key: Hashable {
@@ -675,6 +677,7 @@ public final class StyleLookup {
 
     public init(_ sheet: StyleSheet, dark: Bool, roles: [String: StyleColor]) {
         self.sheet = sheet; self.dark = dark; self.roles = roles
+        named = Set(sheet.rules.flatMap { rule in rule.selectors.compactMap(\.surface) })
         let expander = StyleVars.Expander(custom: dark ? sheet.customDark : sheet.customLight, roles: roles)
         // The same value written in many rules is worked out once.
         var byText: [String: StyleValue?] = [:]
@@ -696,7 +699,7 @@ public final class StyleLookup {
     public func computed(surface: StyleSurface, part: String? = nil, region: String? = nil, states: Set<StyleState> = []) -> ComputedStyle {
         let key = Key(surface: surface, part: part, region: region, states: states)
         if let known = memo[key] { return known }
-        let c = sheet.rules.isEmpty ? .empty : (cascade(surface: surface, part: part, region: region, states: states)?.last?.computed ?? .empty)
+        let c = !named.contains(surface) ? .empty : (cascade(surface: surface, part: part, region: region, states: states)?.last?.computed ?? .empty)
         memo[key] = c
         return c
     }
@@ -758,7 +761,8 @@ public final class StyleLookup {
             let parent = levels.last
             // The text color first: `currentColor` in `color` is the parent's color.
             let parentColor: StyleColor? = { if case .color(.rgba(let c))? = parent?.values["color"] { c } else { nil } }()
-            for property in StyleProperty.all where property.applies(to: t) {
+            let properties = StyleProperty.of[t]!
+            for property in properties.taken {
                 if let (v, line, column) = specified[property.name] {
                     level.values[property.name] = v
                     level.own[property.name] = (line, column)
@@ -771,7 +775,7 @@ public final class StyleLookup {
             }
             // Inherited values pass through a level that can't use them, so a part further down still gets them.
             if let parent {
-                for property in StyleProperty.all where property.inherited && !property.applies(to: t) {
+                for property in properties.passed {
                     if let v = parent.values[property.name] { level.values[property.name] = v }
                 }
             }
@@ -863,7 +867,7 @@ extension StyleSheet {
             let r = roles(dark)
             guard let base = r["background"] else { continue }
             let lookup = StyleLookup(self, dark: dark, roles: r)
-            for (surface, part, region, states) in Self.textNodes {
+            for (surface, part, region, states) in Self.textNodes where lookup.named.contains(surface) {
                 guard let levels = lookup.cascade(surface: surface, part: part, region: region, states: states),
                       let last = levels.last,
                       levels.contains(where: { $0.own["color"] != nil || $0.own["background"] != nil }) else { continue }

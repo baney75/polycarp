@@ -185,6 +185,9 @@ extension Text {
 extension View {
     /// The sheet's padding in place of the view's own.
     func padding(_ c: ComputedStyle, else own: EdgeInsets) -> some View { padding(c.padding.map(Styled.insets) ?? own) }
+
+    /// A picture cut to the sheet's corners, when it sets them.
+    @ViewBuilder func corners(_ c: ComputedStyle) -> some View { if c.borderRadius == nil { self } else { clipShape(Styled.shape(c)) } }
 }
 
 /// The face behind a part that has one of its own: the view's fill and corners, each replaced by the sheet's, and the
@@ -194,10 +197,14 @@ struct StyledBack: View {
     /// Whose corners it has when the sheet sets none; square without one.
     let surface: Surface?
     var own = AnyShapeStyle(Color.clear)
+    private var over = false
 
     init(_ style: ComputedStyle, _ surface: Surface? = nil) { self.style = style; self.surface = surface }
 
     func fill(_ color: Color) -> StyledBack { var b = self; b.own = AnyShapeStyle(color); return b }
+
+    /// The theme's fill is a state's mark the sheet doesn't replace, so it is drawn over the sheet's background.
+    func marking(_ on: Bool) -> StyledBack { var b = self; b.over = on; return b }
 
     var body: some View {
         let shape = Styled.shape(style, else: surface.map(Chrome.radius) ?? 0)
@@ -205,8 +212,113 @@ struct StyledBack: View {
             shape.fill(own)
         } else {
             shape.fill(Styled.fill(style.background) ?? own)
+                .overlay { if over, style.background != nil { shape.fill(own) } }
                 .overlay { StyledLines(style: style, shape: shape) }
                 .modifier(StyledFade(style: style))
+        }
+    }
+}
+
+/// What a panel's rows and tiles are drawn with, picked once for the whole panel: `Bare` where no rule names it, which
+/// is the theme's pieces and nothing else, so a panel without a rule opens as fast as before there was a sheet; `Dressed`
+/// for the sheet's. The layout is written once, over either.
+@MainActor protocol Dress {
+    associatedtype Part: ViewModifier
+    associatedtype Cut: ViewModifier
+    associatedtype Plate: ViewModifier
+    associatedtype Fit: ViewModifier
+    associatedtype Hover: ViewModifier
+    associatedtype Back: Face
+    associatedtype Edge: View
+    associatedtype Pill: View
+    /// Hides and fades a part.
+    static func part(_ c: ComputedStyle) -> Part
+    /// A part the theme draws no face behind: the sheet's, and its fade.
+    static func plate(_ c: ComputedStyle) -> Plate
+    /// Cuts a picture's corners.
+    static func cut(_ c: ComputedStyle) -> Cut
+    static func hover(on: Bool, _ changed: @escaping (Bool) -> Void) -> Hover
+    static func back(_ c: ComputedStyle, _ surface: Surface) -> Back
+    /// The theme's pill, or the sheet's box.
+    static func pill(_ c: ComputedStyle, _ surface: Surface, _ fill: Color) -> Pill
+    /// `short` in place of the view where the sheet's height leaves it no room.
+    static func fit(_ c: ComputedStyle, short: @escaping () -> AnyView) -> Fit
+    /// The line the theme draws around a tile, unless the sheet draws its own; `marking` when it is a state's mark the
+    /// sheet doesn't replace.
+    static func edge(_ c: ComputedStyle, _ surface: Surface, _ color: Color, focused: Bool, marking: Bool) -> Edge
+}
+
+/// The face behind a row or tile: the theme's fill, and whether that fill is a mark drawn over the sheet's background.
+protocol Face: View {
+    func fill(_ color: Color) -> Self
+    func marking(_ on: Bool) -> Self
+}
+
+extension StyledBack: Face {}
+
+struct BareBack: Face {
+    let surface: Surface
+    var own = Color.clear
+    func fill(_ color: Color) -> BareBack { BareBack(surface: surface, own: color) }
+    func marking(_ on: Bool) -> BareBack { self }
+    var body: some View { Chrome.shape(surface).fill(own) }
+}
+
+struct StyledPart: ViewModifier {
+    let style: ComputedStyle
+    func body(content: Content) -> some View { if !style.isHidden { content.opacity(style.opacity ?? 1) } }
+}
+
+struct StyledCut: ViewModifier {
+    let style: ComputedStyle
+    func body(content: Content) -> some View { content.corners(style) }
+}
+
+struct StyledPlate: ViewModifier {
+    let style: ComputedStyle
+    func body(content: Content) -> some View {
+        if !style.isHidden { content.background { StyledBack(style) }.opacity(style.opacity ?? 1) }
+    }
+}
+
+struct StyledFit: ViewModifier {
+    let style: ComputedStyle
+    let short: () -> AnyView
+    func body(content: Content) -> some View {
+        if style.height == nil { content } else { ViewThatFits(in: .vertical) { content; short() } }
+    }
+}
+
+enum Bare: Dress {
+    static func part(_ c: ComputedStyle) -> EmptyModifier { .identity }
+    static func cut(_ c: ComputedStyle) -> EmptyModifier { .identity }
+    static func plate(_ c: ComputedStyle) -> EmptyModifier { .identity }
+    static func fit(_ c: ComputedStyle, short: @escaping () -> AnyView) -> EmptyModifier { .identity }
+    static func hover(on: Bool, _ changed: @escaping (Bool) -> Void) -> EmptyModifier { .identity }
+    static func pill(_ c: ComputedStyle, _ surface: Surface, _ fill: Color) -> some View { Chrome.pill().fill(fill) }
+    static func back(_ c: ComputedStyle, _ surface: Surface) -> BareBack { BareBack(surface: surface) }
+    static func edge(_ c: ComputedStyle, _ surface: Surface, _ color: Color, focused: Bool, marking: Bool) -> some View {
+        Chrome.shape(surface).strokeBorder(color, lineWidth: Chrome.width(surface, focused: focused))
+    }
+}
+
+enum Dressed: Dress {
+    static func part(_ c: ComputedStyle) -> StyledPart { StyledPart(style: c) }
+    static func cut(_ c: ComputedStyle) -> StyledCut { StyledCut(style: c) }
+    static func plate(_ c: ComputedStyle) -> StyledPlate { StyledPlate(style: c) }
+    static func fit(_ c: ComputedStyle, short: @escaping () -> AnyView) -> StyledFit { StyledFit(style: c, short: short) }
+    @ViewBuilder static func pill(_ c: ComputedStyle, _ surface: Surface, _ fill: Color) -> some View {
+        if c.borderRadius == nil, c.border == nil {
+            Chrome.pill().fill(Styled.fill(c.background) ?? AnyShapeStyle(fill))
+        } else {
+            StyledBack(c, surface).fill(fill)
+        }
+    }
+    static func hover(on: Bool, _ changed: @escaping (Bool) -> Void) -> StyledHover { StyledHover(on: on, changed: changed) }
+    static func back(_ c: ComputedStyle, _ surface: Surface) -> StyledBack { StyledBack(c, surface) }
+    @ViewBuilder static func edge(_ c: ComputedStyle, _ surface: Surface, _ color: Color, focused: Bool, marking: Bool) -> some View {
+        if c.border == nil || marking {
+            Styled.shape(c, else: Chrome.radius(surface)).strokeBorder(color, lineWidth: Chrome.width(surface, focused: focused))
         }
     }
 }
