@@ -15,6 +15,7 @@ final class Tiling {
     private var busy = false
     private var again = false
     private var soon: DispatchWorkItem?
+    private var soonDue = 0.0
     private var answers: [WindowID: TilingAnswer] = [:]
     /// Windows whose app didn't answer, when to ask again.
     private var silent: [WindowID: Date] = [:]
@@ -58,12 +59,14 @@ final class Tiling {
 
     /// A look a moment from now, the earliest asked for.
     func lookSoon(_ seconds: TimeInterval) {
-        guard soon == nil else { return }
+        let due = CFAbsoluteTimeGetCurrent() + seconds
+        guard TilingSoon.replaces(pending: soon == nil ? nil : soonDue, asked: due) else { return }
+        soon?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.soon = nil
             self?.look()
         }
-        soon = work
+        (soon, soonDue) = (work, due)
         DispatchQueue.main.asyncAfter(deadline: .now() + seconds, execute: work)
     }
 
