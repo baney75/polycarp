@@ -22,7 +22,7 @@ In the Mac app it is Settings > Appearance > Looks.
 
 | Command | What it does |
 | --- | --- |
-| `list` | The shipped look and yours, with a `*` on the one in force |
+| `list` | The shipped look and yours, with a `*` on the one in force. None is in force while the theme is off |
 | `show <name\|file\|->` | What a look holds, what it would change and what it leaves alone |
 | `save <name> [--title T] [--force]` | Keeps how everything looks now. `--force` replaces one of yours |
 | `apply <name\|file\|-> [--dry-run]` | Puts a look on, all of it or none |
@@ -75,8 +75,8 @@ Without Polycarp Spaces (Linux, Windows) the theme part still works, and the out
 - `theme` is `{"builtin": name}`, or `{"document": {...}}`: a whole theme that extends nothing.
 - `style` is a sheet's text, or `null` for none. `surfaces` holds only what isn't at its default.
 - `paper` has `all`, `desktop`, `newtab` and `idle`: a `#RRGGBB` color, a scene, or a picture in `pictures`, named by
-  its sha256. A picture is PNG, JPEG, HEIC or WebP, at most 25 MB (about 23 MB in practice, since the file holds it as
-  base64).
+  its sha256. A picture is PNG, JPEG, HEIC or WebP, at most 25 MB. The file holds pictures as base64, so together
+  they fit in about 23 MB; `save` names each picture and its size when they don't.
 - Leave out `style`, `surfaces` or `paper` and applying the look leaves that part as it is.
 
 ## What a look can't do
@@ -94,5 +94,7 @@ A look from a stranger may change only how things look. The list of settings it 
 | `idle.style`, `idle.effects`, `idle.showVerse`, `idle.showKierkegaard` | `idle.enabled`, `idle.showMachineName`, `idle.startAfterMinutes` |
 | | `text.*`, `rooms.*`, `tiling.*` |
 
-Any key Polycarp doesn't know is refused with its path, as is a value that names a URL, a path or a command. Names are
-lowercase letters, digits and hyphens, so none leaves the folder, and nothing is read or written through a symbolic link.
+A setting the installed Polycarp Spaces is too old to know is left out of `save` with a note naming it; `show` names
+one that a look holds, and `apply` refuses that look. Any key Polycarp doesn't know is refused with its path, as is a
+value that names a URL, a path or a command. Names are lowercase letters, digits and hyphens, so none leaves the
+folder, and nothing is read or written through a symbolic link.

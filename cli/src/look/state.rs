@@ -23,6 +23,10 @@ pub struct Live {
     pub pictures: BTreeMap<String, Picture>,
     /// The bar's modules as they ship; read only when the person has modules of their own.
     pub defaults: BTreeMap<String, Json>,
+    /// Where each picture was read, by its sha256.
+    pub files: BTreeMap<String, PathBuf>,
+    /// Settings this Polycarp Spaces doesn't know, as one older than this polycarp doesn't.
+    pub unknown: Vec<String>,
 }
 
 /// Runs `polycarp-spaces <argv> --json`: its data, or its refusal.
@@ -34,6 +38,17 @@ pub fn spaces(argv: &[&str]) -> Result<Json, ApiErr> {
         return Ok(env["data"].take());
     }
     Err(ApiErr::from_spaces(&env))
+}
+
+/// One setting, or None when this Polycarp Spaces doesn't know it.
+fn field(path: &str) -> Result<Option<Json>, ApiErr> {
+    let argv = ["surfaces", "get", path].map(String::from).to_vec();
+    let (mut env, ok) = mcp::spaces_run_within(argv, "surfaces get", LIMIT);
+    match ok {
+        true => Ok(Some(env["data"].take())),
+        false if env["error"]["code"] == json!("unknown_path") => Ok(None),
+        false => Err(ApiErr::from_spaces(&env)),
+    }
 }
 
 pub fn no_spaces(e: &ApiErr) -> bool {
@@ -60,10 +75,7 @@ pub fn read() -> Result<Option<Live>, ApiErr> {
         .collect();
     // One process each, side by side: a look holds about twenty.
     let values = std::thread::scope(|s| {
-        let jobs: Vec<_> = kept
-            .iter()
-            .map(|p| s.spawn(|| spaces(&["surfaces", "get", p])))
-            .collect();
+        let jobs: Vec<_> = kept.iter().map(|p| s.spawn(|| field(p))).collect();
         jobs.into_iter()
             .map(|j| {
                 j.join().unwrap_or_else(|_| {
@@ -72,16 +84,21 @@ pub fn read() -> Result<Option<Live>, ApiErr> {
             })
             .collect::<Result<Vec<_>, _>>()
     })?;
-    let surfaces: BTreeMap<String, Json> = kept
-        .iter()
-        .zip(values)
-        .filter(|(_, d)| d["set"] == json!(true))
-        .map(|(p, mut d)| (p.to_string(), d["value"].take()))
-        .collect();
+    let (mut surfaces, mut unknown) = (BTreeMap::new(), Vec::new());
+    for (p, d) in kept.iter().zip(values) {
+        match d {
+            None => unknown.push(p.to_string()),
+            Some(mut d) if d["set"] == json!(true) => {
+                surfaces.insert(p.to_string(), d["value"].take());
+            }
+            Some(_) => {}
+        }
+    }
     let mut live = Live {
         style: (style["exists"] == json!(true))
             .then(|| style["text"].as_str().unwrap_or_default().to_string()),
         surfaces,
+        unknown,
         ..Live::default()
     };
     if live
@@ -130,10 +147,12 @@ fn read_paper(d: &Json, live: &mut Live) -> Result<(), ApiErr> {
                 .filter(|_| v["missing"] != json!(true))
             {
                 Some(file) => {
-                    let pic = store::read_plain(&expand(file), paper::MAX_PICTURE)
+                    let file = expand(file);
+                    let pic = store::read_plain(&file, paper::MAX_PICTURE)
                         .and_then(|b| Picture::of(b).map_err(theme::io_err))?;
                     let hash = pic.sha256();
                     live.pictures.insert(hash.clone(), pic);
+                    live.files.insert(hash.clone(), file);
                     Wall::Picture(hash)
                 }
                 // The picture is gone, so there is no paper there to keep.
@@ -245,22 +264,44 @@ impl Drop for Work {
 /// How everything looks now.
 pub struct Now {
     pub theme: theme::ThemeLook,
+    /// Whether the theme is on. A look always turns it on, so none is in force while it is off.
+    pub on: bool,
     pub live: Option<Live>,
+    /// What saving this as a look should say.
     pub notes: Vec<String>,
 }
 
 pub fn now(c: &Ctx) -> Result<Now, ApiErr> {
-    let (theme, notes) = theme::capture(c)?;
+    let (theme, on) = theme::capture(c)?;
+    let live = read()?;
+    let mut notes = Vec::new();
+    if !on {
+        notes.push(
+            "the theme is off; the look holds the one chosen, and applying it turns the theme on"
+                .into(),
+        );
+    }
+    if let Some(l) = live.as_ref().filter(|l| !l.unknown.is_empty()) {
+        notes.push(format!(
+            "this Polycarp Spaces is older than this polycarp and doesn't know {}, so the look doesn't hold {}, and applying it on a newer Polycarp Spaces sets {}",
+            l.unknown.join(", "),
+            if l.unknown.len() == 1 { "it" } else { "them" },
+            if l.unknown.len() == 1 { "it to its default" } else { "them to their defaults" }
+        ));
+    }
     Ok(Now {
         theme,
-        live: read()?,
+        on,
+        live,
         notes,
     })
 }
 
 impl Now {
     pub fn same_as(&self, look: &Look) -> bool {
-        self.theme.same_as(&look.theme) && self.live.as_ref().is_none_or(|l| l.same_as(look))
+        self.on
+            && self.theme.same_as(&look.theme)
+            && self.live.as_ref().is_none_or(|l| l.same_as(look))
     }
 
     /// What a look would change, in plain words.
@@ -275,6 +316,9 @@ impl Now {
             accent_dark: None,
             ..t.clone()
         };
+        if !self.on {
+            line("theme switch", "on".into(), "off".into());
+        }
         if !bare(t).same_as(&bare(n)) {
             line("theme", t.theme_title(c), n.theme_title(c));
         }
@@ -313,7 +357,11 @@ impl Now {
         }
         if let Some(s) = &look.surfaces {
             let have = live.look_surfaces(&mut Vec::new()).unwrap_or_default();
-            for (path, ..) in FIELDS {
+            // What this Polycarp Spaces doesn't know it can't set; `show` says so in a note.
+            let known = FIELDS
+                .iter()
+                .filter(|(p, ..)| !live.unknown.iter().any(|u| u == p));
+            for (path, ..) in known {
                 if s.get(*path) != have.get(*path) {
                     line(path, value(s.get(*path)), is(value(have.get(*path))));
                 }
@@ -535,7 +583,7 @@ impl Live {
             surfaces: o.into_iter().collect(),
             paper,
             pictures,
-            defaults: BTreeMap::new(),
+            ..Live::default()
         })
     }
 }

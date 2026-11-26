@@ -276,6 +276,7 @@ pub(crate) fn op_show(c: &Ctx, arg: &str) -> Res {
         text.push_str(&format!("it leaves alone: {}\n", alone.join(", ")));
     }
     notes.extend(now.as_ref().and_then(left_for_spaces));
+    notes.extend(now.as_ref().and_then(|n| too_new(n, &look)));
     data["changes"] = json!(changes);
     data["leaves_alone"] = json!(alone);
     Ok(warnings
@@ -312,6 +313,21 @@ fn leaves_alone(look: &Look) -> Vec<&'static str> {
         (look.paper.is_some(), "paper"),
     ];
     has.iter().filter(|(h, _)| !h).map(|(_, n)| *n).collect()
+}
+
+/// The settings a look holds that this Polycarp Spaces is too old to know, which `apply` refuses.
+fn too_new(now: &state::Now, look: &Look) -> Option<String> {
+    let (live, s) = (now.live.as_ref()?, look.surfaces.as_ref()?);
+    let held: Vec<&str> = (live.unknown.iter())
+        .filter(|p| s.get(p.as_str()).is_some())
+        .map(String::as_str)
+        .collect();
+    (!held.is_empty()).then(|| {
+        format!(
+            "this Polycarp Spaces is older than this polycarp and doesn't know {}, so applying this look needs a newer one",
+            held.join(", ")
+        )
+    })
 }
 
 fn left_for_spaces(now: &state::Now) -> Option<String> {
@@ -351,6 +367,7 @@ pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> 
                 Some(s.map_err(|p| store::refused("a setting can't go in a look", &[p]))?);
             look.paper = Some(live.paper.clone());
             look.pictures = live.pictures.clone();
+            fits(&look, live)?;
             state::check(c, &look)?;
         }
         None => notes
@@ -359,6 +376,41 @@ pub(crate) fn op_save(c: &Ctx, name: &str, title: Option<&str>, force: bool) -> 
     // Checked as `find` checks it, so what is saved can be read back.
     look.theme.check(c)?;
     keep(c, &look, "saved", notes)
+}
+
+/// A look file is at most 32 MB, and pictures are most of what fills one: each is named with its size.
+fn fits(look: &Look, live: &Live) -> Result<(), ApiErr> {
+    let size = look.to_text().len();
+    if size <= format::MAX_BYTES {
+        return Ok(());
+    }
+    let mb = |n: usize| format!("{:.1} MB", n as f64 / (1024.0 * 1024.0));
+    // Each picture once, since the file holds it once, with every place it is on.
+    let mut places = std::collections::BTreeMap::<&String, Vec<String>>::new();
+    for (place, wall) in look.paper.iter().flatten() {
+        if let paper::Wall::Picture(h) = wall {
+            places.entry(h).or_default().push(format!("paper.{place}"));
+        }
+    }
+    let pictures: Vec<String> = (places.into_iter())
+        .map(|(h, on)| {
+            format!(
+                "{} is {} ({})",
+                live.files
+                    .get(h)
+                    .map_or(h.clone(), |f| f.display().to_string()),
+                mb(live.pictures.get(h).map_or(0, |p| p.bytes.len())),
+                on.join(", ")
+            )
+        })
+        .collect();
+    let what = format!(
+        "the look would be {}, over the 32 MB a look file may be, and its pictures fill most of it",
+        mb(size)
+    );
+    Err(store::refused(&what, &pictures).suggest(
+        "Pick a smaller picture, or a color or scene for some places. Pictures that come to about 23 MB fit.",
+    ))
 }
 
 /// Writes a look to the looks folder, read back first as anyone else would read it.

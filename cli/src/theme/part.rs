@@ -233,25 +233,18 @@ fn doc_of(cfg: &Cfg, name: &str) -> Result<ThemeDoc, String> {
     })
 }
 
-/// The theme in force as a look holds it. A theme that is off is still the one chosen.
-pub(crate) fn capture(c: &Ctx) -> Result<(ThemeLook, Vec<String>), ApiErr> {
+/// The theme chosen as a look holds it, and whether it is on. A theme that is off is still the one chosen.
+pub(crate) fn capture(c: &Ctx) -> Result<(ThemeLook, bool), ApiErr> {
     let eff = effective(&c.cfg);
     require_healthy(&eff)?;
     let st = eff.state;
-    let notes = match st.enabled {
-        true => Vec::new(),
-        false => vec![
-            "the theme is off; the look holds the one chosen, and applying it turns the theme on"
-                .into(),
-        ],
-    };
     let look = ThemeLook {
         theme: doc_of(&c.cfg, &st.theme).map_err(|e| bad_theme("the theme can't be read", &[e]))?,
         mode: st.mode,
         accent_light: st.accent_light,
         accent_dark: st.accent_dark,
     };
-    Ok((look, notes))
+    Ok((look, st.enabled))
 }
 
 /// What `polycarp look` adds to a refusal.

@@ -742,7 +742,8 @@ fn the_fields_table_covers_the_surfaces_page() {
 // With Polycarp Spaces ---------------------------------------------------------------------------------------------
 
 /// A stand-in for `polycarp-spaces` that keeps each setting and paper in a file of its own under `live/`, and the
-/// style sheet in the config folder. A line in `fail` such as `paper set` refuses that command once.
+/// style sheet in the config folder. A line in `fail` such as `paper set` refuses that command once; a setting named
+/// in `unknown` is one it doesn't know, as an older one wouldn't.
 #[cfg(unix)]
 fn with_spaces() -> Sandbox {
     use std::os::unix::fs::PermissionsExt;
@@ -754,6 +755,7 @@ no() { printf '{"ok":false,"error":{"code":"%s","message":"%s","data":{"errors":
 ok() { printf '{"ok":true,"data":%s}' "$1"; exit 0; }
 echo "$*" >> '@ROOT@/calls'
 if [ -f '@ROOT@/fail' ] && [ "$1 $2" = "$(cat '@ROOT@/fail')" ]; then rm '@ROOT@/fail'; no write_failed "told to fail"; fi
+if [ "$1 $2" = "surfaces get" ] && grep -qx "$3" '@ROOT@/unknown' 2>/dev/null; then no unknown_path "no field $3"; fi
 case "$1 $2" in
 "style path") ok "{\"file\":\"$C\"}" ;;
 "style show") if [ -f "$C" ]; then ok "{\"exists\":true,\"text\":\"$(sed 's/"/\\"/g' "$C" | awk '{printf "%s\\n", $0}')\"}"; else ok '{"exists":false,"text":""}'; fi ;;
@@ -1274,6 +1276,26 @@ fn undo_puts_back_only_the_parts_the_look_changed() {
 
 #[cfg(unix)]
 #[test]
+fn no_look_is_in_force_while_the_theme_is_off() {
+    let sb = with_spaces();
+    dress(&sb);
+    sb.ok(&["look", "save", "mine"]);
+    sb.ok(&["theme", "off"]);
+    assert!(sb.current().is_empty());
+    let d = sb.ok(&["look", "show", "mine"]);
+    assert!(
+        d["changes"]
+            .to_string()
+            .contains("theme switch: on (now off)"),
+        "{d}"
+    );
+    // So applying it turns the theme on, where it found nothing to change before.
+    assert_eq!(sb.ok(&["look", "apply", "mine"])["changed"], true);
+    assert_eq!(sb.current(), ["mine"]);
+}
+
+#[cfg(unix)]
+#[test]
 fn delete_asks_when_what_is_in_force_cant_be_read() {
     let sb = with_spaces();
     sb.ok(&["look", "save", "one"]);
@@ -1282,4 +1304,101 @@ fn delete_asks_when_what_is_in_force_cant_be_read() {
     assert!(sb.at("cfg/looks/one.polycarp-look").exists());
     fs::write(sb.at("fail"), "style show").unwrap();
     sb.ok(&["look", "delete", "one", "--force"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_setting_an_older_spaces_does_not_know_is_left_out() {
+    let sb = with_spaces();
+    dress(&sb);
+    fs::write(sb.at("unknown"), "bar.height\n").unwrap();
+    let d = sb.ok(&["look", "save", "mine"]);
+    assert!(
+        d["notes"].to_string().contains("doesn't know bar.height"),
+        "{d}"
+    );
+    let l: Value = serde_json::from_str(&sb.text("cfg/looks/mine.polycarp-look").unwrap()).unwrap();
+    assert_eq!(
+        l["surfaces"],
+        json!({"bar": {"style": "solid", "modules": {"left": ["mark"]}}})
+    );
+    assert_eq!(sb.current(), ["mine"]);
+    // A look that holds the setting says this Spaces can't set it, and shows no change to it.
+    fs::remove_file(sb.at("unknown")).unwrap();
+    fs::write(sb.at("live/bar.height"), "32").unwrap();
+    sb.ok(&["look", "save", "tall"]);
+    fs::write(sb.at("unknown"), "bar.height\n").unwrap();
+    let d = sb.ok(&["look", "show", "tall"]);
+    assert!(!d["changes"].to_string().contains("bar.height"), "{d}");
+    assert!(
+        d["notes"]
+            .to_string()
+            .contains("doesn't know bar.height, so applying this look needs a newer one"),
+        "{d}"
+    );
+    // Any other refusal still stops it.
+    fs::write(sb.at("fail"), "surfaces get").unwrap();
+    assert_eq!(sb.no(&["look", "save", "other"]), "refused");
+}
+
+#[cfg(unix)]
+#[test]
+fn pictures_too_big_for_a_look_are_named_with_the_limit() {
+    let sb = with_spaces();
+    for (f, b) in [("a.png", 1), ("b.png", 2)] {
+        let mut pic = PNG.to_vec();
+        pic.resize(13 * 1024 * 1024, b);
+        fs::write(sb.at(f), pic).unwrap();
+    }
+    for (place, f) in [("all", "a.png"), ("idle", "b.png")] {
+        let file = sb.at(f).display().to_string();
+        fs::write(sb.at(&format!("live/paper.{place}")), file).unwrap();
+    }
+    let v = sb.json(&["look", "save", "mine"]);
+    let e = v["error"].to_string();
+    assert_eq!(v["error"]["code"], "invalid_look", "{e}");
+    // One picture on two places is named once, since the file holds it once.
+    fs::write(
+        sb.at("live/paper.desktop"),
+        sb.at("a.png").display().to_string(),
+    )
+    .unwrap();
+    let v = sb.json(&["look", "save", "mine"]);
+    let e = v["error"].to_string();
+    for part in [
+        "over the 32 MB",
+        "a.png is 13.0 MB (paper.all, paper.desktop)",
+        "b.png is 13.0 MB (paper.idle)",
+    ] {
+        assert!(e.contains(part), "{part} in {e}");
+    }
+    assert!(!sb.at("cfg/looks/mine.polycarp-look").exists());
+    fs::remove_file(sb.at("live/paper.idle")).unwrap();
+    sb.ok(&["look", "save", "mine"]);
+}
+
+#[test]
+fn save_refuses_a_theme_that_fails_the_health_check() {
+    let sb = Sandbox::new();
+    sb.ok(&["theme", "create", "mine", "--extends", "evening"]);
+    sb.ok(&["theme", "set", "mine"]);
+    let head = "name = \"mine\"\ntitle = \"Mine\"\n";
+    for (body, why) in [
+        // Text that can't be read on its background.
+        (
+            "extends = \"evening\"\n[light]\nforeground = \"#eeeeee\"\n",
+            "light.foreground on light.background is 1.02, needs 4.5",
+        ),
+        // A role it doesn't have.
+        (
+            "[light]\nforeground = \"#272e37\"\n",
+            "light.background: missing",
+        ),
+    ] {
+        fs::write(sb.at("cfg/themes/mine.toml"), format!("{head}{body}")).unwrap();
+        let v = sb.json(&["look", "save", "mine"]);
+        assert_eq!(v["error"]["code"], "invalid_theme", "{v}");
+        assert!(v["error"].to_string().contains(why), "{why} in {v}");
+        assert!(!sb.at("cfg/looks/mine.polycarp-look").exists());
+    }
 }
