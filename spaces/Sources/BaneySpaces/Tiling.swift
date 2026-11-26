@@ -240,6 +240,8 @@ final class Tiling {
         let list = moves.compactMap { m in windows[m.id].map { (m, $0) } }
         let gate = Window.gate
         let pass = gate.pass
+        // The windows are this write's from its start, so an older settle watching them gives them up at once (R-TS4).
+        let serial = writes.wrote(Set(list.map(\.0.id)))
         Spaces.axQueue.async { [weak self] in
             let wrote = Tiling.place(list, while: { gate.open(pass) && !Tiling.pressed })
             DispatchQueue.main.async {
@@ -254,8 +256,9 @@ final class Tiling {
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
                 let ids = Set(wrote.filter(\.1).map(\.0))
+                self.writes.done(Set(wrote.filter { !$0.1 }.map(\.0)), serial)
                 self.engine.flying(ids)
-                let serial = self.writes.wrote(ids), again = self.ready()
+                let again = self.ready()
                 self.settle(ids, Dictionary(uniqueKeysWithValues: moves.map { ($0.id, $0.to) }), pass, serial, timed)
                 if again { self.look() }
             }
@@ -287,7 +290,7 @@ final class Tiling {
             timed.log(landed: ids.count == all.count ? Self.uptime : nil)
             self.writes.done(ids, serial)
             self.engine.grounded(ids)
-            if self.engine.landed(now) { self.look() }
+            if self.engine.landed(now, targets: targets) { self.look() }
         }
     }
 

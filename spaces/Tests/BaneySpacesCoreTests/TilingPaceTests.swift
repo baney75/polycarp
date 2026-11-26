@@ -53,6 +53,53 @@ final class TilingPaceTests: XCTestCase {
         }
     }
 
+    /// Review of #863, first-F1: settle A, still watching window 1 after key 2 asked it for another target, must not
+    /// grade A's frame against B's target (it learned a minimum 1728 wide from a half tile).
+    func testAnOldSettleNeverGradesANewerTarget() throws {
+        var (e, shot) = engine([1])
+        let a = try XCTUnwrap(e.plan(shot).first)
+        e.flying([1])
+        shot.windows.append(TilingWindow(id: 2, pid: 7, bundle: "app", workspace: 1, frame: CGRect(x: 40, y: 60, width: 700, height: 500)))
+        let b = try XCTUnwrap(e.plan(shot).first { $0.id == 1 })
+        XCTAssertNotEqual(a.to, b.to)
+        XCTAssertFalse(e.landed([1: a.to], targets: [1: a.to]), "A's frame, B's target: nothing learned")
+        XCTAssertNil(e.minimums[1])
+        XCTAssertTrue(e.asked[1]?.flying == false || e.asked[1]?.target == b.to)
+    }
+
+    /// The other half of first-F1: a write owns its windows from its start, so A's settle gives window 1 up as soon as B
+    /// begins, before B returns.
+    func testAWriteOwnsItsWindowsFromItsStart() {
+        var w = TilingWrites()
+        let a = w.wrote([1, 2])
+        _ = w.wrote([1])
+        XCTAssertEqual(w.own([1, 2], a), [2])
+    }
+
+    /// Review of #863, second-F6: a window late on its second try, skipped by a plan during its flight, must get the
+    /// look that plan didn't give it when its settle finds it short.
+    func testAWindowHeldBackInFlightIsLookedAtAgainIfItLandsShort() throws {
+        var (e, shot) = engine([1])
+        let m = try XCTUnwrap(e.plan(shot).first)
+        e.grounded([1])
+        _ = e.landed([1: shot.windows[0].frame])
+        XCTAssertEqual(e.plan(shot).first?.to, m.to, "asked a second time")
+        e.flying([1])
+        XCTAssertEqual(e.plan(shot), [], "held back in flight")
+        XCTAssertTrue(e.landed([1: shot.windows[0].frame], targets: [1: m.to]), "it never moved: a look is owed")
+        XCTAssertEqual(e.plan(shot).first?.to, m.to, "and that look asks it a third time")
+    }
+
+    /// Review of #863, second-F5: a plan that held a window back wrote something in effect; its rounding count stands.
+    func testAPlanThatHeldAWindowBackKeepsTheRoundingCount() throws {
+        var (e, shot) = engine([1])
+        _ = e.plan(shot)
+        e.flying([1])
+        e.roundings[1] = 2
+        XCTAssertEqual(e.plan(shot), [])
+        XCTAssertEqual(e.roundings[1], 2)
+    }
+
     /// Cases 13 to 15, the wiring: tiling is busy only while it asks or writes. The ratchet: a settle that holds `busy`
     /// again (the 2026-11-26 lag, up to 600 ms behind each key) fails here.
     func testCases13To15ASettleNeverHoldsTheNextLook() throws {
