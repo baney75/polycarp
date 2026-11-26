@@ -4,9 +4,14 @@
 
 mod change;
 mod chromium;
+// The import of sign-ins uses these in the next change.
+#[allow(dead_code)]
+mod cookies;
 mod gone;
 mod import;
 mod install;
+#[allow(dead_code)]
+mod keys;
 mod pages;
 mod pak;
 mod release;
