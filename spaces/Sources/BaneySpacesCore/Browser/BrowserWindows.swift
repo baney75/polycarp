@@ -55,8 +55,10 @@ public enum BrowserWindows {
     }
 
     /// Where a new tab goes for a person on one workspace: the first of its windows there (`here`, the last used first) that
-    /// is known; else a new window. Nil when it can't be said whose window that would be.
+    /// is known; else a new window. A window with no tab strip takes no tab. Nil when it can't be said whose window that would be.
     public static func place(here: [UInt32], all: [UInt32], known: [UInt32: Front], peers: [BrowserPeer]) -> Place? {
+        let strip = { (id: UInt32) in known[id]?.tab.popup != true }
+        let here = here.filter(strip), all = all.filter(strip)
         for id in here { if let f = known[id] { return .tab(f.peer, window: f.tab.window, id: id) } }
         // Two profiles of one browser: which of them, only a known window tells.
         guard peers.count == 1, let peer = peers.first else { return nil }

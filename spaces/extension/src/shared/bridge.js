@@ -9,6 +9,7 @@
   // What each needs from the browser; tabs come with the site access the extension has.
   const NEEDS = { tabs: [], groups: ["tabGroups"], bookmarks: ["bookmarks"], history: ["history"], downloads: ["downloads"] };
   const KEY = "polycarp.bridge"; // { tabs: true, groups: false, bookmarks: false, ... }: what this browser's Settings page allows
+  const APPS = "polycarp.apps"; // in memory, until the browser quits: { windowId: the web app opened in it }
   const DEFAULTS = { tabs: true, bookmarks: false, history: false, downloads: false };
   const MOST = { tabs: 5000, groups: 500, bookmarks: 20000, history: 50000, downloads: 500 };
   const HISTORY_DAYS = 90;
@@ -79,6 +80,7 @@
     let refused = false; // an app from before the line, or none on this computer: asked again at the next start
     const dirty = { tabs: new Map(), groups: false, bookmarks: false, history: new Map(), downloads: new Map() };
     let timer = false;
+    let opening = Promise.resolve(); // web apps open one at a time, so one asked for twice opens once
     const told = new Set(); // the tabs the app knows of: one that goes away is news only then
 
     const post = (m) => { try { if (port) port.postMessage(m); } catch (e) { /* it closed */ } };
@@ -106,9 +108,18 @@
     }
     async function send(source) {
       const rows = (await all(source)).filter(Boolean);
-      if (source === "tabs") for (const r of rows) told.add(r.id);
+      if (source === "tabs") { await place(rows); for (const r of rows) told.add(r.id); }
       if (!sending.includes(source)) return; // switched off while it was read
       for (const m of pieces(source, rows)) post(m);
+    }
+    const apps = async () => (await chrome.storage.session.get(APPS).catch(() => ({})))[APPS] || {};
+    const popups = async () => (await chrome.windows.getAll({ windowTypes: ["popup"] })).filter((w) => w.incognito === false);
+    // Says of a tab that its window has no tab strip, and which web app's window it is.
+    async function place(rows) {
+      const bare = new Set((await popups()).map((w) => w.id));
+      if (!bare.size) return;
+      const of = await apps();
+      for (const r of rows) if (bare.has(r.window)) { r.popup = true; if (of[r.window]) r.app = of[r.window]; }
     }
     const openWindows = async () => (await chrome.windows.getAll({ windowTypes: ["normal"] })).filter((w) => w.incognito === false);
     async function refresh() {
@@ -167,6 +178,7 @@
         if (t) await chrome.windows.update(t.windowId, { focused: true });
       }
       if (m.op === "browser.open") return open(m);
+      if (m.op === "browser.app") return (opening = opening.then(() => app(m)).catch(() => {}));
       if (m.op === "browser.icon" && typeof m.url === "string") return icon(m.url);
       if (m.op === "browser.show" && Number.isInteger(m.download) && sending.includes("downloads")) await chrome.downloads.show(m.download);
     }
@@ -213,6 +225,19 @@
       if (text && t) await chrome.search.query({ text, tabId: t.id });
     }
 
+    // A web app's window: the one open, else a new one with no tab strip.
+    async function app(m) {
+      if (typeof m.id !== "string" || !/^[a-z0-9-]{1,40}$/.test(m.id) || typeof m.url !== "string" || !/^https?:\/\//i.test(m.url)) return;
+      const now = await popups(), of = await apps();
+      const here = now.find((w) => of[w.id] === m.id);
+      if (here) { await chrome.windows.update(here.id, { focused: true }); return; }
+      const made = await chrome.windows.create({ type: "popup", url: m.url, focused: true, width: 1200, height: 800 });
+      const kept = { [made.id]: m.id };
+      for (const w of now) if (of[w.id]) kept[w.id] = of[w.id];
+      await chrome.storage.session.set({ [APPS]: kept });
+      await fronts(made.id); // its tab, said again as the app's
+    }
+
     // ---------- Changes ----------
     function soon() {
       if (timer) return;
@@ -228,6 +253,7 @@
         if (!sending.includes(source)) continue;
         const rows = [], gone = [];
         for (const [k, v] of entries) { if (v) rows.push(v); else gone.push(k); }
+        if (source === "tabs") await place(rows);
         for (let i = 0; i < Math.max(rows.length, gone.length); i += CHANGED) post({ op: "browser.change", source, rows: rows.slice(i, i + CHANGED), gone: gone.slice(i, i + CHANGED) });
       }
       if (dirty.groups) { dirty.groups = false; if (sending.includes("groups")) await send("groups"); }

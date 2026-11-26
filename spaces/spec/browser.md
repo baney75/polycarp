@@ -51,3 +51,7 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   off drops those entries. A web notification is the browser's own banner, so only sites the person allowed have one: the site
   its subtitle names (an ASCII host) gives the entry its icon. Clicking it presses the banner while it is up, as a click on it
   does; after that it goes to a tab open on that site, else to the browser.
+- **R-B15 Web apps.** "Make This an App" keeps a page's name, address, browser and icon in `webapps.json`, because the person
+  made it; removing the app removes them, and Polycarp keeps nothing else of the browser's. An app is one page in one browser.
+  It opens in a window with no tab strip, and one that is open is gone to instead. The extension says which window is which
+  app's until the browser quits. A window with no tab strip never takes a new tab.
