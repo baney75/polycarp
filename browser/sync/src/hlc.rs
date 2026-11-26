@@ -19,6 +19,15 @@ impl Stamp {
     pub fn too_far_ahead(&self, wall_ms: u64) -> bool {
         self.ms > wall_ms.saturating_add(MAX_AHEAD_MS)
     }
+
+    /// The first stamp of `device` that orders after this one.
+    pub fn next(&self, device: [u8; 32]) -> Option<Stamp> {
+        let (ms, count) = match self.count.checked_add(1) {
+            Some(count) => (self.ms, count),
+            None => (self.ms.checked_add(1)?, 0),
+        };
+        Some(Stamp { ms, count, device })
+    }
 }
 
 /// The stamp is too far ahead of the wall clock.

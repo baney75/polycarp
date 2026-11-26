@@ -139,9 +139,27 @@ fn a_clock_that_was_wrong_once_is_not_wrong_for_good() {
         let (mut both, mut held) = (set.clone(), clock.clone());
         both.merge(record("theirs", theirs));
         let before = both.clone();
-        assert!(both.restamp(&mut held, now).is_err() && held.tick(now).is_err());
+        assert!(both.restamp(&mut held, None, now).is_err() && held.tick(now).is_err());
         assert_eq!(both, before);
-        let again = set.restamp(&mut clock, now).unwrap();
+        // Shared in bounds: what this device stamped too far ahead gets a stamp after it, and nothing else changes.
+        // Taken from another device then, and written over since.
+        let shared = Stamp {
+            ms: now + 5 * 60_000,
+            count: 0,
+            device: [2; 32],
+        };
+        let (mut after, mut kept) = (set.clone(), clock.clone());
+        let again = after.restamp(&mut kept, Some(shared), now).unwrap();
+        assert_eq!(
+            again.iter().map(|r| r.key.as_str()).collect::<Vec<_>>(),
+            ["wrong"]
+        );
+        assert!(again[0].stamp > shared && !again[0].stamp.too_far_ahead(now));
+        assert_eq!(
+            after.get(Kind::Setting, "before"),
+            set.get(Kind::Setting, "before")
+        );
+        let again = set.restamp(&mut clock, None, now).unwrap();
         assert_eq!(set.get(Kind::Setting, "wrong"), again.first());
         // Another device takes it all, and this one can write over it all.
         for r in set.clone().iter() {
@@ -149,4 +167,77 @@ fn a_clock_that_was_wrong_once_is_not_wrong_for_good() {
             assert!(set.merge(record(&r.key, clock.tick(now).unwrap())));
         }
     }
+}
+
+/// The clock was eleven minutes ahead when this device gave a record to one only two minutes ahead, which took it.
+/// Putting the clock right keeps that stamp, since a lower one would lose to the copy held there, and an edit made
+/// after still goes over it, whichever copy reaches which device first and however often the old one comes back.
+#[test]
+fn a_stamp_another_device_may_hold_is_never_lowered() {
+    let (now, min) = (1_000_000_000_000, 60_000);
+    let made = |key: &str, stamp, v: &[u8]| Record {
+        kind: Kind::Bookmark,
+        key: key.into(),
+        stamp,
+        value: Some(Secret::new(v.to_vec())),
+    };
+    let (mut clock, mut ours) = (Clock::new([1; 32]), Records::new());
+    let old = made("b", clock.tick(now + 11 * min).unwrap(), b"old");
+    ours.merge(old.clone());
+    let mut theirs = Records::new();
+    Clock::new([2; 32]).see(&old.stamp, now + 2 * min).unwrap();
+    theirs.merge(old.clone());
+    // Made after the exchange, so held nowhere else; but a stamp that beats the one shared is too far ahead too.
+    let alone = made("c", clock.tick(now + 12 * min).unwrap(), b"alone");
+    ours.merge(alone.clone());
+
+    assert_eq!(ours.restamp(&mut clock, Some(old.stamp), now), Ok(vec![]));
+    assert_eq!(ours.get(Kind::Bookmark, "b"), Some(&old));
+    assert_eq!(ours.get(Kind::Bookmark, "c"), Some(&alone));
+    let edit = made(
+        "b",
+        ours.stamp(&mut clock, Kind::Bookmark, "b", now + min)
+            .unwrap(),
+        b"new",
+    );
+    assert!(edit.stamp > old.stamp);
+    assert!(ours.merge(edit.clone()));
+    // Both orders, and the old copy again after the edit.
+    let mut first_old = Records::new();
+    assert!(
+        first_old.merge(old.clone())
+            && first_old.merge(edit.clone())
+            && !first_old.merge(old.clone())
+    );
+    assert!(theirs.merge(edit.clone()) && !theirs.merge(old.clone()));
+    assert!(!ours.merge(old.clone()));
+    for set in [&ours, &theirs, &first_old] {
+        assert_eq!(set.get(Kind::Bookmark, "b"), Some(&edit));
+    }
+    // Everything else stamps from a clock that is right again.
+    assert!(clock.tick(now + min).unwrap() < old.stamp);
+}
+
+/// While the last stamp shared is too far ahead itself, no record gets a new stamp: one that beats it would be too far
+/// ahead as well. The clock still stamps from the wall, and an edit goes over what it replaces.
+#[test]
+fn nothing_is_restamped_below_a_stamp_shared_too_far_ahead() {
+    let (now, year) = (1_000_000_000_000, 365 * 86_400_000);
+    let mut clock = Clock::new([1; 32]);
+    let mut set = Records::new();
+    let shared = clock.tick(now + year).unwrap();
+    let wrong = Record {
+        kind: Kind::Setting,
+        key: "wrong".into(),
+        stamp: clock.tick(now + year).unwrap(),
+        value: None,
+    };
+    set.merge(wrong.clone());
+    assert_eq!(set.restamp(&mut clock, Some(shared), now), Ok(vec![]));
+    assert_eq!(set.get(Kind::Setting, "wrong"), Some(&wrong));
+    assert!(set.stamp(&mut clock, Kind::Setting, "wrong", now).unwrap() > wrong.stamp);
+    assert!(!set
+        .stamp(&mut clock, Kind::Setting, "other", now)
+        .unwrap()
+        .too_far_ahead(now));
 }

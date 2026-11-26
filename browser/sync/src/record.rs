@@ -108,10 +108,21 @@ impl Records {
         self.0.values()
     }
 
-    /// For a wall clock that was ahead and is right again: gives each record this device stamped too far ahead a stamp
-    /// from now, so it can be written over and others take it. Those records, or nothing changed: a stamp from another
-    /// device was in bounds when it came, so one that isn't any more says the wall clock may be behind instead.
-    pub fn restamp(&mut self, clock: &mut Clock, wall_ms: u64) -> Result<Vec<Record>, Ahead> {
+    /// For a wall clock that was ahead and is right again: new stamps for the records this device stamped too far ahead
+    /// and never shared, so others take them and they can be written over. Those records.
+    ///
+    /// `shared` is the latest stamp held here when this device last exchanged records. A record stamped at or before it
+    /// may be held elsewhere, where a lower stamp would lose to that copy, so it keeps its stamp and an edit goes over it
+    /// (`stamp`). The new stamps come after `shared`, so they beat whatever this device took then and wrote over since.
+    /// While `shared` is too far ahead itself, every record keeps its stamp: one that beats it is too far ahead as well.
+    /// A stamp from another device was in bounds when it came, so one that isn't any more says the wall clock may be
+    /// behind instead: then nothing changes.
+    pub fn restamp(
+        &mut self,
+        clock: &mut Clock,
+        shared: Option<Stamp>,
+        wall_ms: u64,
+    ) -> Result<Vec<Record>, Ahead> {
         let mut right = Clock::new(clock.device);
         for r in self.0.values() {
             let seen = right.see(&r.stamp, wall_ms);
@@ -119,16 +130,35 @@ impl Records {
                 seen?;
             }
         }
-        let mut again = Vec::new();
-        for r in self.iter().filter(|r| r.stamp.too_far_ahead(wall_ms)) {
-            let mut r = r.clone();
+        let fresh = match shared {
+            Some(s) => right.see(&s, wall_ms).is_ok(),
+            None => true,
+        };
+        let ahead = |r: &&Record| fresh && r.stamp.too_far_ahead(wall_ms);
+        let mut again: Vec<Record> = self.iter().filter(ahead).cloned().collect();
+        for r in &mut again {
             r.stamp = right.tick(wall_ms)?;
-            again.push(r);
         }
         *clock = right;
         let at = again.iter().map(|r| ((r.kind, r.key.clone()), r.clone()));
         self.0.extend(at);
         Ok(again)
+    }
+
+    /// A stamp for an edit made here: from the clock, and later than the record the edit replaces, which may have kept a
+    /// stamp too far ahead (`restamp`).
+    pub fn stamp(
+        &self,
+        clock: &mut Clock,
+        kind: Kind,
+        key: &str,
+        wall_ms: u64,
+    ) -> Result<Stamp, Ahead> {
+        let stamp = clock.tick(wall_ms)?;
+        match self.get(kind, key) {
+            Some(held) if held.stamp >= stamp => held.stamp.next(stamp.device).ok_or(Ahead),
+            _ => Ok(stamp),
+        }
     }
 
     /// Drops every record the test keeps none of: a local clean-up, never synced as a deletion.
