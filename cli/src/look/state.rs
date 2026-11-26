@@ -485,6 +485,13 @@ impl Live {
         }
         if let Some(s) = &look.surfaces {
             to.surfaces = s.clone();
+            // What no look holds, such as a scene that names a picture file, stays as the person has it.
+            for (path, v) in &self.surfaces {
+                let never = fields::kept(path, v, &mut Vec::new()) == Ok(None);
+                if never && !path.starts_with(MODULES) && !s.contains_key(path) {
+                    to.surfaces.insert(path.clone(), v.clone());
+                }
+            }
             for (path, v) in self.surfaces.iter().filter(|(_, v)| has_own(v)) {
                 let mut list = match s.get(path).or(self.defaults.get(path)) {
                     Some(Json::Array(a)) => a.clone(),

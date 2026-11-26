@@ -1092,3 +1092,20 @@ fn without_spaces_the_theme_part_still_applies() {
     assert!(d["notes"].to_string().contains("wait for it"), "{d}");
     assert_eq!(sb.ok(&["theme", "current"])["theme"], "evening");
 }
+
+#[cfg(unix)]
+#[test]
+fn what_no_look_holds_stays_as_the_person_has_it() {
+    let sb = with_spaces();
+    dress(&sb);
+    fs::write(sb.at("live/desktop.scene"), "\"image:sunset\"").unwrap();
+    sb.ok(&["look", "apply", "polycarp"]);
+    assert_eq!(
+        sb.text("live/desktop.scene").as_deref(),
+        Some("\"image:sunset\"")
+    );
+    assert!(
+        sb.text("live/bar.height").is_none(),
+        "the look's own settings still apply"
+    );
+}
