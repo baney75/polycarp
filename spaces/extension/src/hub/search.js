@@ -17,7 +17,7 @@
     const out = String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().match(/[\p{L}\p{N}]+/gu) || [];
     return out.filter((w) => w.length > 1 || /\d/.test(w));
   }
-  const addrWords = (a) => (a && a.addr ? [a.addr, ...words(a.name), ...words(a.addr)] : []);
+  const addrWords = (a) => (a && a.addr ? [String(a.addr).toLowerCase(), ...words(a.name), ...words(a.addr)] : []);
 
   // A query into terms (each a token or a prefix to look up) and filters.
   //   ada plans           both words, anywhere
@@ -54,7 +54,8 @@
   function create() {
     let docs = [];            // doc number -> {id, threadId, date, folder, unread, flagged, att, snoozed} or null
     let post = new Map();     // token -> doc numbers, ascending
-    let keys = null;          // sorted tokens, rebuilt when new ones arrive
+    let keys = null;          // sorted tokens, built at the first prefix query
+    let fresh = [];           // tokens added since, merged in at the next one
     const byThread = new Map(); // thread id -> doc numbers
     let dead = 0;
 
@@ -66,7 +67,7 @@
         if (seen.has(t)) return;
         seen.add(t);
         let p = post.get(t);
-        if (!p) { p = []; post.set(t, p); keys = null; }
+        if (!p) { p = []; post.set(t, p); if (keys) fresh.push(t); }
         p.push(d);
       };
       for (const w of addrWords(m.from)) { put(w); put("f:" + w); }
@@ -92,7 +93,7 @@
     }
     function compact() {
       const old = { docs, post };
-      docs = []; post = new Map(); keys = null; byThread.clear(); dead = 0;
+      docs = []; post = new Map(); keys = null; fresh = []; byThread.clear(); dead = 0;
       const map = new Map();
       for (let i = 0; i < old.docs.length; i++) if (old.docs[i]) { map.set(i, docs.length); docs.push(old.docs[i]); }
       for (const [t, p] of old.post) {
@@ -107,9 +108,19 @@
       }
     }
 
+    function merged(a, b) {
+      const out = new Array(a.length + b.length);
+      let i = 0, j = 0, k = 0;
+      while (i < a.length && j < b.length) out[k++] = a[i] < b[j] ? a[i++] : b[j++];
+      while (i < a.length) out[k++] = a[i++];
+      while (j < b.length) out[k++] = b[j++];
+      return out;
+    }
     function lists(term) {
       if (!term.prefix) { const p = post.get(term.token); return p ? [p] : []; }
-      if (!keys) keys = Array.from(post.keys()).sort();
+      // New words are sorted alone and merged in, so the first prefix query after new mail doesn't sort every word.
+      if (!keys) { keys = Array.from(post.keys()).sort(); fresh = []; }
+      else if (fresh.length) { keys = merged(keys, fresh.sort()); fresh = []; }
       let lo = 0, hi = keys.length;
       while (lo < hi) { const mid = (lo + hi) >> 1; if (keys[mid] < term.token) lo = mid + 1; else hi = mid; }
       const out = [];
@@ -153,43 +164,67 @@
 
     return {
       setThreads, dropThread, query,
-      clear() { docs = []; post = new Map(); keys = null; byThread.clear(); dead = 0; },
+      clear() { docs = []; post = new Map(); keys = null; fresh = []; byThread.clear(); dead = 0; },
       get size() { return docs.length - dead; },
       get tokens() { return post.size; }
     };
   }
 
-  // An index kept up to date with the store: built on first use, then each changed thread is read again.
-  function live(store) {
+  // An index kept up to date with the store. `warm` builds it ahead of the first search (the page calls it at start),
+  // in chunks that give the page back between them, so typing and scrolling go on while it reads 100,000 messages.
+  // After that each changed thread is read again. Updates run one at a time and every query waits for them, so a
+  // query never sees an index half built.
+  const CHUNK = 2000;
+  function live(store, o) {
     const S = store || globalThis.PolycarpHubStore;
+    const pause = (o && o.pause) || (() => new Promise((ok) => setTimeout(ok, 0)));
     const ix = create();
-    let ready = null;
+    let started = false;
+    let full = true;
+    let building = false;
     let changed = new Set();
-    let full = false;
+    let sync = Promise.resolve();
     async function build() {
-      ix.clear();
-      ix.setThreads([], await S.allMessages());
+      building = true;
+      try {
+        const all = await S.allMessages();
+        ix.clear();
+        for (let i = 0; i < all.length; i += CHUNK) {
+          ix.setThreads([], all.slice(i, i + CHUNK));
+          if (i + CHUNK < all.length) await pause();
+        }
+      } catch (e) {
+        full = true;
+        throw e;
+      } finally {
+        building = false;
+      }
     }
     S.onChange((ev) => {
-      if (!ready) return;
+      if (!started) return;
       if (ev && ev.type === "messages" && Array.isArray(ev.threads)) for (const t of ev.threads) changed.add(t);
       else if (ev && ev.type === "accounts") full = true;
     });
-    async function catchUp() {
-      if (full) { full = false; changed = new Set(); await build(); return; }
-      if (!changed.size) return;
-      const ts = Array.from(changed);
-      changed = new Set();
-      const msgs = [];
-      for (const t of ts) { const got = await S.thread(t); if (got) msgs.push(...got.messages); }
-      ix.setThreads(ts, msgs);
+    function update() {
+      started = true;
+      const run = sync.then(async () => {
+        if (full) { full = false; changed = new Set(); await build(); }
+        if (!changed.size) return;
+        const ts = Array.from(changed);
+        changed = new Set();
+        const msgs = [];
+        for (const t of ts) { const got = await S.thread(t); if (got) msgs.push(...got.messages); }
+        ix.setThreads(ts, msgs);
+      });
+      sync = run.catch(() => {});
+      return run;
     }
     return {
       index: ix,
+      get building() { return building || (started && full); },
+      warm: update,
       async query(q, opts) {
-        if (!ready) ready = build();
-        await ready;
-        await catchUp();
+        await update();
         return ix.query(q, opts);
       }
     };

@@ -116,6 +116,46 @@ function bigCorpus(n, seed) {
   return out;
 }
 
+test("an address with capitals is found by from: in any case", () => {
+  // The store lowercases addresses; the index doesn't count on it.
+  const ix = X.create();
+  ix.setThreads([], [{ id: "c", threadId: "tc", date: 1, folder: "inbox", from: { name: "John Smith", addr: "John.Smith@Company.example" }, to: [me], subject: "Caps", text: "" }]);
+  assert.deepEqual(ix.query("from:John.Smith@Company.example ").map((h) => h.threadId), ["tc"]);
+});
+
+test("a word new since the last prefix search is found by its start", () => {
+  const ix = X.create();
+  ix.setThreads([], [{ id: "a", threadId: "ta", date: 1, folder: "inbox", from: ada, to: [me], subject: "alpha beta", text: "" }]);
+  assert.equal(ix.query("alp").length, 1);
+  ix.setThreads([], [{ id: "b", threadId: "tb", date: 2, folder: "inbox", from: ada, to: [me], subject: "alpine zebra", text: "" }]);
+  assert.deepEqual(ix.query("alp").map((h) => h.threadId), ["tb", "ta"]);
+  assert.deepEqual(ix.query("zeb").map((h) => h.threadId), ["tb"]);
+});
+
+// A store that only lists messages, for the index's own build.
+const listing = (msgs) => ({ allMessages: async () => msgs, onChange() {}, thread: async () => null });
+
+test("the first build gives the page back between chunks, and queries wait for it whole", async () => {
+  const msgs = bigCorpus(10000, 7);
+  const L = X.live(listing(msgs));
+  assert.equal(L.building, false, "nothing builds before it is asked");
+  let ticks = 0;
+  const iv = setInterval(() => ticks++, 0);
+  let a, b;
+  try {
+    const warm = L.warm();
+    assert.equal(L.building, true);
+    [a, b] = await Promise.all([L.query("w0", { limit: 1e9 }), L.query("w0", { limit: 1e9 })]);
+    await warm;
+  } finally {
+    clearInterval(iv);
+  }
+  assert.ok(ticks >= 3, "timers ran while it built: " + ticks);
+  assert.equal(L.building, false);
+  assert.equal(L.index.size, 10000);
+  assert.ok(a.length > 0 && a.length === b.length && a.length === L.index.query("w0", { limit: 1e9 }).length, "both queries saw the whole index");
+});
+
 test("search over 100,000 messages answers in under 50 ms", { skip: process.env.HUB_BENCH === "0" }, () => {
   const msgs = bigCorpus(100000, 99);
   const ix = X.create();
@@ -132,8 +172,29 @@ test("search over 100,000 messages answers in under 50 ms", { skip: process.env.
     times.sort((a, b) => a - b);
     rows.push([q, times[2], ix.query(q, { limit: 1e9 }).length]);
   }
+  // The first prefix query after mail with a new word, with no warm-up.
+  ix.setThreads([], [{ id: "new", threadId: "tnew", date: 1e6, folder: "inbox", from: { addr: "n@x.example" }, to: [], subject: "qqnewword", text: "" }]);
+  const a = performance.now();
+  const got = ix.query("qqnew");
+  rows.push(["(first prefix after new mail)", performance.now() - a, got.length]);
+  assert.equal(got.length, 1);
   const worst = Math.max(...rows.map((x) => x[1]));
   console.log(`# built 100,000 messages, ${ix.tokens} words, in ${build.toFixed(0)} ms; worst median query ${worst.toFixed(1)} ms`);
   for (const [q, ms, hits] of rows) console.log(`#   ${q.padEnd(28)} ${ms.toFixed(1).padStart(6)} ms ${String(hits).padStart(6)} threads`);
   for (const [q, ms] of rows) assert.ok(ms < 50, `"${q}" took ${ms.toFixed(1)} ms`);
+});
+
+test("the page's first build of 100,000 messages never holds the page more than one chunk", { skip: process.env.HUB_BENCH === "0" }, async () => {
+  const L = X.live(listing(bigCorpus(100000, 99)));
+  const real = L.index.setThreads;
+  const slices = [];
+  L.index.setThreads = (t, m) => { const a = performance.now(); real(t, m); slices.push(performance.now() - a); };
+  const a = performance.now();
+  await L.warm();
+  const total = performance.now() - a;
+  const worst = Math.max(...slices);
+  console.log(`# first build: ${slices.length} chunks in ${total.toFixed(0)} ms, longest ${worst.toFixed(0)} ms`);
+  assert.ok(slices.length >= 50, "built in chunks");
+  // Relative to the whole build, so a loaded machine slows both alike.
+  assert.ok(worst < total / 10, `a chunk held the page ${worst.toFixed(0)} ms of ${total.toFixed(0)}`);
 });

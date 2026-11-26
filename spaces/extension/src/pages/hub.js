@@ -529,6 +529,7 @@
     const cs = commands().filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase()));
     showCmd(cs);
     if (!q) return;
+    if (finder.building) showCmd(cs.concat([{ label: "Search is still reading your mail. Matches follow in a moment.", key: "", run: () => {} }]), true);
     const hits = await search(q);
     if (n === asked) showCmd(cs.concat(hits), true);
   }
@@ -657,6 +658,8 @@
     await S.open();
     await loadAccounts();
     await refresh();
+    // The search index builds now, a chunk at a time, so the first search doesn't wait to read every message.
+    finder.warm().catch(() => {});
     // A send that was waiting when the page last closed goes now, or waits out what is left of its 10 seconds.
     const left = await outbox.resume();
     if (left.waiting.length) {
