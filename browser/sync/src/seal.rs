@@ -53,11 +53,14 @@ impl Key {
         &self.0
     }
 
-    /// A key for one use, made from this one. Two labels or two contexts give unrelated keys.
+    /// A key for one use, made from this one. Two labels or two contexts give unrelated keys: both go in the HKDF info,
+    /// the label with its length in front. Not in the salt, where HMAC pads a short key with zeros, so "a" and "a\0"
+    /// would give the same key.
     pub fn derive(&self, label: &str, context: &[u8]) -> Key {
         let mut out = Key([0; 32]);
-        Hkdf::<Sha256>::new(Some(label.as_bytes()), &self.0)
-            .expand(context, &mut out.0)
+        let length = (label.len() as u64).to_be_bytes();
+        Hkdf::<Sha256>::new(None, &self.0)
+            .expand_multi_info(&[&length, label.as_bytes(), context], &mut out.0)
             .expect("32 bytes is in range");
         out
     }
@@ -122,8 +125,45 @@ mod tests {
         let k = Key::random();
         assert_ne!(k.derive("a", b"x").expose(), k.derive("b", b"x").expose());
         assert_ne!(k.derive("a", b"x").expose(), k.derive("a", b"y").expose());
+        assert_ne!(k.derive("a", b"").expose(), k.derive("a\0", b"").expose());
+        assert_ne!(k.derive("ab", b"c").expose(), k.derive("a", b"bc").expose());
         assert_ne!(hash("l", &[b"ab", b"c"]), hash("l", &[b"a", b"bc"]));
         assert_ne!(k.commitment(), Key::random().commitment());
         assert_eq!(format!("{k:?}"), "Key(..)");
+    }
+    /// Devices store and compare these, so a change to any of them is a change of format, never a refactor. The
+    /// expected values come from Python's hashlib and hmac, not from this code.
+    #[test]
+    fn hashes_and_keys_are_what_they_were() {
+        let k = Key::from_bytes(&[7; 32]).unwrap();
+        assert_eq!(
+            hex(&hash("l", &[b"ab", b"c"])),
+            "7c122766fe31a611e85bf690f4091f135b5a463614dc53e58d70715845d6b325"
+        );
+        assert_eq!(
+            hex(k.derive("a", b"x").expose()),
+            "795d2644b704805bb0d61b4707bb9e67428238d88a3de2c186991e8c0add2a72"
+        );
+        assert_eq!(
+            hex(&k.commitment()),
+            "20607c8258ccb7895feff2491222aec55d85c72aa6fd8375420a1b9d05f626e9"
+        );
+        let sealed = [
+            &[9; NONCE][..],
+            &unhex("ce1e83e312c28e8a67d77c22bd5b27b27acf1bdbe2"),
+        ]
+        .concat();
+        assert_eq!(k.open(b"here", &sealed).unwrap().expose(), b"plain");
+    }
+
+    fn hex(bytes: &[u8]) -> String {
+        bytes.iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    fn unhex(s: &str) -> Vec<u8> {
+        (0..s.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&s[i..i + 2], 16).unwrap())
+            .collect()
     }
 }
