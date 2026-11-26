@@ -31,16 +31,39 @@ public enum BarSides {
         return (middle, max(0, (room - middle) / 2 - (middle > 0 ? gap : gap / 2)))
     }
 
-    /// Beside a notch: the middle's modules (the clock) at the notch, the side's own at the screen's edge. The widths of both rows in `room`: the side's own row is whole while it fits, and the middle's gives way to it
-    /// down to `BarLayout.middleShare` of the room, so a long verse shortens instead of pushing icons off.
+    /// The least the middle's row is shortened to before icons go.
+    static let least = 120.0
+
+    /// Beside a notch: the middle's modules (the clock) at the notch, the side's own at the screen's edge. The widths of both rows in `room`: the side's own row
+    /// is whole while the middle's keeps `least`, so a long verse shortens instead of pushing icons off. When even that
+    /// doesn't fit, icons go and the middle's keeps `BarLayout.middleShare` of the room.
     public static func widths(lead: Double, trail: Double, gap: Double, room: Double) -> (lead: Double, trail: Double) {
         guard lead > 0 else { return (0, min(trail, room)) }
         guard trail > 0 else { return (min(lead, room), 0) }
         let space = max(0, room - gap)
         if lead + trail <= space { return (lead, trail) }
-        let kept = min(lead, max(space * BarLayout.middleShare, space - trail))
+        let kept = min(lead, trail <= space - least ? space - trail : space * BarLayout.middleShare)
         return (kept, max(0, space - kept))
     }
+}
+
+/// What the drawer in the `status` module holds and when it is open.
+public enum BarTray {
+    /// The places in the status row: your apps' items, which fold away, and macOS's own, which stay. Each keeps its
+    /// place in the list, which is what a click presses.
+    public static func split(_ items: [BarStatus.Item]) -> (apps: [Int], system: [Int]) {
+        let places = Array(items.indices)
+        return (places.filter { !items[$0].isSystem }, places.filter { items[$0].isSystem })
+    }
+
+    /// One item takes no more room than the button that would hide it, so it stays out.
+    public static func folds(_ apps: Int) -> Bool { apps > 1 }
+
+    /// How many of the drawer's items open over a row with this much room.
+    public static func open(_ apps: Int, room: Double) -> Int { max(0, min(apps, Int(room / BarGeometry.slot))) }
+
+    /// How long the pointer can leave the drawer before it closes.
+    public static let linger = 0.35
 }
 
 /// The wheel over the workspaces: one workspace a step, however the wheel reports itself.

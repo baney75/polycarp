@@ -101,6 +101,9 @@ final class TopBarTests: XCTestCase {
         let verse = BarSides.widths(lead: 900, trail: 200, gap: 16, room: 656)
         XCTAssertEqual(verse.lead, 440, "the verse takes what the icons leave")
         XCTAssertEqual(verse.trail, 200)
+        let many = BarSides.widths(lead: 900, trail: 400, gap: 16, room: 656)
+        XCTAssertEqual(many.trail, 400, "a long verse gives way to every icon that fits")
+        XCTAssertEqual(many.lead, 240)
         let crowded = BarSides.widths(lead: 900, trail: 900, gap: 16, room: 656)
         XCTAssertEqual(crowded.lead, 640 * BarLayout.middleShare, accuracy: 0.01)
         XCTAssertEqual(crowded.lead + crowded.trail, 640, accuracy: 0.01, "the two never overlap")
@@ -128,6 +131,19 @@ final class TopBarTests: XCTestCase {
         let parts = try app("BarParts.swift")
         XCTAssertTrue(parts.contains(".activeAlways"))
         XCTAssertTrue(parts.contains("override func hitTest(_ point: NSPoint) -> NSView? { nil }"), "the hover area takes no clicks")
+    }
+
+    func testTheTrayFoldsAppsAndKeepsMacOSsOwn() {
+        let items = [BarStatus.Item(owner: "com.example.a"), BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra.wifi"),
+                     BarStatus.Item(owner: "com.example.b")]
+        let parts = BarTray.split(items)
+        XCTAssertEqual(parts.apps, [0, 2], "each keeps the place a click presses")
+        XCTAssertEqual(parts.system, [1])
+        XCTAssertFalse(BarTray.folds(0)); XCTAssertFalse(BarTray.folds(1), "a lone item stays out"); XCTAssertTrue(BarTray.folds(2))
+        XCTAssertEqual(BarTray.open(9, room: 100), 3, "only whole slots")
+        XCTAssertEqual(BarTray.open(2, room: 500), 2)
+        XCTAssertEqual(BarTray.open(2, room: -10), 0)
+        XCTAssertEqual(Surfaces.defaults.bar.tray, .drawer)
     }
 
     func testTheWheelStepsOneWorkspaceAtATime() {

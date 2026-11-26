@@ -194,10 +194,12 @@ enum Render {
             topBar.status = apps.indices.map { BarStatus.Item(owner: "sample.\($0)", label: "App \($0)") }
                 + [("wifi", "Wi-Fi"), ("sound", "Sound"), ("battery", "Battery"), ("controlcenter", "Control Center")]
                 .map { BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra." + $0.0, label: $0.1) }
-            for (name, sides, height) in [("topbar-full.png", nil, 26.0), ("topbar-full-notch.png", (left: 656.0, right: 656.0), 37.0)]
+            for (name, sides, height) in [("topbar-full.png", nil, 26.0), ("topbar-full-notch.png", (left: 656.0, right: 656.0), 37.0),
+                                          ("topbar-drawer.png", nil, 26.0), ("topbar-drawer-notch.png", (left: 656.0, right: 656.0), 37.0)]
                 as [(String, (left: CGFloat, right: CGFloat)?, CGFloat)] {
+                topBar.trayHeld = name.contains("drawer")
                 topBar.bar.style = .islands
-                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name.replacingOccurrences(of: "full", with: "islands"), CGSize(width: 1512, height: height)) else { return 1 }
+                guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name.replacingOccurrences(of: "topbar-", with: "topbar-islands-"), CGSize(width: 1512, height: height)) else { return 1 }
                 topBar.bar.style = .solid
                 guard save(TopBarView(model: topBar, display: id, screen: screen, sides: sides).background(Color(white: 0.35)), name, CGSize(width: 1512, height: height)) else { return 1 }
             }

@@ -575,20 +575,17 @@ extension StyleSheet {
       font-size: 12px;
       font-weight: 400;
       height: 26px;
-      padding: 0 10px;
-      gap: 16px;
+      padding: 0 7px;
     }
 
-    bar .workspaces { gap: 2px; }
-    bar .workspace { color: var(--quiet); padding: 0 6px 3px; transition-duration: 120ms; }
+    bar .workspace { color: var(--quiet); padding: 0 4px; transition-duration: 120ms; }
     bar .workspace:hover { color: var(--ink); }
     bar .workspace.current { color: var(--bright); border-bottom: 2px solid var(--accent); }
 
     bar .center { color: var(--ink); }
     bar .clock { color: var(--bright); font-variant-numeric: tabular-nums; }
 
-    bar .right { color: var(--quiet); gap: 14px; }
-    bar .status { gap: 12px; }
+    bar .right { color: var(--quiet); }
     bar .network { color: var(--alarm); }
 
     """)

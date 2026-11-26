@@ -119,6 +119,8 @@ struct PointerArea: NSViewRepresentable {
             // A button that moved out from under a pointer at rest, or in under one, gets no enter or exit from AppKit.
             if let window {
                 let here = visibleRect.contains(convert(window.mouseLocationOutsideOfEventStream, from: nil))
+                    // Not under another window that covers the bar.
+                    && NSWindow.windowNumber(at: NSEvent.mouseLocation, belowWindowWithWindowNumber: 0) == window.windowNumber
                 DispatchQueue.main.async { [weak self] in self?.set(here) }
             }
         }

@@ -359,6 +359,8 @@ final class TopBarModel: ObservableObject {
     @Published var icons: [String: NSImage] = [:]
     /// The battery's charge for the macOS battery item in `status`.
     @Published var charge: Charge?
+    /// The status row's drawer was clicked open, so it stays open with the pointer away.
+    @Published var trayHeld = false
     /// How many notifications are new, as the bell shows it (`NoticeShelf.count`).
     @Published var notices = ""
 
@@ -415,7 +417,7 @@ struct TopBarView: View {
                         // The clock beside the camera, the icons at the edge.
                         BarSideRow {
                             row(model.bar.center, .center)
-                            row(model.bar.right, .right)
+                            row(model.bar.right, .right, room: Double(right) * (1 - BarLayout.middleShare))
                         }
                         .padding(.leading, CGFloat(BarGeometry.group))
                         .frame(width: right)
@@ -426,7 +428,7 @@ struct TopBarView: View {
                     BarFlatRow {
                         row(model.bar.left, .left)
                         row(model.bar.center, .center)
-                        row(model.bar.right, .right)
+                        row(model.bar.right, .right, room: Double(g.size.width) * (1 - BarLayout.middleShare) / 2)
                     }
                 }
             }
@@ -470,7 +472,7 @@ struct TopBarView: View {
 
     /// One region's modules, in the groups `|` splits them into. The sheet can hide a region, box it and set its own
     /// gap. With `bar.style` islands each group floats in its own island; otherwise a little room parts them.
-    @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region) -> some View {
+    @ViewBuilder private func row(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, room: Double = 400) -> some View {
         let r = styles.book.region(region)
         if r.isHidden {
             // A hidden region keeps its place in the layout, with nothing in it.
@@ -482,13 +484,13 @@ struct TopBarView: View {
                 if model.bar.style == .islands {
                     // A fixed space between islands; the region's gap still spaces the modules inside each.
                     HStack(spacing: 6) {
-                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in island(group, region, gap: r.gap) }
+                        ForEach(Array(groups.enumerated()), id: \.offset) { _, group in island(group, region, gap: r.gap, room: room) }
                     }
                 } else {
                     HStack(spacing: CGFloat(BarGeometry.group) + gap) {
                         ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                             HStack(spacing: gap) {
-                                ForEach(group, id: \.id) { styled($0, region) }
+                                ForEach(group, id: \.id) { styled($0, region, room: room) }
                             }
                         }
                     }
@@ -503,11 +505,11 @@ struct TopBarView: View {
     /// One island: its modules on a rounded face, inset from the bar's top and bottom so it floats. Only the face is inset:
     /// what is on it reaches the screen's edge. The sheet's
     /// `bar .island` sets its background, corners, line, shadow, padding and gap; what it leaves unset keeps the face.
-    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, gap: Double?) -> some View {
+    @ViewBuilder private func island(_ modules: [Surfaces.BarModule], _ region: StyleBook.Region, gap: Double?, room: Double) -> some View {
         let s = styles.book.island(in: region)
         if !s.isHidden {
             HStack(spacing: CGFloat(s.gap ?? gap ?? Double(spacing))) {
-                ForEach(modules, id: \.id) { styled($0, region) }
+                ForEach(modules, id: \.id) { styled($0, region, room: room) }
             }
             .padding(s.padding.map(Styled.insets) ?? EdgeInsets(top: 0, leading: 4, bottom: 0, trailing: 4))
             .frame(maxHeight: .infinity)
@@ -517,10 +519,10 @@ struct TopBarView: View {
     }
 
     /// A module with the sheet's style for it where it sits, hidden by `display: none`.
-    @ViewBuilder private func styled(_ m: Surfaces.BarModule, _ region: StyleBook.Region) -> some View {
+    @ViewBuilder private func styled(_ m: Surfaces.BarModule, _ region: StyleBook.Region, room: Double) -> some View {
         let s = styles.book.module(m, in: region, hover: hovered == m.id)
         if !s.isHidden {
-            module(m, s, region)
+            module(m, s, region, room: room)
                 .modifier(StyledText(style: s))
                 .modifier(BarBoxed(on: s.hasBox))
                 .modifier(StyledBox(style: s))
@@ -545,7 +547,7 @@ struct TopBarView: View {
 
     private func words(_ text: String, _ s: ComputedStyle, _ weight: TextWeight = .regular) -> Text { BarWords.text(text, s, weight) }
 
-    @ViewBuilder private func module(_ m: Surfaces.BarModule, _ s: ComputedStyle, _ region: StyleBook.Region) -> some View {
+    @ViewBuilder private func module(_ m: Surfaces.BarModule, _ s: ComputedStyle, _ region: StyleBook.Region, room: Double) -> some View {
         let quiet = s.ink(Chrome.wash(0.85))
         switch m {
         case .mark:
@@ -586,7 +588,7 @@ struct TopBarView: View {
         case .appMenus:
             MenuRow(items: model.menus, style: s) { model.onMenu($0) }
         case .status:
-            StatusRow(model: model, style: s)
+            StatusRow(model: model, style: s, room: room)
         case .notifications:
             BarButton(inset: model.notices.isEmpty ? 0 : CGFloat(BarGeometry.textInset),
                       label: model.notices.isEmpty ? "Notifications" : "Notifications, \(model.notices) new", help: "Notifications",

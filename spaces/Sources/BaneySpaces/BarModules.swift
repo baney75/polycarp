@@ -95,18 +95,65 @@ private struct WorkspaceMarker: View {
     }
 }
 
-/// Every app's status items, as many as fit from the right: macOS's as symbols in the bar's ink, an app's own as its icon.
+/// Every app's status items. macOS's own stay in view as symbols in the bar's ink; your apps' fold into a drawer behind
+/// a chevron (`bar.tray` drawer) that opens while the pointer is on it, or until you click the chevron again. With
+/// `bar.tray` row they are all in one row, as many as fit from the right.
 struct StatusRow: View {
     @Environment(\.barBoxed) private var boxed
     @ObservedObject var model: TopBarModel
     let style: ComputedStyle
+    /// The room the drawer may take when it opens.
+    let room: Double
+    @State private var over = false
+    @State private var open = false
 
+    private var gap: CGFloat { style.gap.map { CGFloat($0) } ?? 0 }
     private var ink: Color { style.ink(Chrome.wash(0.88)) }
 
     var body: some View {
-        FitRow(spacing: style.gap.map { CGFloat($0) } ?? 0, fromEnd: true, fills: !boxed) {
-            ForEach(model.status.indices, id: \.self) { item($0) }
+        let parts = BarTray.split(model.status)
+        if model.bar.tray == .drawer, BarTray.folds(parts.apps.count) {
+            HStack(spacing: gap) {
+                drawer(parts.apps)
+                FitRow(spacing: gap, fromEnd: true, fills: !boxed) { ForEach(parts.system, id: \.self) { item($0) } }
+            }
+        } else {
+            FitRow(spacing: gap, fromEnd: true, fills: !boxed) { ForEach(model.status.indices, id: \.self) { item($0) } }
         }
+    }
+
+    private func drawer(_ apps: [Int]) -> some View {
+        let n = BarTray.open(apps.count, room: room - Double(model.status.count - apps.count + 1) * BarGeometry.slot)
+        let out = open || model.trayHeld
+        return HStack(spacing: 0) {
+            HStack(spacing: 0) { ForEach(apps.suffix(n), id: \.self) { item($0) } }
+                .fixedSize(horizontal: true, vertical: false)
+                .opacity(out ? 1 : 0)
+                .frame(width: out ? CGFloat(Double(n) * BarGeometry.slot) : 0, alignment: .trailing)
+                .clipped()
+                .allowsHitTesting(out)
+                .accessibilityHidden(!out)
+            BarButton(width: 20, held: model.trayHeld, label: out ? "Hide apps' status items" : "Show apps' status items",
+                      help: "\(apps.count) status items", action: toggle) {
+                Image(systemName: "chevron.left").font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(style.ink(out ? Chrome.wash(0.88) : Chrome.muted))
+                    .rotationEffect(.degrees(out ? 180 : 0))
+            }
+        }
+        .animation(Chrome.ease(out ? 0.2 : 0.135, out ? .panelIn : .panelOut), value: out)
+        .background { PointerArea { pointer($0) } }
+    }
+
+    /// A click keeps it open with the pointer away; the next closes it, pointer or not.
+    private func toggle() {
+        model.trayHeld.toggle()
+        open = model.trayHeld
+    }
+
+    private func pointer(_ on: Bool) {
+        over = on
+        if on { open = true; return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + BarTray.linger) { if !over { open = false } }
     }
 
     private func item(_ i: Int) -> some View {

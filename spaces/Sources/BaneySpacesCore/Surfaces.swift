@@ -60,6 +60,8 @@ public struct Surfaces: Equatable, Sendable {
     public static let version = 1
 
     public enum BarStyle: String, CaseIterable, Sendable { case islands, solid, glass, hairline }
+    /// Where your apps' status items are: folded into a drawer, or in the row with macOS's.
+    public enum TrayStyle: String, CaseIterable, Sendable { case drawer, row }
     /// The clock module's form: the time alone ("3:05", "15:05"), or after the day's name as Omarchy's bar draws it
     /// ("Saturday 10:04 PM", "Saturday 22:04").
     public enum ClockFormat: String, CaseIterable, Sendable {
@@ -119,6 +121,7 @@ public struct Surfaces: Equatable, Sendable {
         public var right: [BarModule]
         public var clockFormat: ClockFormat
         public var hourNames: Bool
+        public var tray: TrayStyle
     }
 
     public enum Scene: Equatable, Sendable {
@@ -338,6 +341,8 @@ extension SurfaceField {
         SurfaceField("bar.clockFormat", .choice(Surfaces.ClockFormat.allCases.map(\.rawValue)), .string("day-12h"),
                      "The clock module: day-12h (Saturday 10:04 PM), day-24h (Saturday 22:04), 12h (3:05) or 24h (15:05)."),
         SurfaceField("bar.hourNames", .bool, .bool(true), "The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning)."),
+        SurfaceField("bar.tray", .choice(Surfaces.TrayStyle.allCases.map(\.rawValue)), .string("drawer"),
+                     "Where your apps' status items are. drawer: folded behind a chevron that opens under the pointer, or stays open on a click. row: in one row with macOS's."),
 
         SurfaceField("desktop.scene", .tagged(choices: Surfaces.Scene.named, prefix: "image", pattern: SurfaceCheck.picturePattern,
                                               example: "image:dawn.png"),
@@ -488,7 +493,7 @@ extension Surfaces {
                   center: list("bar.modules.center").compactMap(BarModule.init(id:)),
                   right: list("bar.modules.right").compactMap(BarModule.init(id:)),
                   clockFormat: ClockFormat(rawValue: s("bar.clockFormat")) ?? .dayTwelveHour,
-                  hourNames: b("bar.hourNames"))
+                  hourNames: b("bar.hourNames"), tray: TrayStyle(rawValue: s("bar.tray")) ?? .drawer)
         desktop = Desktop(scene: Scene(id: s("desktop.scene")), followDaylight: b("desktop.followDaylight"), verse: b("desktop.verse"),
                           versePosition: VersePosition(rawValue: s("desktop.versePosition")) ?? .bottomRight,
                           verseRotation: VerseRotation(id: s("desktop.verseRotation")), paper: Paper(id: s("desktop.paper")))
