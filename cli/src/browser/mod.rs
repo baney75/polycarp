@@ -4,13 +4,10 @@
 
 mod change;
 mod chromium;
-// The import of sign-ins uses these in the next change.
-#[allow(dead_code)]
 mod cookies;
 mod gone;
 mod import;
 mod install;
-#[allow(dead_code)]
 mod keys;
 mod pages;
 mod pak;
@@ -284,7 +281,7 @@ Usage:
   polycarp browser import helium [--profile NAME] --yes
                                  copy a Helium profile; Helium's own stays as it is
   polycarp browser import chrome|brave|edge|vivaldi|arc|chromium [--profile NAME] --yes
-                                 copy bookmarks and history into a new profile
+                                 copy bookmarks, history and sign-ins into a new profile
   polycarp browser uninstall     remove the app; your profile stays unless you add --profile --yes
 
   --app-dir DIR                  where the app is, instead of beside Polycarp.app or in ~/Applications
@@ -346,7 +343,12 @@ pub fn run(
             };
             answer(&System, &place, &asked)
         });
-    Some(match done {
+    Some(print(done))
+}
+
+/// What a run says, on stdout or stderr, and its exit code.
+fn print(done: Result<String, Refused>) -> i32 {
+    match done {
         Ok(line) => {
             if !line.is_empty() {
                 println!("{line}");
@@ -357,7 +359,7 @@ pub fn run(
             eprintln!("polycarp browser: {refused}. The installed browser was not changed.");
             1
         }
-    })
+    }
 }
 
 fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Refused> {
@@ -381,7 +383,7 @@ fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Ref
             };
         }
         "open" => return gone::open(tools, &place.spot, asked.what.as_deref()),
-        "import" => return import::answer(tools, place, asked),
+        "import" => return import::answer(tools, &keys::Keychain, place, asked),
         "uninstall" => return gone::uninstall(place, flag("--profile")),
         "install" if flag("--dry-run") => return dry_run(tools, place, arch),
         "install" if flag("--rollback") => install::roll_back(tools, place)?,

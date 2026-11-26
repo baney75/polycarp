@@ -48,10 +48,17 @@ The browser you import from is only ever read, and only while it is closed.
   passwords and sign-ins can't be read; the rest of the profile works.
 - **Chrome, Brave, Edge, Vivaldi, Arc, Chromium.** `polycarp browser import chrome --yes` makes a new profile with that
   profile's bookmarks and web history. The command names your Web Store extensions with their links, for you to add
-  again. Passwords and sign-ins stay where they are. Polycarp Browser must be installed first.
+  again. Passwords stay where they are. Polycarp Browser must be installed first.
 - **Firefox and Safari.** Open `chrome://settings/importData` in Polycarp Browser. Chromium's own importer reads them.
 
 Without an import the browser starts with an empty profile.
+
+### Sign-ins from the other Chromium browsers
+
+The import from Chrome, Brave, Edge, Vivaldi, Arc or Chromium also brings that profile's sign-ins, its cookies. macOS asks
+for two keys in your keychain, that browser's and `Helium Storage Key`. Each cookie is opened with one and sealed with the
+other in memory; say no to either and the rest still comes. No cookie value is shown or written anywhere but the new
+profile. A password manager's extension brings its own passwords. Open Polycarp Browser once before, so that it has a key.
 
 ## What is checked
 

@@ -1,4 +1,4 @@
-//! Importing from the other Chromium browsers: bookmarks and history go into a new profile that this browser's own code
+//! Importing from the other Chromium browsers: bookmarks, history and sign-ins go into a new profile that this browser's own code
 //! laid out, so another version's files are never opened by it. The source is copied first, and only the copy is read.
 
 use std::fs;
@@ -8,7 +8,9 @@ use std::path::Path;
 use rusqlite::Connection;
 use serde_json::{json, Map, Value};
 
+use super::cookies::{self, Counted};
 use super::import::{self, Browser, Profile};
+use super::keys::{self, Cipher, Denied, Keys};
 use super::tools::Tools;
 use super::{clear, pages, refuse, start, Place, Refused};
 
@@ -34,18 +36,31 @@ const VISITS: [&str; 7] = [
 ];
 const ROOTS: [&str; 3] = ["bookmark_bar", "other", "synced"];
 
+/// What became of the sign-ins.
+#[derive(Debug, Default, PartialEq)]
+pub enum Cookies {
+    /// There are none, or they can't be read.
+    #[default]
+    None,
+    /// The person said no to one of the two keys.
+    Declined,
+    Came(Counted),
+}
+
 /// What came over. A part that could not be read is left out, and the line says so.
 #[derive(Debug, Default, PartialEq)]
 pub struct Brought {
     pub dir: String,
     pub bookmarks: bool,
     pub history: Option<usize>,
+    pub cookies: Cookies,
     /// Web Store ids and names.
     pub extensions: Vec<(String, String)>,
 }
 
 pub fn import(
     tools: &dyn Tools,
+    keys: &dyn Keys,
     place: &Place,
     from: &Browser,
     profile: &Profile,
@@ -53,10 +68,11 @@ pub fn import(
     let app = installed(place)?;
     let mut brought = Brought::default();
     let dir = import::into_profile(place, from, &profile.name, |part| {
+        let ciphers = ciphers(keys, from)?;
         let work = place.work(tools)?;
         let made = start::empty_profile(tools, &app, &work);
         let filled = made.and_then(|empty| {
-            fill(&empty, &profile.folder, part, &work, &mut brought)
+            fill(&empty, &profile.folder, part, &work, ciphers, &mut brought)
                 .map_err(refuse(CHECK, "writing the new profile"))
         });
         let cleared = clear(&work).map_err(refuse(CHECK, "clearing the copies"));
@@ -80,7 +96,32 @@ pub fn installed(place: &Place) -> Result<std::path::PathBuf, Refused> {
 /// A database's file and what SQLite may keep beside it.
 const BESIDE: [&str; 3] = ["", "-wal", "-journal"];
 
-fn fill(empty: &Path, from: &Path, part: &Path, work: &Path, to: &mut Brought) -> io::Result<()> {
+/// Their key and ours. None: the person said no, or there is no key to open theirs with.
+fn ciphers(keys: &dyn Keys, from: &Browser) -> Result<Option<(Cipher, Cipher)>, Refused> {
+    let get = |(service, account)| {
+        let password = keys.password(service, account)?;
+        Cipher::new(&password).ok_or(Denied::Declined)
+    };
+    let ours = match get(keys::OURS) {
+        Ok(ours) => ours,
+        Err(Denied::Declined) => return Ok(None),
+        Err(Denied::Missing) => {
+            let why = "Polycarp Browser has no key yet. Open it once, quit it, and import again";
+            return Err(Refused::new(CHECK, why));
+        }
+    };
+    let theirs = keys::item(from).and_then(|item| get(item).ok());
+    Ok(theirs.map(|theirs| (theirs, ours)))
+}
+
+fn fill(
+    empty: &Path,
+    from: &Path,
+    part: &Path,
+    work: &Path,
+    ciphers: Option<(Cipher, Cipher)>,
+    to: &mut Brought,
+) -> io::Result<()> {
     fs::write(part.join("Preferences"), pages::first_prefs())?;
     if let Some(bookmarks) = bookmarks(from) {
         fs::write(part.join("Bookmarks"), bookmarks)?;
@@ -103,6 +144,34 @@ fn fill(empty: &Path, from: &Path, part: &Path, work: &Path, to: &mut Brought) -
             }
         }
     }
+    // Where newer Chromium keeps them, and where this one does.
+    let mut cookies = copied(&from.join("Network/Cookies"), work)?;
+    if cookies.is_none() {
+        cookies = copied(&from.join("Cookies"), work)?;
+    }
+    to.cookies = match (cookies, ciphers) {
+        (None, _) => Cookies::None,
+        (Some(_), None) => Cookies::Declined,
+        (Some(copy), Some((theirs, ours))) => {
+            let file = part.join("Cookies");
+            // With its log, as History is.
+            for end in BESIDE {
+                let made = empty.join(format!("Cookies{end}"));
+                if made.is_file() {
+                    fs::copy(made, part.join(format!("Cookies{end}")))?;
+                }
+            }
+            match cookies::bring(&file, &copy, &theirs, &ours) {
+                Some(counted) => Cookies::Came(counted),
+                None => {
+                    for end in BESIDE {
+                        let _ = fs::remove_file(part.join(format!("Cookies{end}")));
+                    }
+                    Cookies::None
+                }
+            }
+        }
+    };
     to.extensions = extensions(from);
     Ok(())
 }
@@ -250,8 +319,16 @@ impl Brought {
             Some(n) => format!("history ({n} pages)"),
             None => "no history".into(),
         };
+        let cookies = match &self.cookies {
+            Cookies::None => "no sign-ins".into(),
+            Cookies::Declined => "no sign-ins (macOS gave no key for them, or you said no)".into(),
+            Cookies::Came(Counted { came, left: 0 }) => format!("sign-ins ({came} cookies)"),
+            Cookies::Came(Counted { came, left }) => {
+                format!("sign-ins ({came} cookies; {left} could not be read)")
+            }
+        };
         let mut text = format!(
-            "{}'s profile {} is copied ({}): {}, {history}. Passwords and sign-ins stay there.",
+            "{}'s profile {} is copied ({}): {}, {history}, {cookies}. Passwords stay there.",
             from.name,
             profile.name,
             self.dir,
@@ -271,6 +348,7 @@ impl Brought {
 #[cfg(test)]
 mod tests {
     use super::super::import::BROWSERS;
+    use super::super::keys::Secret;
     use super::super::testing::*;
     use super::super::tools::{Call, Ran};
     use super::*;
@@ -330,10 +408,36 @@ mod tests {
                 std::mem::forget(self.0.start_inside(app));
             }
             if self.1 {
-                fs::write(first.join("Cookies"), "").unwrap();
+                let db = Connection::open(first.join("Cookies")).unwrap();
+                if self.2 == Leave::Log {
+                    db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;")
+                        .unwrap();
+                }
+                db.execute_batch(cookies::tests::OURS).unwrap();
+                if self.2 == Leave::Log {
+                    std::mem::forget(db);
+                }
             }
             self.0.run(call)
         }
+    }
+
+    /// A made-up keychain: the service's own name is its password.
+    struct FakeKeys(Option<(&'static str, Denied)>);
+
+    impl Keys for FakeKeys {
+        fn password(&self, service: &str, _: &str) -> Result<Secret, Denied> {
+            match self.0 {
+                Some((denied, how)) if denied == service => Err(how),
+                _ => Ok(Secret::new(service.into())),
+            }
+        }
+    }
+
+    const KEYS: FakeKeys = FakeKeys(None);
+
+    fn cipher(service: &str) -> Cipher {
+        Cipher::new(&KEYS.password(service, "").unwrap()).unwrap()
     }
 
     /// A made-up Chrome, and Polycarp Browser installed.
@@ -372,7 +476,14 @@ mod tests {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
         let before = t.listing(&place.home);
-        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
+        let brought = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
         assert_eq!(t.listing(&place.home), before, "the original was changed");
         assert_eq!(brought.dir, "Default");
         assert_eq!(brought.history, Some(1));
@@ -406,10 +517,164 @@ mod tests {
     }
 
     #[test]
+    fn sign_ins_come_over_under_this_browsers_key() {
+        let t = Fake::new();
+        let (place, chrome, profile) = made_up(&t);
+        let db = Connection::open(profile.folder.join("Cookies")).unwrap();
+        db.execute_batch(cookies::tests::OURS).unwrap();
+        cookies::tests::seal_one(&db, "a.example", &cipher("Chrome Safe Storage"));
+        let brought = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
+        assert_eq!(brought.cookies, Cookies::Came(Counted { came: 1, left: 0 }));
+        let file = place.data.join("Default/Cookies");
+        let sealed: Vec<u8> = Connection::open(&file)
+            .unwrap()
+            .query_row("SELECT encrypted_value FROM cookies", [], |r| r.get(0))
+            .unwrap();
+        let opened = cipher("Helium Storage Key").open(&sealed).unwrap();
+        assert!(opened.bytes().ends_with(b"made up"));
+        for dir in [&place.data, &place.cache] {
+            for (file, bytes) in t.listing(dir) {
+                let plain = bytes.windows(7).any(|w| w == b"made up");
+                assert!(!plain, "a readable value is in {}", file.display());
+            }
+        }
+        let text = brought.text(chrome, &profile);
+        assert!(text.contains("sign-ins (1 cookies)"), "{text}");
+        assert!(!text.contains("a.example"), "{text}");
+    }
+
+    const PRINTS: &str = "POLYCARP_TEST_IMPORT_PRINTS";
+    /// Made-up keys, and a value no line may show.
+    const THEIR_KEY: &str = "theirs-made-up-4f1c";
+    const OUR_KEY: &str = "ours-made-up-9a27";
+    const HOST: &str = "made-up-sign-in.example";
+
+    struct PrintKeys(bool);
+
+    impl Keys for PrintKeys {
+        fn password(&self, service: &str, _: &str) -> Result<Secret, Denied> {
+            match service == keys::OURS.0 {
+                true if self.0 => Ok(Secret::new(OUR_KEY.into())),
+                true => Err(Denied::Missing),
+                false => Ok(Secret::new(THEIR_KEY.into())),
+            }
+        }
+    }
+
+    /// Run in a process of its own by `no_secret_reaches_stdout_or_stderr`, so that what it prints is all there is.
+    #[test]
+    fn imports_and_prints_when_asked() {
+        if std::env::var_os(PRINTS).is_none() {
+            return;
+        }
+        // One import that works, and one refused for want of this browser's key.
+        for ours in [true, false] {
+            let t = Fake::new();
+            let (place, chrome, profile) = made_up(&t);
+            let state = json!({ "profile": { "info_cache": { "Default": { "name": "Home" } } } });
+            fs::write(
+                chrome.data(&place.home).join("Local State"),
+                state.to_string(),
+            )
+            .unwrap();
+            let db = Connection::open(profile.folder.join("Cookies")).unwrap();
+            db.execute_batch(cookies::tests::OURS).unwrap();
+            cookies::tests::seal_one(&db, HOST, &cipher(THEIR_KEY));
+            let asked = super::super::Asked {
+                verb: "import".into(),
+                what: Some("chrome".into()),
+                flags: vec!["--yes".into()],
+                ..Default::default()
+            };
+            let starts = Starts(&t, true, Leave::Nothing);
+            let done = import::answer(&starts, &PrintKeys(ours), &place, &asked);
+            super::super::print(done);
+        }
+    }
+
+    #[test]
+    fn no_secret_reaches_stdout_or_stderr() {
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "browser::chromium::tests::imports_and_prints_when_asked",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env(PRINTS, "1")
+            .output()
+            .unwrap();
+        let (stdout, stderr) = (
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+        assert!(out.status.success(), "{stdout}{stderr}");
+        // Both ran, so the two streams are the ones to look in.
+        assert!(stdout.contains("sign-ins (1 cookies)"), "{stdout}");
+        assert!(stderr.contains("has no key yet"), "{stderr}");
+        for (stream, text) in [("stdout", &stdout), ("stderr", &stderr)] {
+            for secret in ["made up", THEIR_KEY, OUR_KEY, HOST] {
+                assert!(!text.contains(secret), "{secret} is in {stream}: {text}");
+            }
+        }
+    }
+
+    #[test]
+    fn without_a_key_everything_but_sign_ins_comes_over() {
+        for denied in ["Chrome Safe Storage", keys::OURS.0] {
+            let t = Fake::new();
+            let (place, chrome, profile) = made_up(&t);
+            let db = Connection::open(profile.folder.join("Cookies")).unwrap();
+            db.execute_batch(cookies::tests::OURS).unwrap();
+            let keys = FakeKeys(Some((denied, Denied::Declined)));
+            let brought = import(
+                &Starts(&t, true, Leave::Nothing),
+                &keys,
+                &place,
+                chrome,
+                &profile,
+            )
+            .unwrap();
+            assert_eq!(brought.cookies, Cookies::Declined);
+            assert!(!place.data.join("Default/Cookies").exists());
+            assert_eq!(brought.history, Some(1));
+            assert!(brought.text(chrome, &profile).contains("you said no"));
+        }
+        // Never opened, this browser has no key to seal with yet.
+        let t = Fake::new();
+        let (place, chrome, profile) = made_up(&t);
+        let keys = FakeKeys(Some((keys::OURS.0, Denied::Missing)));
+        let e = import(
+            &Starts(&t, true, Leave::Nothing),
+            &keys,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap_err();
+        assert!(e.why.contains("Open it once"), "{e}");
+        assert!(pages::untouched(&place.data));
+    }
+
+    #[test]
     fn only_web_store_extensions_that_are_on_are_named() {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        let text = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
+        let text = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
         let text = text.text(chrome, &profile);
         let store = "https://chromewebstore.google.com/detail/";
         let (a, d) = ("a".repeat(32), "d".repeat(32));
@@ -429,7 +694,14 @@ mod tests {
         let (place, chrome, profile) = made_up(&t);
         fs::write(profile.folder.join("History"), "not a database").unwrap();
         fs::write(profile.folder.join("Bookmarks"), "{}").unwrap();
-        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
+        let brought = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
         assert!(!place.data.join("Default/History").exists());
         assert!(!place.data.join("Default/Bookmarks").exists());
         let text = brought.text(chrome, &profile);
@@ -448,7 +720,14 @@ mod tests {
         .unwrap();
         // Held, so the row stays in the log.
         assert!(profile.folder.join("History-wal").exists());
-        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
+        let brought = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
         assert_eq!(brought.history, Some(2));
         drop(db);
     }
@@ -462,7 +741,14 @@ mod tests {
             fs::rename(profile.folder.join(name), &elsewhere).unwrap();
             std::os::unix::fs::symlink(elsewhere, profile.folder.join(name)).unwrap();
         }
-        let brought = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap();
+        let brought = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
         assert_eq!(brought.history, None);
         assert!(!place.data.join("Default/Bookmarks").exists());
         assert!(brought.extensions.is_empty());
@@ -472,12 +758,26 @@ mod tests {
     fn it_needs_the_browser_installed_and_able_to_start() {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        let e = import(&Starts(&t, false, Leave::Nothing), &place, chrome, &profile).unwrap_err();
+        let e = import(
+            &Starts(&t, false, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap_err();
         assert_eq!(e.check, "headless start");
         assert!(pages::untouched(&place.data));
         assert!(!place.data.join(".import").exists());
         fs::remove_dir_all(place.spot.app()).unwrap();
-        let e = import(&Starts(&t, true, Leave::Nothing), &place, chrome, &profile).unwrap_err();
+        let e = import(
+            &Starts(&t, true, Leave::Nothing),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap_err();
         assert!(e.why.contains("install"), "{e}");
         // Nor is it offered.
         let asked = super::super::Asked {
@@ -485,7 +785,7 @@ mod tests {
             what: Some("chrome".into()),
             ..Default::default()
         };
-        let e = import::answer(&t, &place, &asked).unwrap_err();
+        let e = import::answer(&t, &KEYS, &place, &asked).unwrap_err();
         assert!(e.why.contains("install"), "{e}");
     }
 
@@ -493,11 +793,29 @@ mod tests {
     fn a_start_that_ended_badly_still_makes_the_profile() {
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        let brought = import(&Starts(&t, true, Leave::Log), &place, chrome, &profile).unwrap();
+        let db = Connection::open(profile.folder.join("Cookies")).unwrap();
+        db.execute_batch(cookies::tests::OURS).unwrap();
+        cookies::tests::seal_one(&db, "a.example", &cipher("Chrome Safe Storage"));
+        let brought = import(
+            &Starts(&t, true, Leave::Log),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
+        assert_eq!(brought.cookies, Cookies::Came(Counted { came: 1, left: 0 }));
         assert_eq!(brought.history, Some(1));
         let t = Fake::new();
         let (place, chrome, profile) = made_up(&t);
-        import(&Starts(&t, true, Leave::Helper), &place, chrome, &profile).unwrap();
+        import(
+            &Starts(&t, true, Leave::Helper),
+            &KEYS,
+            &place,
+            chrome,
+            &profile,
+        )
+        .unwrap();
         assert!(!place.spot.running());
     }
 }
