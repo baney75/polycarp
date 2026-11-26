@@ -534,6 +534,21 @@ final class StyleSheetTests: XCTestCase {
             XCTAssertEqual(book.workspace(in: .left, current: false).color, quiet)
             XCTAssertEqual(book.module(.battery, in: .right).color, quiet, "the right side is quiet")
             XCTAssertEqual(book.module(.battery, in: .right).color.map { $0.red == $0.green }, false, "a cool gray, as Omarchy's")
+            // Every panel matches: solid, square, monospace, a thin accent line, and a marked selection.
+            let accent = StyleLine.solid(width: 1, color: Self.roles(dark)["accent"]!)
+            for (name, panel) in [("launcher", book.launcher.panel), ("switcher", book.switcher.panel), ("notifications", book.notifications.panel), ("hud", book.hud.panel)] {
+                XCTAssertEqual(panel.background, book.bar.background, name)
+                XCTAssertEqual(panel.borderRadius, 0, name)
+                XCTAssertEqual(panel.border, accent, name)
+                XCTAssertEqual(panel.fontFamily?.last, "monospace", name)
+                XCTAssertNotNil(panel.color, name)
+            }
+            XCTAssertEqual(book.overview.panel.background, book.bar.background)
+            XCTAssertEqual(book.overview.tile(current: true, hover: true).box.border, accent)
+            XCTAssertEqual(book.overview.tile(current: false, hover: false).number.fontFamily?.last, "monospace")
+            XCTAssertEqual(book.switcher.item(selected: true).box.border, accent)
+            XCTAssertEqual(book.hud.cell(current: true).box.border, accent)
+            XCTAssertTrue(book.launcher.row(selected: true).marked)
         }
         // No name lists them; an unknown one says which there are.
         guard case .success(let list) = StyleOps.preset(nil, file: file, roles: Self.roles) else { return XCTFail("list") }
@@ -1002,7 +1017,12 @@ final class StyleSheetTests: XCTestCase {
         let (s, p) = StyleSheet.parse(ex)
         XCTAssertEqual(p, [], "the starter sheet checks clean")
         XCTAssertTrue(s.isEmpty, "and applies nothing until a line is uncommented")
-        for prop in StyleProperty.all { XCTAssertTrue(ex.contains("/* \(prop.name): "), prop.name) }
+        for prop in StyleProperty.all {
+            XCTAssertTrue(ex.contains("/* \(prop.name): "), prop.name)
+            XCTAssertEqual(ex.components(separatedBy: prop.help).count, 2, "\(prop.name) is explained once")
+        }
+        // Saved as style.css it loads, with room left for a sheet of your own.
+        XCTAssertLessThan(ex.utf8.count, StyleSheetFile.maxBytes / 2)
         for t in StyleTarget.allCases {
             for sel in t.selectors { XCTAssertTrue(ex.contains(sel), sel) }
             XCTAssertTrue(ex.contains(t.help), t.rawValue)
