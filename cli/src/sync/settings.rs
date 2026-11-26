@@ -52,8 +52,10 @@ impl Paths {
 }
 
 fn is_local_path(v: &Json) -> bool {
-    if let Json::Array(a) = v {
-        return a.iter().any(is_local_path);
+    match v {
+        Json::Array(a) => return a.iter().any(is_local_path),
+        Json::Object(m) => return m.values().any(is_local_path),
+        _ => {}
     }
     let Some(s) = v.as_str() else { return false };
     let b = s.as_bytes();
@@ -212,6 +214,68 @@ fn text_files(p: &Paths) -> Result<Vec<(String, PathBuf)>, String> {
 }
 
 /// Writes a file whole: a temp file beside it, then a rename, so nothing reads half of one.
+/// `config.toml` with each leaf that differs from `before` set or removed in place, so the person's comments, blank
+/// lines and key order stay.
+fn edit_toml(
+    path: &Path,
+    before: &BTreeMap<String, Json>,
+    after: &BTreeMap<String, Json>,
+) -> Result<String, String> {
+    let text = read_text(path)?.unwrap_or_default();
+    let mut doc: toml_edit::DocumentMut = text
+        .parse()
+        .map_err(|e| format!("{} can't be read: {e}", path.display()))?;
+    let keys = |ptr: &str| -> Vec<String> { ptr[1..].split('/').map(unescape).collect() };
+    for ptr in before.keys().filter(|k| !after.contains_key(*k)) {
+        let k = keys(ptr);
+        let mut at = Some(doc.as_item_mut());
+        for part in &k[..k.len() - 1] {
+            at = at.and_then(|i| i.get_mut(part.as_str()));
+        }
+        if let Some(t) = at.and_then(|i| i.as_table_like_mut()) {
+            t.remove(&k[k.len() - 1]);
+        }
+    }
+    for (ptr, v) in after.iter().filter(|(k, v)| before.get(*k) != Some(*v)) {
+        let k = keys(ptr);
+        let mut at = doc.as_item_mut();
+        for part in &k[..k.len() - 1] {
+            let t = at
+                .as_table_like_mut()
+                .ok_or_else(|| format!("{}: {ptr} is not under a table", path.display()))?;
+            if t.get(part).is_none_or(|i| !i.is_table_like()) {
+                t.insert(part, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            at = t.get_mut(part).expect("just put in");
+        }
+        let item = match v {
+            Json::Object(m) if m.is_empty() => toml_edit::Item::Table(toml_edit::Table::new()),
+            v => {
+                let one: toml::Value =
+                    serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+                let text = toml::to_string(&toml::Table::from_iter([("v".to_string(), one)]))
+                    .map_err(|e| e.to_string())?;
+                let parsed: toml_edit::DocumentMut = text.parse().map_err(|e| format!("{e}"))?;
+                parsed["v"].clone()
+            }
+        };
+        let t = at
+            .as_table_like_mut()
+            .ok_or_else(|| format!("{}: {ptr} is not under a table", path.display()))?;
+        match (t.get_mut(&k[k.len() - 1]), item) {
+            // The key stays, with its comment; the new value takes the old one's spacing.
+            (Some(old), toml_edit::Item::Value(mut new)) if old.is_value() => {
+                *new.decor_mut() = old.as_value().expect("a value").decor().clone();
+                *old = toml_edit::Item::Value(new);
+            }
+            (_, item) => {
+                t.insert(&k[k.len() - 1], item);
+            }
+        }
+    }
+    Ok(doc.to_string())
+}
+
 /// A file that is a link (a dotfiles repo) is written where it points, so the link stays.
 fn write_whole(p: &Path, bytes: &[u8]) -> Result<(), String> {
     let target;
@@ -249,16 +313,26 @@ pub fn apply(p: &Paths, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
             );
         }
         let kept: Vec<String> = leaves.keys().cloned().collect();
+        let mut local = BTreeMap::new();
+        if let Some(doc) = &before {
+            flatten(doc, "", &mut local);
+        }
         let prefix = format!("{file}:");
         for (id, v) in values {
-            let Some(ptr) = id.strip_prefix(&prefix) else {
+            let Some(ptr) = id.strip_prefix(&prefix).filter(|p| p.starts_with('/')) else {
                 continue;
             };
             let here = kept
                 .iter()
                 .any(|k| k == ptr || ptr.starts_with(&format!("{k}/")));
-            if !here && !machine_only(file, ptr, v) {
+            if here {
+                continue;
+            }
+            if !machine_only(file, ptr, v) {
                 leaves.insert(ptr.to_string(), v.clone());
+            } else if let Some(mine) = local.get(ptr) {
+                // A value machine-only here (an older or newer build's rules) is not taken, and this one stays.
+                leaves.insert(ptr.to_string(), mine.clone());
             }
         }
         if leaves.is_empty() && before.is_none() {
@@ -269,8 +343,7 @@ pub fn apply(p: &Paths, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
             continue;
         }
         let bytes = if file == "config" {
-            let t: toml::Value = serde_json::from_value(doc).map_err(|e| e.to_string())?;
-            toml::to_string(&t).map_err(|e| e.to_string())?.into_bytes()
+            edit_toml(&path, &local, &leaves)?.into_bytes()
         } else {
             let mut b = serde_json::to_vec_pretty(&doc).map_err(|e| e.to_string())?;
             b.push(b'\n');
@@ -291,8 +364,10 @@ pub fn apply(p: &Paths, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
     texts.dedup();
     for (id, path) in texts {
         let have = read_text(&path)?;
-        match (values.get(&id).and_then(Json::as_str), have) {
-            (Some(w), h) if h.as_deref() != Some(w) => {
+        match (values.get(&id), have) {
+            // A newer build's shape this one can't read: left as it is, never taken for a delete.
+            (Some(w), _) if !w.is_string() => {}
+            (Some(Json::String(w)), h) if h.as_deref() != Some(w.as_str()) => {
                 plan.push((path, Some(w.as_bytes().to_vec())))
             }
             (None, Some(_)) => plan.push((path, None)),
@@ -453,6 +528,42 @@ mod tests {
         let t: toml::Value = toml::from_str(&fs::read_to_string(p.config_toml()).unwrap()).unwrap();
         assert_eq!(t["appearance"]["theme"].as_str(), Some("still-water"));
         assert_eq!(t["folder"].as_str(), Some("/Users/d/cfg"));
+    }
+
+    #[test]
+    fn a_comment_in_config_toml_stays_when_one_key_changes() {
+        let p = temp("comments");
+        let text =
+            "# my settings\n\n[appearance]\n# the one I like\ntheme = \"ember\"\nmode = \"dark\"\n";
+        write_whole(&p.config_toml(), text.as_bytes()).unwrap();
+        let mut v = snapshot(&p).unwrap();
+        v.insert("config:/appearance/theme".into(), json!("still-water"));
+        v.remove("config:/appearance/mode");
+        v.insert("config:/appearance/accent/light".into(), json!("#aabbcc"));
+        apply(&p, &v).unwrap();
+        let got = fs::read_to_string(p.config_toml()).unwrap();
+        assert!(
+            got.starts_with(
+                "# my settings\n\n[appearance]\n# the one I like\ntheme = \"still-water\"\n"
+            ),
+            "{got}"
+        );
+        assert!(!got.contains("mode"), "{got}");
+        assert_eq!(snapshot(&p).unwrap(), v);
+    }
+
+    #[test]
+    fn what_this_build_cant_take_leaves_the_local_value_alone() {
+        let p = temp("newer");
+        write_whole(&p.surfaces(), br#"{"bar":{"icons":"mono"}}"#).unwrap();
+        write_whole(&p.style(), b"a {}").unwrap();
+        let mut theirs = BTreeMap::new();
+        theirs.insert("surfaces:/bar/icons".to_string(), json!("/Users/x/icons"));
+        theirs.insert("style:style.css".to_string(), json!({"text": "b {}"}));
+        assert!(apply(&p, &theirs).unwrap().is_empty());
+        assert!(is_local_path(
+            &json!([{"name": "a", "icon": "/Users/d/a.png"}])
+        ));
     }
 
     #[test]
