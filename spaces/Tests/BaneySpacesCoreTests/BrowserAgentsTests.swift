@@ -61,6 +61,20 @@ final class BrowserAgentsTests: XCTestCase {
         XCTAssertEqual(list(ask(b, query: "s7.example")).first?["front"] as? Bool, false, "a tab behind another")
     }
 
+    func testAnAddressGoesWithoutItsQueryOrFragment() {
+        let b = book([Self.tab(1, "Reset your password", "https://app.example/reset?token=abc123&u=7#step2"),
+                      Self.tab(2, "Signed in", "https://login.example/cb#access_token=xyz")])
+        let tabs = list(ask(b))
+        XCTAssertEqual(tabs.map { $0["url"] as? String }, ["https://app.example/reset", "https://login.example/cb"])
+        let r = ask(b)
+        XCTAssertFalse(r.info!["tabs"]!.contains("abc123"))
+        XCTAssertFalse(r.info!["tabs"]!.contains("xyz"))
+        XCTAssertEqual(list(ask(b, query: "abc123")).count, 0, "a query can't probe what the query string held")
+        XCTAssertEqual(list(ask(b, query: "reset")).count, 1)
+        XCTAssertNil(BrowserAgents.address(""))
+        XCTAssertEqual(BrowserAgents.address("https://u:p@a.example/x?y=1"), "https://a.example/x")
+    }
+
     func testOnlyTabsIsAnswered() {
         let r = ask(book([Self.tab(1, "A", "https://a.example/")]), text: "history")
         XCTAssertFalse(r.ok)
