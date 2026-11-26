@@ -147,7 +147,7 @@ public struct StyleProblem: Equatable, Hashable, Sendable, CustomStringConvertib
 // MARK: What a selector can name
 
 public enum StyleSurface: String, CaseIterable, Sendable {
-    case bar, launcher, tiling, switcher
+    case bar, launcher, tiling, switcher, overview
     /// Surfaces an older build had. A rule that names one reads with a warning and is ignored.
     static let retired: [String: String] = ["dock": "went with the Workspace Dock (removed 2026-11-23)"]
 }
@@ -169,6 +169,8 @@ public enum StyleTarget: String, CaseIterable, Sendable {
     case tiling
     case switcher, switcherItem = "switcher item", switcherNumber = "switcher number", switcherLabel = "switcher label",
          switcherIcon = "switcher icon", switcherHint = "switcher hint"
+    case overview, overviewTile = "overview tile", overviewNumber = "overview number", overviewLabel = "overview label",
+         overviewWindow = "overview window", overviewTitle = "overview title", overviewIcon = "overview icon", overviewHint = "overview hint"
 
     /// The first word of its name.
     public var surface: StyleSurface { Self.names[self]!.surface }
@@ -202,18 +204,22 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .launcherRow: [.selected, .hover]
         case .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherIcon: [.selected]
         case .switcherItem, .switcherNumber, .switcherLabel, .switcherIcon: [.selected]
+        case .overviewTile: [.current, .hover]
+        case .overviewNumber, .overviewLabel: [.current]
         default: []
         }
     }
 
     /// The target it inherits from. A bar module inherits from its region when the caller names one, else from the bar; a
-    /// workspace number from the workspaces module; what a launcher row or a switcher tile holds, from it in the same state.
+    /// workspace number from the workspaces module; what a row or a tile holds, from it in the same state.
     var parent: StyleTarget? {
         switch self {
         case .barIsland: .barRegion
         case .barWorkspace: .barModule
         case .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherIcon: .launcherRow
         case .switcherNumber, .switcherLabel, .switcherIcon: .switcherItem
+        case .overviewNumber, .overviewLabel, .overviewWindow: .overviewTile
+        case .overviewTitle, .overviewIcon: .overviewWindow
         // A surface inherits from nothing, its other parts from it.
         default: parts.isEmpty ? nil : StyleTarget.of(surface, part: nil)
         }
@@ -243,6 +249,14 @@ public enum StyleTarget: String, CaseIterable, Sendable {
         case .switcherLabel: "The name under an app, a window's title or a workspace's window count; .selected while its tile is."
         case .switcherIcon: "An app's icon; .selected while its tile is."
         case .switcherHint: "The line under the apps, and the words beside a window bar's heading."
+        case .overview: "The overview of every workspace; its background takes the place of the blur and the dimming behind the tiles."
+        case .overviewTile: "One workspace, an empty one's small tile too; .current is the one you're on, :hover the one under the pointer or the arrow keys. A tile a window can be dropped on keeps the theme's highlight."
+        case .overviewNumber: "A workspace's number; .current on the one you're on."
+        case .overviewLabel: "A tile's window count, \"You're here\" and \"Empty\"; .current on the one you're on."
+        case .overviewWindow: "A window's card in a tile, and its app's name."
+        case .overviewTitle: "The window's title under its app's name."
+        case .overviewIcon: "The app's icon in a card."
+        case .overviewHint: "The line of keys along the bottom."
         }
     }
 
@@ -339,17 +353,20 @@ public struct StyleProperty: Sendable {
     /// Everything that draws text, with letters the view spaces and cases itself.
     static let texts: [StyleTarget] = [.bar, .barRegion, .barModule, .barWorkspace,
                                        .launcher, .launcherSection, .launcherRow, .launcherTitle, .launcherSubtitle, .launcherBadge, .launcherFooter,
-                                       .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint]
+                                       .switcher, .switcherItem, .switcherNumber, .switcherLabel, .switcherHint,
+                                       .overview, .overviewTile, .overviewNumber, .overviewLabel, .overviewWindow, .overviewTitle, .overviewHint]
     /// Text with letters in it.
-    static let letters = texts.filter { $0 != .switcherNumber }
+    static let letters = texts.filter { ![.switcherNumber, .overviewNumber].contains($0) }
     /// A font too, but the system's text field draws it.
     static let fonts = texts + [.launcherField]
     /// Everything with a fill of its own.
     static let boxes: [StyleTarget] = [.bar, .barRegion, .barIsland, .barModule, .barWorkspace,
                                        .launcher, .launcherField, .launcherSection, .launcherRow, .launcherBadge, .launcherFooter,
-                                       .switcher, .switcherItem]
+                                       .switcher, .switcherItem, .overview, .overviewTile, .overviewWindow, .overviewHint]
+    /// The whole screen, so it has no edge to draw.
+    static let edged = boxes.filter { $0 != .overview }
     /// The fills whose size is their own: nothing to pad.
-    static let padded = boxes.filter { $0 != .switcherItem }
+    static let padded = edged.filter { ![.switcherItem, .overviewWindow].contains($0) }
 
     public static let all: [StyleProperty] = [
         StyleProperty("color", .color, fonts + [.launcherIcon], inherited: true, "Text and symbol color.", example: "var(--foreground)"),
@@ -373,17 +390,17 @@ public struct StyleProperty: Sendable {
         StyleProperty("gap", .length(0...40), [.bar, .barRegion, .barIsland, .barModule, .launcher, .launcherRow, .switcher],
                       "Space between modules (bar, a region, an island), between a module's items (workspace numbers, menus, status items), between rows or tiles (a panel) or between an icon and its text (a row).",
                       example: "8px"),
-        StyleProperty("border-radius", .length(0...40), boxes + [.launcherIcon, .tiling, .switcherIcon], "Corner radius.", example: "6px"),
-        StyleProperty("border", .line, boxes + [.tiling], "A line all around.", example: "1px solid var(--border)"),
+        StyleProperty("border-radius", .length(0...40), edged + [.launcherIcon, .tiling, .switcherIcon, .overviewIcon], "Corner radius.", example: "6px"),
+        StyleProperty("border", .line, edged + [.tiling], "A line all around.", example: "1px solid var(--border)"),
         StyleProperty("border-bottom", .line, [.bar, .barRegion, .barModule, .barWorkspace, .launcher, .launcherField, .launcherSection, .launcherRow,
-                                              .switcher, .switcherItem],
+                                              .switcher, .switcherItem, .overviewTile, .overviewWindow],
                       "A line along the bottom edge only.", example: "1px solid var(--border)"),
         StyleProperty("box-shadow", .shadow, [.barIsland], "A drop shadow.", example: "0 4px 12px rgba(0, 0, 0, 0.3)"),
         StyleProperty("display", .keywords(StyleDisplay.allCases.map(\.rawValue)),
                       [.barRegion, .barIsland, .barModule, .barWorkspace, .launcherSection, .launcherSubtitle, .launcherBadge, .launcherIcon, .launcherFooter,
-                       .switcherLabel, .switcherIcon, .switcherHint],
+                       .switcherLabel, .switcherIcon, .switcherHint, .overviewLabel, .overviewTitle, .overviewIcon, .overviewHint],
                       "`none` hides it; `flex` (the default) shows it.", example: "flex"),
-        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow, .switcherItem],
+        StyleProperty("transition-duration", .time, [.barModule, .barWorkspace, .launcherRow, .switcherItem, .overviewTile],
                       "How long a change of state (hover, current, selected) fades its colors and lines.", example: "150ms"),
     ]
 
