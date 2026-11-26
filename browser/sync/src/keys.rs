@@ -47,6 +47,20 @@ pub trait KeyStore: Send + Sync {
     fn load(&self) -> Result<Option<Secret>, KeyError>;
     fn save(&self, secret: &Secret) -> Result<(), KeyError>;
     fn delete(&self) -> Result<(), KeyError>;
+    /// Held while keys are made, so two programs never both make them and one save over the other's. None where only
+    /// one program can reach the store.
+    fn lock(&self) -> Result<Option<File>, KeyError>;
+}
+
+/// An exclusive lock on `path`, held until the file is dropped.
+fn hold(path: &Path) -> Result<File, KeyError> {
+    let mut new = OpenOptions::new();
+    new.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut new, 0o600);
+    let file = new.open(path).map_err(|e| KeyError::File(e.to_string()))?;
+    file.lock().map_err(|e| KeyError::File(e.to_string()))?;
+    Ok(file)
 }
 
 const HAS_KEYCHAIN: bool = cfg!(any(target_os = "macos", windows));
@@ -65,7 +79,10 @@ pub fn open(dir: &Path, allow_file: bool) -> Result<Box<dyn KeyStore>, KeyError>
 }
 
 #[cfg(any(target_os = "macos", windows))]
-pub struct Keychain(keyring_core::Entry);
+pub struct Keychain {
+    entry: keyring_core::Entry,
+    lock: PathBuf,
+}
 
 #[cfg(any(target_os = "macos", windows))]
 impl Keychain {
@@ -79,7 +96,9 @@ impl Keychain {
         #[cfg(windows)]
         let store = windows_native_keyring_store::Store::new();
         let entry = store.and_then(|s| s.build(Self::SERVICE, &dir.to_string_lossy(), None));
-        entry.map(Keychain).map_err(refused)
+        let entry = entry.map_err(refused)?;
+        let lock = dir.join("keys.lock");
+        Ok(Keychain { entry, lock })
     }
 }
 
@@ -97,7 +116,7 @@ fn refused(e: keyring_core::Error) -> KeyError {
 #[cfg(any(target_os = "macos", windows))]
 impl KeyStore for Keychain {
     fn load(&self) -> Result<Option<Secret>, KeyError> {
-        match self.0.get_secret() {
+        match self.entry.get_secret() {
             Ok(bytes) => Ok(Some(Secret::new(bytes))),
             Err(keyring_core::Error::NoEntry) => Ok(None),
             Err(e) => Err(refused(e)),
@@ -105,14 +124,18 @@ impl KeyStore for Keychain {
     }
 
     fn save(&self, secret: &Secret) -> Result<(), KeyError> {
-        self.0.set_secret(secret.expose()).map_err(refused)
+        self.entry.set_secret(secret.expose()).map_err(refused)
     }
 
     fn delete(&self) -> Result<(), KeyError> {
-        match self.0.delete_credential() {
+        match self.entry.delete_credential() {
             Ok(()) | Err(keyring_core::Error::NoEntry) => Ok(()),
             Err(e) => Err(refused(e)),
         }
+    }
+
+    fn lock(&self) -> Result<Option<File>, KeyError> {
+        hold(&self.lock).map(Some)
     }
 }
 
@@ -163,6 +186,10 @@ impl KeyStore for KeyFile {
             _ => Ok(()),
         }
     }
+
+    fn lock(&self) -> Result<Option<File>, KeyError> {
+        hold(&self.0.with_extension("lock")).map(Some)
+    }
 }
 
 /// In memory, for tests.
@@ -183,6 +210,10 @@ impl KeyStore for Memory {
         *self.0.lock().unwrap() = None;
         Ok(())
     }
+
+    fn lock(&self) -> Result<Option<File>, KeyError> {
+        Ok(None)
+    }
 }
 
 /// This device: an Ed25519 key that is its name on the network and in the member list, and the key its files are
@@ -200,8 +231,13 @@ impl fmt::Debug for Identity {
 }
 
 impl Identity {
-    /// The identity in the store, or a new one saved there.
+    /// The identity in the store, or a new one saved there. Made under the store's lock, so a program that finds none
+    /// while another is making one gets that one.
     pub fn load_or_create(store: &dyn KeyStore) -> Result<Identity, KeyError> {
+        if let Some(found) = Self::load(store)? {
+            return Ok(found);
+        }
+        let _held = store.lock()?;
         if let Some(found) = Self::load(store)? {
             return Ok(found);
         }
@@ -286,11 +322,7 @@ mod tests {
     #[test]
     fn the_key_file_is_private_and_never_overwritten() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!(
-            "polycarp-sync-{}",
-            hex(&crate::seal::random::<8>())
-        ));
-        std::fs::create_dir(&dir).unwrap();
+        let dir = scratch();
         let file = KeyFile(dir.join("device.key"));
         let id = Identity::load_or_create(&file).unwrap().id();
         let mode =
@@ -326,12 +358,108 @@ mod tests {
         if std::env::var_os("GITHUB_ACTIONS").is_none() {
             return;
         }
-        let chain = Keychain::new(Path::new("/polycarp-sync-ci-test")).unwrap();
+        let dir = scratch();
+        let chain = Keychain::new(&dir).unwrap();
         chain.delete().unwrap();
         assert!(Identity::load(&chain).unwrap().is_none());
         let id = Identity::load_or_create(&chain).unwrap().id();
         assert_eq!(Identity::load(&chain).unwrap().unwrap().id(), id);
         chain.delete().unwrap();
         assert!(Identity::load(&chain).unwrap().is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Saves over what is there, as a keychain does, and lets both makers look before either saves.
+    struct Racing {
+        keys: Memory,
+        lock: PathBuf,
+        looked: std::sync::Barrier,
+        looks: std::sync::atomic::AtomicUsize,
+        saves: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Racing {
+        fn new(dir: &Path) -> Racing {
+            Racing {
+                keys: Memory::default(),
+                lock: dir.join("keys.lock"),
+                looked: std::sync::Barrier::new(2),
+                looks: Default::default(),
+                saves: Default::default(),
+            }
+        }
+
+        fn saves(&self) -> usize {
+            self.saves.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl KeyStore for Racing {
+        fn load(&self) -> Result<Option<Secret>, KeyError> {
+            if self.looks.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2 {
+                self.looked.wait();
+            }
+            self.keys.load()
+        }
+
+        fn save(&self, secret: &Secret) -> Result<(), KeyError> {
+            self.saves.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.keys.save(secret)
+        }
+
+        fn delete(&self) -> Result<(), KeyError> {
+            self.keys.delete()
+        }
+
+        fn lock(&self) -> Result<Option<File>, KeyError> {
+            hold(&self.lock).map(Some)
+        }
+    }
+
+    #[test]
+    fn two_that_find_no_identity_at_once_get_the_same_one() {
+        let dir = scratch();
+        let store = Racing::new(&dir);
+        let make = || Identity::load_or_create(&store).unwrap().id();
+        let (a, b) = std::thread::scope(|s| {
+            let (a, b) = (s.spawn(make), s.spawn(make));
+            (a.join().unwrap(), b.join().unwrap())
+        });
+        assert_eq!(a, b);
+        assert_eq!(Identity::load(&store).unwrap().unwrap().id(), a);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// One program is making keys and holds the lock; another finds none meanwhile. It waits, saves nothing, and gets
+    /// the keys the first one made.
+    #[test]
+    fn one_that_finds_no_identity_while_another_makes_it_waits_for_it() {
+        let dir = scratch();
+        let store = Racing::new(&dir);
+        store.looks.store(1, std::sync::atomic::Ordering::SeqCst);
+        let held = store.lock().unwrap();
+        std::thread::scope(|s| {
+            let other = s.spawn(|| Identity::load_or_create(&store).unwrap().id());
+            store.looked.wait();
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            assert!(!other.is_finished(), "it did not wait for the lock");
+            assert_eq!(store.saves(), 0);
+            let both = [crate::seal::random::<32>(), crate::seal::random::<32>()].concat();
+            store.save(&Secret::new(both)).unwrap();
+            let made = Identity::load(&store.keys).unwrap().unwrap().id();
+            drop(held);
+            assert_eq!(other.join().unwrap(), made);
+        });
+        assert_eq!(store.saves(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn scratch() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "polycarp-sync-{}",
+            hex(&crate::seal::random::<8>())
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        dir
     }
 }
