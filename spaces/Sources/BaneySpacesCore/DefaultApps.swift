@@ -5,7 +5,7 @@ import Foundation
 
 /// A job an app does for you.
 public enum AppRole: String, CaseIterable, Codable, Sendable {
-    case agent, browser, terminal, editor, files, mail, messages, calendar, notes, music, passwords
+    case agent, browser, terminal, editor, files, mail, messages, calendar, notes, music, video, passwords
 
     public var title: String {
         switch self {
@@ -24,7 +24,8 @@ public enum AppRole: String, CaseIterable, Codable, Sendable {
         case .editor: .type("public.plain-text")
         case .files: .type("public.folder")
         case .terminal: .type("public.unix-executable")
-        case .agent, .messages, .notes, .music, .passwords: nil
+        // Movies have no one default on macOS, only one per file type: the catalog's order decides, QuickTime last.
+        case .agent, .messages, .notes, .music, .video, .passwords: nil
         }
     }
 
