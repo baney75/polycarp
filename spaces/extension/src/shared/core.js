@@ -398,12 +398,16 @@
     return t;
   }
 
+  // CSS drops a whole stack for one unquoted name with a word it can't start, as the 3 in Source Sans 3, so those get quotes.
+  const faces = (stack) => stack.replace(/"[^"]*"|'[^']*'|[^\s,"'][^,"']*/g, (n) => (/^["']/.test(n) ||
+    n.split(/ +/).every((w) => /^-?[\p{L}_]/u.test(w)) ? n : '"' + n.replace(/ +/g, " ") + '"'));
+
   // The rules for such a theme, to go after the shipped ones: "" for anything that is no theme. A theme of one mode pins
   // it wherever nothing else picked one, over the shipped rule for a system in dark mode.
   function themeRules(theme) {
     const t = soundTheme(theme);
     if (!t) return "";
-    const lines = (o) => Object.entries(o).map(([k, v]) => "  " + k + ": " + v + ";\n").join("");
+    const lines = (o) => Object.entries(o).map(([k, v]) => "  " + k + ": " + (/^--pc-font-(?:display|ui|mono)$/.test(k) ? faces(v) : v) + ";\n").join("");
     const block = (sel, mode, o) => sel + " {\n  color-scheme: " + mode + ";\n" + lines(o) + "}\n";
     const own = ["light", "dark"].map((m) => block(':root[data-theme-mode="' + m + '"]', m, t[m])).join("");
     if (t.mode !== "auto") return ":root {\n" + lines(t.shared) + "}\n" + block(":root:not([data-theme-mode])", t.mode, t[t.mode]) + own;
@@ -447,8 +451,12 @@
     };
     const changed = (ch, area) => { if (area === "local" && (ch[THEME_KEY] || ch[SETTINGS_KEY])) look(); };
     try { chrome.storage.onChanged.addListener(changed); } catch (e) { /* the extension was reloaded under this page */ }
+    // A page held in the back/forward cache may have missed a change made meanwhile.
+    const shown = (ev) => { if (ev.persisted) look(); };
+    const pages = typeof document !== "undefined";
+    if (pages) addEventListener("pageshow", shown);
     look();
-    return () => { on = false; try { chrome.storage.onChanged.removeListener(changed); } catch (e) { /* gone */ } };
+    return () => { on = false; if (pages) removeEventListener("pageshow", shown); try { chrome.storage.onChanged.removeListener(changed); } catch (e) { /* gone */ } };
   }
 
   // Keeps the theme in the app's answer to `page` or `theme`. No app, an app from before this, and no theme in force all

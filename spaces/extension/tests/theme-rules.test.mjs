@@ -109,6 +109,24 @@ test('a font stack with no generic name gets one', () => {
   assert.equal(of({ '--pc-font-mono': 'Nowhere Mono' })['--pc-font-mono'], 'Nowhere Mono, ui-monospace, monospace');
 });
 
+test('an unquoted name CSS would not read as one is quoted in the rules', () => {
+  const built = (v) => /--pc-font-ui: ([^;]*);/.exec(P.themeRules(shared({ '--pc-font-ui': v })))[1];
+  for (const [given, want] of [
+    ['Source Sans 3, serif', '"Source Sans 3", serif'],
+    ['Source  Sans 3', '"Source Sans 3", system-ui, sans-serif'],
+    ['"Source Sans 3", Exo 2, serif', '"Source Sans 3", "Exo 2", serif'],
+    ["'A, B 3', serif , Press Start 2P", "'A, B 3', serif, \"Press Start 2P\""],
+    ['A -3, serif', '"A -3", serif'], ['A - B, serif', '"A - B", serif'],
+    ['-apple-system, Iowan Old Style, B2 _c, Straße, serif', '-apple-system, Iowan Old Style, B2 _c, Straße, serif'],
+  ]) {
+    assert.equal(built(given), want);
+    assert.equal(built(want), want, 'quoted once');
+  }
+  // The longest stack that is taken is still taken when it is read back from storage.
+  const long = 'A 3'.padEnd(293, 'a') + ', serif';
+  assert.equal(built(P.soundTheme(shared({ '--pc-font-ui': long })).shared['--pc-font-ui']), '"' + long.slice(0, -7) + '", serif');
+});
+
 test('the values in force for a mode: the live rules over the shipped ones', () => {
   const live = P.themeRules(theme({ mode: 'dark', shared: { '--pc-radius': '3px' }, dark: { ...THEME.dark, '--pc-accent': '#c9a24b' } }));
   const css = shipped + '\n' + live;
@@ -226,4 +244,31 @@ test('a watcher hears the theme now and at each change, and nothing once stopped
   P.watchTheme(() => heard.push('late'))();
   await settle();
   assert.equal(heard.length, 3, 'stopped before the first answer');
+});
+
+test('a page back from the back/forward cache reads the theme again, and only then', async () => {
+  const c = chromeWith();
+  const page = new EventTarget(), before = globalThis.addEventListener;
+  Object.assign(globalThis, { document: {}, addEventListener: page.addEventListener.bind(page), removeEventListener: page.removeEventListener.bind(page) });
+  try {
+    const heard = [];
+    const stop = P.watchTheme((_css, live) => heard.push(P.themeMode(live)));
+    const settle = () => new Promise((r) => setTimeout(r, 5));
+    const show = async (persisted) => { page.dispatchEvent(Object.assign(new Event('pageshow'), { persisted })); await settle(); };
+    await settle();
+    c.data[P.THEME_KEY] = { theme: theme({ mode: 'dark' }), stamp: 'one' }; // changed with nobody told
+    await show(false);
+    assert.deepEqual(heard, ['']);
+    await show(true);
+    await show(true);
+    assert.deepEqual(heard, ['', 'dark']);
+    stop();
+    c.data[P.THEME_KEY] = { theme: theme({ mode: 'light' }), stamp: 'two' };
+    await show(true);
+    assert.deepEqual(heard, ['', 'dark']);
+  } finally {
+    delete globalThis.document;
+    globalThis.addEventListener = before;
+    delete globalThis.removeEventListener;
+  }
 });
