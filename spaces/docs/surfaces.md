@@ -193,7 +193,8 @@ any of the three places, or into an empty place (a dashed outline shows while yo
 the three lists are written to `bar.modules` in one write, and every bar on every display follows. Letting go off the
 bar, pressing Escape, or letting go where it started changes nothing. Right-click the bar's empty space for Undo Move,
 which puts back the lists from before your last move until the next move or a quit. On a screen with a notch nothing
-can be dropped under the camera, and the middle's modules stay beside it. The first move writes all three places, so
+can be dropped under the camera, and the middle's modules stay beside it; nor in a place style.css hides, or one
+that hides the module you hold. Escape is kept from the app in front while you drag. The first move writes all three places, so
 a place you never set stops following Polycarp's defaults; `polycarp-spaces surfaces reset bar.modules` gives them
 back. The rules and their cases are in spec/bar.md, "Moving modules (macOS)".
 

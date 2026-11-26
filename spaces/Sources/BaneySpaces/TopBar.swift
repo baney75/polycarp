@@ -292,7 +292,7 @@ final class TopBar {
         let next = BarArrange.move(before, from: from, to: to)
         guard next != before else { Trace.log("top bar: move to its own place, nothing changed"); return }
         let id = BarArrange.list(before, from.row)[from.index].id
-        save(next, undo: before, "moved \(id) from \(from.row.rawValue) \(from.index) to \(to.row.rawValue) \(to.index)")
+        save(next, undo: before, revert: before, "moved \(id) from \(from.row.rawValue) \(from.index) to \(to.row.rawValue) \(to.index)")
     }
 
     /// Puts back the lists from before the last move.
@@ -300,10 +300,12 @@ final class TopBar {
         guard let u = undo else { return }
         var next = model.bar
         (next.left, next.center, next.right) = (u.left, u.center, u.right)
-        save(next, undo: nil, "move undone")
+        save(next, undo: nil, revert: model.bar, "move undone")
     }
 
-    private func save(_ next: Surfaces.Bar, undo before: Surfaces.Bar?, _ what: String) {
+    /// Draws `next` and writes it; a failed write puts back `revert` and the undo there was.
+    private func save(_ next: Surfaces.Bar, undo before: Surfaces.Bar?, revert: Surfaces.Bar, _ what: String) {
+        let undoBefore = undo
         model.bar = next
         undo = before
         writes.async { [weak self] in
@@ -311,9 +313,9 @@ final class TopBar {
             DispatchQueue.main.async {
                 guard let self else { return }
                 if let failed {
-                    // Nothing was written: the bars go back to the file.
-                    self.undo = nil
-                    self.model.bar = SurfacesStore.shared.current.bar
+                    // Nothing was written: the bars go back to what they showed before it.
+                    self.undo = undoBefore
+                    self.model.bar = revert
                     Trace.log("top bar: \(what) not saved: \(failed)")
                 } else {
                     Trace.log("top bar: \(what)")
@@ -588,8 +590,17 @@ struct TopBarView: View {
         .coordinateSpace(name: BarDragger.space)
         .onPreferenceChange(BarMeasureFrames.self) { frames in
             let width = Double((frames[.bar]?.maxX ?? screen.frame.width) + pad.trailing)
+            let bar = model.bar
+            let all = bar.left + bar.center + bar.right
+            var hides: [BarRow: Set<Surfaces.BarModule>] = [:]
+            var closed: Set<BarRow> = []
+            for row in BarRow.allCases {
+                let region = StyleBook.Region(rawValue: row.rawValue) ?? .left
+                if styles.book.region(region).isHidden { closed.insert(row) }
+                hides[row] = Set(all.filter { styles.book.module($0, in: region).isHidden })
+            }
             model.measure[display] = BarMeasure(frames: frames, width: width,
-                                                notch: sides.map { (Double($0.left), width - Double($0.right)) })
+                                                notch: sides.map { (Double($0.left), width - Double($0.right)) }, closed: closed, hides: hides)
         }
         .opacity(styles.book.bar.opacity ?? 1)
         .environment(\.colorScheme, Chrome.scheme)

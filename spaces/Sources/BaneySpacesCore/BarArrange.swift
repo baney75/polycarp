@@ -83,7 +83,12 @@ public enum BarArrange {
         let row = rows[i]
         let items = row.items.sorted { $0.minX < $1.minX }
         let after = items.first { ($0.minX + $0.maxX) / 2 > x }
-        let slot = BarSlot(row.row, after?.index ?? row.count)
+        var slot = BarSlot(row.row, after?.index ?? row.count)
+        // Between two drawn modules with others between them in the list (an island split, modules that draw nothing),
+        // the drop goes to the nearer one's side: just after the one before, or just before the one after.
+        if let after, let prev = items.last(where: { ($0.minX + $0.maxX) / 2 <= x }), x - prev.maxX < after.minX - x {
+            slot.index = prev.index + 1
+        }
         guard let moving, moving.row == row.row else { return slot }
         let before = items.last { $0.index < moving.index }.map { $0.index + 1 } ?? 0
         let next = items.first { $0.index > moving.index }?.index ?? row.count
@@ -96,7 +101,8 @@ public enum BarArrange {
     /// slot is under it (R-BA3).
     public static func rows(width: Double, notch: (start: Double, end: Double)?,
                             drawn: [BarRow: (minX: Double, maxX: Double)],
-                            items: [BarRow: [BarRowGeometry.Item]], counts: [BarRow: Int]) -> [BarRowGeometry] {
+                            items: [BarRow: [BarRowGeometry.Item]], counts: [BarRow: Int],
+                            closed: Set<BarRow> = []) -> [BarRowGeometry] {
         func box(_ r: BarRow) -> (minX: Double, maxX: Double) {
             drawn[r] ?? (r == .left ? (0, 0) : r == .right ? (width, width) : (width / 2, width / 2))
         }
@@ -105,7 +111,8 @@ public enum BarArrange {
         let centerStart = notch?.end ?? leftEnd
         let rightStart = max(centerStart, (c.maxX + r.minX) / 2)
         let stretch: [BarRow: (Double, Double)] = [.left: (0, leftEnd), .center: (centerStart, rightStart), .right: (rightStart, width)]
-        return BarRow.allCases.map { row in
+        // A row the style sheet hides takes no drop: a module put there would draw nowhere.
+        return BarRow.allCases.filter { !closed.contains($0) }.map { row in
             BarRowGeometry(row: row, minX: stretch[row]!.0, maxX: stretch[row]!.1, items: items[row] ?? [], count: counts[row] ?? 0)
         }
     }

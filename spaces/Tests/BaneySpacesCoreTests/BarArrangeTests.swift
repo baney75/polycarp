@@ -89,8 +89,9 @@ final class BarArrangeTests: XCTestCase {
         XCTAssertEqual(BarArrange.slot(at: 5, rows: flat), BarSlot(.left, 0))
         XCTAssertEqual(BarArrange.slot(at: 30, rows: flat), BarSlot(.left, 1))
         XCTAssertEqual(BarArrange.slot(at: 200, rows: flat), BarSlot(.left, 2))
-        // Between status and the bell: before the bell's list index, so after the split that draws nothing.
-        XCTAssertEqual(BarArrange.slot(at: 920, rows: flat), BarSlot(.right, 2))
+        // Between status and the bell, across the split: the nearer island takes it.
+        XCTAssertEqual(BarArrange.slot(at: 920, rows: flat), BarSlot(.right, 1))
+        XCTAssertEqual(BarArrange.slot(at: 930, rows: flat), BarSlot(.right, 2))
     }
 
     func testADropBesideAHiddenNeighbourIsStillItsOwnPlace() {
@@ -141,6 +142,22 @@ final class BarArrangeTests: XCTestCase {
         XCTAssertEqual(BarArrange.slot(at: 650, rows: rows), BarSlot(.left, 1))
         XCTAssertEqual(BarArrange.slot(at: 860, rows: rows), BarSlot(.center, 1))
         XCTAssertEqual(BarArrange.slot(at: 1200, rows: rows), BarSlot(.right, 1))
+    }
+
+    func testTheEndOfAnIslandBeforeASplitCanBeReached() {
+        // agents 700-730, status 740-900, |, notifications 950-980: just right of status stays in its island.
+        let rows = [BarRowGeometry(row: .right, minX: 700, maxX: 1000, items: [.init(index: 0, minX: 700, maxX: 730), .init(index: 1, minX: 740, maxX: 900),
+                                                                              .init(index: 3, minX: 950, maxX: 980)], count: 4)]
+        let b = bar([], ["clock"], ["agents", "status", "|", "notifications"])
+        let to = BarArrange.slot(at: 905, rows: rows)!
+        XCTAssertEqual(ids(BarArrange.move(b, from: BarSlot(.center, 0), to: to))[2], ["agents", "status", "clock", "|", "notifications"])
+    }
+
+    func testARowTheStyleSheetHidesTakesNoDrop() {
+        let rows = BarArrange.rows(width: 1000, notch: nil, drawn: [.left: (10, 100), .center: (450, 550), .right: (800, 990)],
+                                   items: [:], counts: [.left: 2, .center: 1, .right: 3], closed: [.right])
+        XCTAssertNil(BarArrange.slot(at: 900, rows: rows))
+        XCTAssertEqual(BarArrange.slot(at: 500, rows: rows), BarSlot(.center, 1))
     }
 
     func testAnEmptyCenterStillHasAStretch() {

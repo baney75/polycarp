@@ -14,8 +14,13 @@ struct BarDrag: Equatable {
     /// The pointer across this bar, and whether it is still over it.
     var x: Double
     var over = true
+    /// Rows whose style sheet hides this module: it would draw nowhere there, so they take no drop.
+    var refused: Set<BarRow> = []
 
-    var target: BarSlot? { over ? BarArrange.slot(at: x, rows: rows, moving: from) : nil }
+    var target: BarSlot? {
+        guard over, let t = BarArrange.slot(at: x, rows: rows, moving: from), !refused.contains(t.row) else { return nil }
+        return t
+    }
 }
 
 /// Where each row and drawn module sat on one bar the last time it was laid out, in the bar's own points.
@@ -24,9 +29,13 @@ struct BarMeasure: Equatable {
     var width: Double = 0
     /// The notch's left and right edges, on a screen with one.
     var notch: (start: Double, end: Double)?
+    /// Rows the style sheet hides, and in each row the modules it hides there.
+    var closed: Set<BarRow> = []
+    var hides: [BarRow: Set<Surfaces.BarModule>] = [:]
 
     static func == (a: BarMeasure, b: BarMeasure) -> Bool {
         a.frames == b.frames && a.width == b.width && a.notch?.start == b.notch?.start && a.notch?.end == b.notch?.end
+            && a.closed == b.closed && a.hides == b.hides
     }
 
     /// The drawn module under `x`, by its row and index.
@@ -49,7 +58,7 @@ struct BarMeasure: Equatable {
             }
         }
         let counts = Dictionary(uniqueKeysWithValues: BarRow.allCases.map { ($0, BarArrange.list(bar, $0).count) })
-        return BarArrange.rows(width: width, notch: notch, drawn: drawn, items: items, counts: counts)
+        return BarArrange.rows(width: width, notch: notch, drawn: drawn, items: items, counts: counts, closed: closed)
     }
 }
 
@@ -84,7 +93,8 @@ final class BarDragger {
     private let panel: (CGDirectDisplayID) -> NSWindow?
     private let drop: (BarSlot, BarSlot) -> Void
     private var mouse: Any?
-    private var keys: [Any] = []
+    /// Holds the keyboard while a module moves, so Escape cancels the move and never reaches the app in front.
+    private var keyPanel: ArrangeKeys?
 
     init(model: TopBarModel, display: @escaping (NSWindow?) -> CGDirectDisplayID?, panel: @escaping (CGDirectDisplayID) -> NSWindow?,
          drop: @escaping (BarSlot, BarSlot) -> Void) {
@@ -109,7 +119,7 @@ final class BarDragger {
     func cancel() {
         guard model.drag != nil else { return }
         model.drag = nil
-        watchKeys(false)
+        holdKeys(near: nil)
         Trace.log("top bar: move canceled")
     }
 
@@ -121,9 +131,11 @@ final class BarDragger {
             let list = BarArrange.list(model.bar, hit.slot.row)
             guard list.indices.contains(hit.slot.index) else { return false }
             let x = Double(e.locationInWindow.x)
-            model.drag = BarDrag(display: id, from: hit.slot, module: list[hit.slot.index], rows: m.rows(model.bar),
-                                 grab: x - Double(hit.frame.minX), width: Double(hit.frame.width), x: x)
-            watchKeys(true)
+            let module = list[hit.slot.index]
+            model.drag = BarDrag(display: id, from: hit.slot, module: module, rows: m.rows(model.bar),
+                                 grab: x - Double(hit.frame.minX), width: Double(hit.frame.width), x: x,
+                                 refused: Set(BarRow.allCases.filter { m.hides[$0]?.contains(module) == true }))
+            holdKeys(near: panel(id))
             return true
         case .leftMouseDragged:
             guard var d = model.drag, let p = panel(d.display) else { return model.drag != nil }
@@ -136,7 +148,14 @@ final class BarDragger {
         case .leftMouseUp:
             guard let d = model.drag else { return false }
             model.drag = nil
-            watchKeys(false)
+            holdKeys(near: nil)
+            // The lists changed under the drag (a `surfaces set`, an earlier move's write coming back): the place it was
+            // taken from may hold another module now, so nothing moves.
+            let list = BarArrange.list(model.bar, d.from.row)
+            guard list.indices.contains(d.from.index), list[d.from.index] == d.module else {
+                Trace.log("top bar: the module list changed during the move, nothing changed")
+                return true
+            }
             if let to = d.target { drop(d.from, to) } else { Trace.log("top bar: move dropped off the bar, nothing changed") }
             return true
         default:
@@ -144,20 +163,50 @@ final class BarDragger {
         }
     }
 
-    /// Escape, while a move is under way. The panels never take the keyboard, so keys pressed in another app are
-    /// watched too, and only then.
-    private func watchKeys(_ on: Bool) {
-        for k in keys { NSEvent.removeMonitor(k) }
-        keys = []
-        guard on else { return }
-        let escape: (NSEvent) -> Bool = { [weak self] e in
-            guard e.keyCode == 53 else { return false }
-            self?.cancel()
-            return true
-        }
-        if let g = NSEvent.addGlobalMonitorForEvents(matching: .keyDown, handler: { _ = escape($0) }) { keys.append(g) }
-        if let l = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: { escape($0) ? nil : $0 }) { keys.append(l) }
+    private func holdKeys(near panel: NSWindow?) {
+        keyPanel?.orderOut(nil)
+        keyPanel = nil
+        guard let panel else { return }
+        let k = ArrangeKeys()
+        k.onEscape = { [weak self] in self?.cancel() }
+        k.setFrameOrigin(NSPoint(x: panel.frame.minX, y: panel.frame.maxY - 1))
+        k.makeKeyAndOrderFront(nil)
+        keyPanel = k
     }
+}
+
+/// A one-point panel that takes the keyboard without bringing Polycarp forward: Escape, ⌘Z, and losing the keyboard to
+/// another app each call back.
+final class ArrangeKeys: NSPanel, NSWindowDelegate {
+    var onEscape: () -> Void = {}
+    var onUndo: () -> Void = {}
+    var onResign: () -> Void = {}
+
+    init() {
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 1, height: 1), styleMask: [.borderless, .nonactivatingPanel],
+                   backing: .buffered, defer: false)
+        isOpaque = false
+        backgroundColor = .clear
+        hasShadow = false
+        ignoresMouseEvents = true
+        level = .statusBar
+        hidesOnDeactivate = false
+        isReleasedWhenClosed = false
+        collectionBehavior = [.canJoinAllSpaces, .transient, .ignoresCycle, .fullScreenAuxiliary]
+        delegate = self
+    }
+
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { onEscape() }
+    override func keyDown(with event: NSEvent) { if event.keyCode == 53 { onEscape() } }
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+              event.charactersIgnoringModifiers?.lowercased() == "z" else { return super.performKeyEquivalent(with: event) }
+        onUndo()
+        return true
+    }
+
+    func windowDidResignKey(_ notification: Notification) { onResign() }
 }
 
 /// A menu item that runs a closure, for the bar's right-click menu.
