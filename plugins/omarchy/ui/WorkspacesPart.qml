@@ -100,7 +100,7 @@ Item {
     Behavior on height { enabled: root.vertical && pill.ready; NumberAnimation { duration: root.host.ms(220); easing.type: Easing.OutQuint } }
     // Takes its first place without sliding in from the corner.
     property bool ready: false
-    onVisibleChanged: if (visible) Qt.callLater(function() { pill.ready = true })
+    onVisibleChanged: if (visible) Qt.callLater(function() { pill.ready = true }); else pill.ready = false
   }
 
   Line {
@@ -121,7 +121,7 @@ Item {
         readonly property bool here: modelData === root.activeId
         readonly property var apps: workspace ? Model.icons(workspace.windows, root.iconMax) : { apps: [], more: 0 }
         readonly property bool bare: root.iconMax === 0 || apps.apps.length === 0
-        readonly property color text: here || hovered ? ink : Geometry.quiet(ink, Color.bar.background, 0.66, 4.5)
+        readonly property color text: here || hovered ? root.ink : Geometry.quiet(root.ink, Color.bar.background, 0.66, 4.5)
 
         host: root.host
         slot: Geometry.number

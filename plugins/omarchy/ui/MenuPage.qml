@@ -29,7 +29,7 @@ Item {
   }
 
   function move(dx, dy) {
-    if (dx > 0 && at(cursor) && at(cursor).hasChildren) return enter(at(cursor))
+    if (dx > 0 && pickable(cursor) && at(cursor).hasChildren) return enter(at(cursor))
     if (dx < 0) return back()
     var from = cursor < 0 && dy < 0 ? count : cursor
     for (var i = from + (dy > 0 ? 1 : -1); dy !== 0 && i >= 0 && i < count; i += dy > 0 ? 1 : -1) {
