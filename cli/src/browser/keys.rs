@@ -45,16 +45,18 @@ pub trait Keys {
 }
 
 /// The name of a browser's item and its account. This browser's own is Helium's, compiled in.
-pub fn item(browser: &Browser) -> (&'static str, &'static str) {
-    match browser.word {
+/// None for a browser not named here, so a new one asks for no other browser's key.
+pub fn item(browser: &Browser) -> Option<(&'static str, &'static str)> {
+    Some(match browser.word {
         "helium" => OURS,
         "chrome" => ("Chrome Safe Storage", "Chrome"),
         "brave" => ("Brave Safe Storage", "Brave"),
         "edge" => ("Microsoft Edge Safe Storage", "Microsoft Edge"),
         "vivaldi" => ("Vivaldi Safe Storage", "Vivaldi"),
         "arc" => ("Arc Safe Storage", "Arc"),
-        _ => ("Chromium Safe Storage", "Chromium"),
-    }
+        "chromium" => ("Chromium Safe Storage", "Chromium"),
+        _ => return None,
+    })
 }
 
 pub const OURS: (&str, &str) = ("Helium Storage Key", "Helium");
@@ -268,7 +270,10 @@ mod tests {
 
     #[test]
     fn each_browser_has_its_own_item() {
-        let items: Vec<_> = super::super::import::BROWSERS.iter().map(item).collect();
+        let items: Vec<_> = super::super::import::BROWSERS
+            .iter()
+            .map(|b| item(b).unwrap())
+            .collect();
         let mut different = items.clone();
         different.sort();
         different.dedup();

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use rusqlite::types::Value;
+use rusqlite::types::{Value, ValueRef};
 use rusqlite::{params_from_iter, Connection};
 use sha2::{Digest, Sha256};
 
@@ -62,8 +62,24 @@ fn fill(
     if our_version < WITH_HOST || !columns.starts_with("host_key,") {
         return Ok(None);
     }
-    let width = columns.split(',').count();
+    // A column of ours that must be filled and that theirs lacks: an older table, whose every row would be refused.
+    let needed = db
+        .prepare("SELECT name FROM pragma_table_info('cookies', 'main') WHERE \"notnull\" = 1 AND dflt_value IS NULL")?
+        .query_map([], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let have: Vec<&str> = columns.split(',').collect();
+    let sealed_ones = ["value", "encrypted_value"];
+    if needed
+        .iter()
+        .any(|n| !sealed_ones.contains(&n.as_str()) && !have.contains(&n.as_str()))
+    {
+        return Ok(None);
+    }
+    let width = have.len();
     let mut counted = Counted::default();
+    // Before the host was sealed in, nothing tells a wrong key's lucky padding from a value, but a wrong key fails on
+    // nearly every cookie: one that does not open there means the key is not theirs.
+    let mut unopened = 0;
     let t = db.transaction()?;
     {
         let mut read = t.prepare(&format!(
@@ -75,15 +91,30 @@ fn fill(
         ))?;
         let mut rows = read.query([])?;
         while let Some(row) = rows.next()? {
-            let host: String = row.get(0)?;
-            let plain = Secret::new(row.get::<_, String>(width)?.into_bytes());
-            let sealed: Vec<u8> = row.get(width + 1)?;
+            // A row that can't be read as a cookie is one left, not the end of all of them.
+            let (Ok(host), Ok(sealed)) =
+                (row.get::<_, String>(0), row.get::<_, Vec<u8>>(width + 1))
+            else {
+                counted.left += 1;
+                continue;
+            };
             let value = match sealed.is_empty() {
-                true => Some(with_host(&host, plain.bytes())),
-                false => theirs.open(&sealed).and_then(|v| match their_version {
-                    WITH_HOST.. => v.bytes().starts_with(&hash(&host)).then_some(v),
-                    _ => Some(with_host(&host, v.bytes())),
-                }),
+                true => match row.get_ref(width) {
+                    Ok(ValueRef::Text(plain) | ValueRef::Blob(plain)) => {
+                        Some(with_host(&host, plain))
+                    }
+                    _ => None,
+                },
+                false => {
+                    let opened = theirs.open(&sealed);
+                    if opened.is_none() && their_version < WITH_HOST {
+                        unopened += 1;
+                    }
+                    opened.and_then(|v| match their_version {
+                        WITH_HOST.. => v.bytes().starts_with(&hash(&host)).then_some(v),
+                        _ => Some(with_host(&host, v.bytes())),
+                    })
+                }
             };
             let Some(sealed) = value.and_then(|v| ours.seal(&v)) else {
                 counted.left += 1;
@@ -93,8 +124,15 @@ fn fill(
                 .map(|i| row.get(i))
                 .collect::<rusqlite::Result<Vec<Value>>>()?;
             values.extend([Value::Text(String::new()), Value::Blob(sealed)]);
-            counted.came += write.execute(params_from_iter(values))?;
+            // Refused by the table, as one already there is.
+            match write.execute(params_from_iter(values))? {
+                0 => counted.left += 1,
+                n => counted.came += n,
+            }
         }
+    }
+    if unopened > 0 {
+        return Ok(None);
     }
     t.commit()?;
     Ok(Some(counted))
@@ -215,6 +253,73 @@ pub mod tests {
         );
         let counted = bring(&file, &source, &theirs, &ours).unwrap();
         assert_eq!(counted, Counted { came: 1, left: 3 });
+    }
+
+    #[test]
+    fn a_row_that_cannot_be_read_or_is_refused_is_left_and_counted() {
+        let t = Fake::new();
+        let (theirs, ours) = (cipher("theirs"), cipher("ours"));
+        let (file, source) = made(&t, 24);
+        let db = Connection::open(&source).unwrap();
+        seal_one(&db, "a.example", &theirs);
+        let raw = |host: &str, value: &str| {
+            let sql = format!("INSERT INTO cookies VALUES (1, {host}, '', 'n', {value}, X'', '/', 9, 1, 1, 2, 1, 1, 1, 0, 2, 443, 3, 0, 0)");
+            db.execute(&sql, []).unwrap();
+        };
+        // A value that is not text still comes; a host that is not text can't.
+        raw("'b.example'", "X'ff00'");
+        raw("X'ff'", "'x'");
+        // The same cookie twice, where this browser's table keeps one.
+        Connection::open(&file)
+            .unwrap()
+            .execute(
+                "CREATE UNIQUE INDEX one ON cookies(host_key, name, path)",
+                [],
+            )
+            .unwrap();
+        put(&db, "c.example", "x", b"");
+        put(&db, "c.example", "x", b"");
+        let counted = bring(&file, &source, &theirs, &ours).unwrap();
+        assert_eq!(counted, Counted { came: 3, left: 2 });
+    }
+
+    #[test]
+    fn a_wrong_key_brings_nothing_from_before_the_host_was_sealed_in() {
+        let t = Fake::new();
+        let (theirs, ours) = (cipher("theirs"), cipher("ours"));
+        let (file, source) = made(&t, 20);
+        let db = Connection::open(&source).unwrap();
+        for n in 0..5 {
+            let host = format!("h{n}.example");
+            put(
+                &db,
+                &host,
+                "",
+                &theirs.seal(&Secret::new(b"made up".to_vec())).unwrap(),
+            );
+        }
+        assert!(bring(&file, &source, &cipher("not theirs"), &ours).is_none());
+        let counted = bring(&file, &source, &theirs, &ours).unwrap();
+        assert_eq!(counted, Counted { came: 5, left: 0 });
+    }
+
+    #[test]
+    fn an_older_table_than_ours_brings_nothing() {
+        let t = Fake::new();
+        let (theirs, ours) = (cipher("theirs"), cipher("ours"));
+        let (file, source) = made(&t, 24);
+        let db = Connection::open(&source).unwrap();
+        db.execute_batch("ALTER TABLE cookies DROP COLUMN source_type; ALTER TABLE cookies DROP COLUMN has_cross_site_ancestor;")
+            .unwrap();
+        let sealed = theirs.seal(&with_host("a.example", b"made up")).unwrap();
+        db.execute(
+            "INSERT INTO cookies (creation_utc, host_key, top_frame_site_key, name, value, encrypted_value, path,
+             expires_utc, is_secure, is_httponly, last_access_utc, has_expires, is_persistent, priority, samesite,
+             source_scheme, source_port, last_update_utc) VALUES (1, 'a.example', '', 'n', '', ?1, '/', 9, 1, 1, 2, 1, 1, 1, 0, 2, 443, 3)",
+            [sealed],
+        )
+        .unwrap();
+        assert!(bring(&file, &source, &theirs, &ours).is_none());
     }
 
     #[test]
