@@ -19,7 +19,7 @@ final class LeaveNowWiringTests: XCTestCase {
         XCTAssertTrue(note.contains("leaveNow([id], how: \"destroyed\", at: at)"))
         let leave = try body(code, from: "private func leaveNow(", to: "private func mayBeTab(")
         XCTAssertTrue(leave.contains("model.sync(seen: [], alive: Set(model.home.keys).subtracting(here))"), "out of the model now")
-        XCTAssertTrue(leave.contains("leftEarly[id] = model.workspace(of: id)"), "kept, so a wrong note costs nothing")
+        XCTAssertTrue(leave.contains("leftEarly[id] = .init(workspace: n, serial: scanSerial)"), "kept, so a wrong note costs nothing")
         XCTAssertTrue(leave.contains("persist()"))
     }
 
@@ -75,9 +75,11 @@ final class LeaveNowWiringTests: XCTestCase {
     /// Case 30: a window a note took out that its app still lists goes back where it was.
     func testCase30AWrongNoteCostsTheWindowNothing() throws {
         let code = try spaces
-        XCTAssertTrue(code.contains("if let n = leftEarly.removeValue(forKey: id) {\n                model.putBack(id, on: n)"))
+        XCTAssertTrue(code.contains("if let n = leftEarly.removeValue(forKey: id)?.workspace {\n                model.putBack(id, on: n)"))
+        XCTAssertTrue(code.contains("let held = LeftEarly.held(leftEarly, scan: plan.serial, relisted: relisted)"))
+        XCTAssertTrue(code.contains("model.sync(seen: list.map(\\.id).filter { !held.contains($0) }"), "a stale listing never brings it back")
         let prune = try body(code, from: "private func prune(alive:", to: "func switchTo(")
-        XCTAssertTrue(prune.contains("?? leftEarly[$0.key]"), "⌘W in the app in front still counts as a close here")
+        XCTAssertTrue(prune.contains("?? leftEarly[$0.key]?.workspace"), "⌘W in the app in front still counts as a close here")
         XCTAssertTrue(prune.contains("leftEarly = leftEarly.filter { alive.contains($0.key) }"))
     }
 }

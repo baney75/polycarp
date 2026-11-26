@@ -102,7 +102,7 @@ final class Spaces {
     private var dormant: [WindowID: (pid: pid_t, workspace: Int, frame: CGRect?)] = [:]
     /// Windows taken out of the model on a note before the window server dropped them (R-TS8), with the workspace each
     /// left. One its app still lists at a scan goes back there; one the window server dropped is gone for good.
-    private var leftEarly: [WindowID: Int] = [:]
+    private var leftEarly: [WindowID: LeftEarly.Left] = [:]
     /// Windows their app said it minimized, while the window server may still draw them for the animation (R-TS8).
     private var minimizedAt: [WindowID: Date] = [:]
     /// Every window that has had a workspace, until the window server says it's gone. One coming
@@ -435,7 +435,7 @@ final class Spaces {
         let answered = Set(fresh.filter { $0.value.answered && !$0.value.partial }.keys)
         let closed = closedWindows(listed: listed, answered: answered, offscreen: snap.offscreen)
         for id in closed {
-            guard let ws = model.workspace(of: id) ?? leftEarly[id], let pid = snap.offscreen[id] else { continue }
+            guard let ws = model.workspace(of: id) ?? leftEarly[id]?.workspace, let pid = snap.offscreen[id] else { continue }
             dormant[id] = (pid, ws, saved.frames[id])
         }
         let alive = snap.alive.subtracting(closed)
@@ -457,7 +457,10 @@ final class Spaces {
                 if let f = bounds(w.id), let d = Geometry.display(of: f, in: frames) { appeared[w.id] = d }
             }
         }
-        let added = model.sync(seen: list.map(\.id), alive: alive, on: appeared)
+        // A window a note took out comes back only when a scan begun after it left lists it in full (R-TS8).
+        let relisted = Set(fresh.filter { $0.value.answered && !$0.value.partial }.values.flatMap(\.listed))
+        let held = LeftEarly.held(leftEarly, scan: plan.serial, relisted: relisted)
+        let added = model.sync(seen: list.map(\.id).filter { !held.contains($0) }, alive: alive, on: appeared)
         if model.shown.count > 1, !switching || holding {
             noteMovedAcrossDisplays(list, frames: frames, act: Date() > displaysSettleUntil, bounds: bounds, minimized: minimized)
         }
@@ -476,7 +479,7 @@ final class Spaces {
         var fromLayout = Set<WindowID>()
         for id in added {
             // A note said it left, yet its app still lists it: it was not closed, and goes back where it was.
-            if let n = leftEarly.removeValue(forKey: id) {
+            if let n = leftEarly.removeValue(forKey: id)?.workspace {
                 model.putBack(id, on: n)
                 fromLayout.insert(id)
                 returned = returned || !model.isShown(n)
@@ -904,7 +907,7 @@ final class Spaces {
     private func prune(alive: Set<WindowID>) {
         // The app in front closing its window here (⌘W) hands focus to another app.
         // One a note already took out (R-TS8) still counts from the workspace it left.
-        if windows.contains(where: { !alive.contains($0.key) && $0.value.pid == frontPid && (model.workspace(of: $0.key) ?? leftEarly[$0.key]).map(model.isShown) == true }) {
+        if windows.contains(where: { !alive.contains($0.key) && $0.value.pid == frontPid && (model.workspace(of: $0.key) ?? leftEarly[$0.key]?.workspace).map(model.isShown) == true }) {
             leftAt = Date()
         }
         leftEarly = leftEarly.filter { alive.contains($0.key) }
@@ -1563,7 +1566,7 @@ final class Spaces {
         let here = ids.filter { model.workspace(of: $0) != nil }
         guard !here.isEmpty else { return }
         if !switching {
-            for id in here { leftEarly[id] = model.workspace(of: id) }
+            for id in here { if let n = model.workspace(of: id) { leftEarly[id] = .init(workspace: n, serial: scanSerial) } }
             model.sync(seen: [], alive: Set(model.home.keys).subtracting(here))
             persist()
         }
