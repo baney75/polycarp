@@ -23,6 +23,11 @@ extension Tiling {
             case .cross(let d, let id): done(cross(d, from: n, carrying: id))
             case .nextDisplay(let id): done(next(from: n, carrying: id))
             case .toggle: toggle(n, done: done)
+            case .scratchpad: spaces.toggleScratchpad(done: done)
+            case .toScratchpad(let id):
+                spaces.sendToScratchpad(id, at: engine.release(id))
+                look()
+                done(nil)
             }
         }
     }

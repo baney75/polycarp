@@ -34,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private lazy var tiling = Tiling(spaces: spaces)
     /// The tiling keys registered last; nil before the first time.
     private var tilingShortcuts: TilingShortcuts?
+    private var scratchHeld = false
     private var voiceOver: NSKeyValueObservation?
     /// Carried windows let go over a workspace, each waiting for its drop to settle. Picking
     /// one up again bumps its generation, so its stale move never runs, even one queued.
@@ -566,6 +567,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.switcher.titlesChanged()
             self.tiling.drawStrips()
             self.tiling.lookSoon(0.02)
+            // The first window went to the scratchpad, or the last one left it.
+            if self.scratchHeld == self.spaces.model.scratch.isEmpty { self.tilingKeysMayHaveChanged() }
         }
         spaces.onSettled = { [weak self] in self?.tiling.look() }
         spaces.onFocus = { [weak self] id in self?.tiling.focused(id) }
@@ -923,7 +926,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func registerTilingKeys() {
-        tilingShortcuts = TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+        tilingShortcuts = tilingKeysNow()
         var refused: Set<String> = []
         guard TilingSettings.shared.recording == nil else { return }
         for key in tilingShortcuts?.keys ?? [] {
@@ -938,9 +941,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         TilingSettings.shared.toVoiceOver = Set(tilingShortcuts?.toVoiceOver ?? [])
     }
 
-    /// The tiling keys changed, the first or last workspace started or stopped tiling, or VoiceOver came or went.
+    private func tilingKeysNow() -> TilingShortcuts {
+        scratchHeld = !spaces.model.scratch.isEmpty
+        return TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled, scratch: scratchHeld)
+    }
+
+    /// The tiling keys changed, the first or last workspace started or stopped tiling, the scratchpad filled or emptied, or
+    /// VoiceOver came or went.
     private func tilingKeysMayHaveChanged() {
-        let now = TilingShortcuts(SurfacesStore.shared.current.tiling, voiceOver: NSWorkspace.shared.isVoiceOverEnabled)
+        let now = tilingKeysNow()
         if let was = tilingShortcuts, was != now { registerShortcuts() }
     }
 
@@ -1123,7 +1132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return true
             }
             BrowserHub.shared.start()
-            self.session.start(workspaceOf: { [weak self] in self?.spaces.model.workspace(of: $0) },
+            self.session.start(workspaceOf: { [weak self] in self?.spaces.model.workspace(of: $0).flatMap { $0 == Workspaces.scratchpad ? nil : $0 } },
                             currentWorkspace: { [weak self] in self?.spaces.model.current ?? 1 })
         }
     }
@@ -1354,7 +1363,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let text = url.absoluteString
         let n = Int(url.lastPathComponent) ?? 0
         switch url.host {
-        case "switch": run { $0.switchTo(n) }
+        case "switch": if Workspaces.range.contains(n) { run { $0.switchTo(n) } }
         case "move": run { $0.moveFocused(to: n) }
         case "restore": run { _ in bringBack() }
         case "viewer": run { _ in viewer.toggle() }

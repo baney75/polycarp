@@ -293,7 +293,7 @@ final class SwitcherWiringTests: XCTestCase {
 
     func testWindowCardsComeFromCoreAndLearnEveryFocus() throws {
         let spaces = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
-        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func noteFocus(_ id", in: spaces)).contains("windowOrder.note(id)"))
+        XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "func noteFocus(_ id", in: spaces)).contains("windowOrder.note(id)"))
         XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func apply(_ plan", in: spaces)).contains("windowOrder.note(target.id)"), "where a switch lands")
         XCTAssertTrue(try XCTUnwrap(SourceText.block(after: "private func prune(", in: spaces)).contains("windowOrder.forget(except: alive)"))
         let cards = try XCTUnwrap(SourceText.block(after: "func switcherWindows()", in: spaces))

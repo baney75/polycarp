@@ -1,5 +1,8 @@
 import CoreGraphics
 
+/// Why a window is over the workspace it shows on.
+public enum TilingOver: Equatable, Sendable { case scratchpad }
+
 /// One window as the engine's scan found it. Sheets, dialogs, panels and popovers never get this far: the scan lists
 /// standard windows only.
 public struct TilingWindow: Equatable, Sendable {
@@ -13,10 +16,12 @@ public struct TilingWindow: Equatable, Sendable {
     public var fixed: Bool
     /// Minimized, hidden, in full screen or filled: it leaves the tree and comes back to its place.
     public var away: Bool
+    /// Over the workspace, not in it: it floats whatever its app's rule or the person said.
+    public var over: TilingOver?
 
-    public init(id: WindowID, pid: Int32, bundle: String = "", workspace: Int, frame: CGRect, fixed: Bool = false, away: Bool = false) {
+    public init(id: WindowID, pid: Int32, bundle: String = "", workspace: Int, frame: CGRect, fixed: Bool = false, away: Bool = false, over: TilingOver? = nil) {
         self.id = id; self.pid = pid; self.bundle = bundle; self.workspace = workspace; self.frame = frame
-        self.fixed = fixed; self.away = away
+        self.fixed = fixed; self.away = away; self.over = over
     }
 }
 
@@ -193,7 +198,7 @@ public struct TilingEngine: Equatable, Sendable {
 
     /// Whether a window ever takes a tile.
     func floats(_ w: TilingWindow) -> Bool {
-        if w.fixed { return true }
+        if w.fixed || w.over != nil { return true }
         return choice[w.id] ?? options.floatApps.contains(w.bundle)
     }
 

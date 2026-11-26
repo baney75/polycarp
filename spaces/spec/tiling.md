@@ -46,6 +46,13 @@ A group's windows share one tile and one frame, under a strip of tabs that is in
 lies over. A window is in one group at most and a group has one window in front. A group lasts until its last window goes
 or a person takes it apart; a window back from the Dock or from hiding is in its group again.
 
+### R-T10 Scratchpad
+A scratchpad window is on no workspace. All of them come out over the workspace in use at one key and go away at the next,
+at a switch of that workspace, or with its display; each workspace then has the window in focus it had. They float and are
+never tiled, keep their frame, and a minimized one stays in the Dock. There is none over the agent workspace. A window is
+taken out by the key that sent it there or by sending it to a workspace, and the two keys stay while one is left. It is
+kept across restarts.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without
