@@ -36,7 +36,7 @@ final class KeysSheetLayoutTests: XCTestCase {
     /// Windows group alone, which before set the sheet's height whatever the column count.
     func testColumnsComeOutAboutTheSameHeight() {
         func height(_ c: [KeysSheetLayout.Piece]) -> Double {
-            c.reduce(0) { $0 + 1.4 + $1.rows.reduce(0) { $0 + ($1.scope == .global && $1.note == nil ? 1 : 1.6) } }
+            c.reduce(0) { $0 + KeysSheetLayout.headingWeight + $1.rows.reduce(0) { $0 + KeysSheetLayout.weight($1) } }
         }
         for count in 3...5 {
             let columns = KeysSheetLayout.pieces(tilingOn, count: count)
@@ -47,6 +47,18 @@ final class KeysSheetLayoutTests: XCTestCase {
         let windows = height([KeysSheetLayout.Piece(group: .windows, rows: tilingOn.filter { $0.group == .windows }, continued: false)])
         let tallest = KeysSheetLayout.pieces(tilingOn, count: 5).map(height).max() ?? 0
         XCTAssertLessThan(tallest, windows * 0.75)
+    }
+
+    /// A title too long for what the caps leave of the column wraps, so it counts as more lines: the columns it lands in
+    /// would otherwise come out taller than the rest and set the sheet's height.
+    func testAWrappedTitleWeighsMore() {
+        let short = KeyBinding(id: "s", keys: ["mod", "M"], title: "Fill", group: .windows, scope: .global)
+        let long = KeyBinding(id: "l", keys: ["mod", "shift", "cmd", "arrows"],
+                              title: "Move the window into the tile that way, or out of its group", group: .windows, scope: .global)
+        XCTAssertEqual(KeysSheetLayout.weight(short), 1)
+        XCTAssertGreaterThanOrEqual(KeysSheetLayout.weight(long), 3)
+        let tiling = KeyBinding(id: "t", keys: ["mod", "M"], title: "Fill", group: .windows, scope: .launcher)
+        XCTAssertEqual(KeysSheetLayout.weight(tiling), 1.6, accuracy: 0.001, "one short line under it")
     }
 
     func testAGroupThatFitsAColumnIsNeverSplit() {

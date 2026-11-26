@@ -202,10 +202,12 @@ struct KeysSheetView: View {
         given ?? Keymap.rows(DefaultAppsStore.shared.keys, in: Keymap.rows(SurfacesStore.shared.current))
     }
 
-    private var columns: [[KeysSheetLayout.Piece]] { KeysSheetLayout.pieces(rows, count: count) }
+    /// Four or more columns are for a short screen: tighter gaps keep the text at full size instead of shrinking it.
+    private var dense: Bool { count > 3 }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        let columns = KeysSheetLayout.pieces(rows, count: count, modifier: modifier)
+        VStack(alignment: .leading, spacing: dense ? 12 : 16) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Shortcuts").font(Chrome.font(17, .semibold)).foregroundStyle(Chrome.wash())
                 Spacer(minLength: 24)
@@ -214,14 +216,14 @@ struct KeysSheetView: View {
             }
             HStack(alignment: .top, spacing: 28) {
                 ForEach(columns.indices, id: \.self) { i in
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: dense ? 10 : 16) {
                         ForEach(columns[i].indices, id: \.self) { j in section(columns[i][j]) }
                     }
-                    .frame(width: 252, alignment: .topLeading)
+                    .frame(width: KeysSheetLayout.column, alignment: .topLeading)
                 }
             }
         }
-        .padding(22)
+        .padding(dense ? 18 : 22)
         .background(Chrome.panelBackground(.launcherPanel))
         .clipShape(Chrome.shape(.launcherPanel))
         .overlay(Chrome.shape(.launcherPanel).strokeBorder(Chrome.edge(0.1), lineWidth: Chrome.width(.launcherPanel)))
@@ -230,7 +232,7 @@ struct KeysSheetView: View {
     }
 
     private func section(_ piece: KeysSheetLayout.Piece) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: dense ? 4 : 7) {
             Text(piece.group.title.uppercased() + (piece.continued ? " (CONTINUED)" : ""))
                 .font(Chrome.font(10.5, .semibold)).kerning(0.6).foregroundStyle(Chrome.muted)
             ForEach(piece.rows, id: \.id) { row($0) }
