@@ -40,6 +40,7 @@ var en = {
   looksFont: "Omarchy keeps its own font.",
   undone: "Back to %1.",
   undoFailed: "There is nothing to undo.",
+  listFailed: "Done, but the themes could not be read again. Open the panel once more.",
   fromOmarchy: "%1 for Polycarp",
   fromOmarchyHint: "Saves the Omarchy theme in use as a Polycarp theme, with its font and its background.",
   fitted: "Raised to 4.5 to 1: %1.",

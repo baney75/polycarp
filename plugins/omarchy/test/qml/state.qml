@@ -37,7 +37,7 @@ Item {
   }
 
   Component.onCompleted: {
-    var strings = { looksFailed: "failed", looksLeft: "left", undone: "undone %1", undoFailed: "no undo", saved: "saved %1", saveLeft: "save left", saveFailed: "save failed", removed: "removed" }
+    var strings = { looksFailed: "failed", looksLeft: "left", undone: "undone %1", undoFailed: "no undo", saved: "saved %1", saveLeft: "save left", saveFailed: "save failed", removed: "removed", listFailed: "read failed" }
     var lc = Qt.createComponent(Qt.resolvedUrl("../../ui/Looks.qml"))
     var ac = Qt.createComponent(Qt.resolvedUrl("../../ui/Apps.qml"))
     if (lc.status !== Component.Ready || ac.status !== Component.Ready) console.log("state: " + lc.errorString() + ac.errorString())
@@ -56,7 +56,7 @@ Item {
       function() {
         ok(looks.busy !== "", "a read that began before the apply ended does not end it")
         ok(l.reader.running, "another read follows it")
-        l.reader.finish(0, "\u001etheme polycarp-calm\n")
+        l.reader.finish(0, "\u001etheme polycarp-calm\n", true)
       },
       function() {
         ok(looks.busy === "", "the read after the apply ends it")
@@ -66,6 +66,29 @@ Item {
       },
       function() {
         ok(looks.list.theme === "polycarp-calm", "a list that cannot be read keeps the last one")
+        looks.run("undo", "", "")
+        l.writer.finish(0, "")
+      },
+      function() {
+        l.reader.finish(1, "")
+      },
+      function() {
+        ok(looks.said === "read failed", "an undo whose list cannot be read does not name the theme from before it")
+        ok(looks.busy === "", "and it ends")
+        looks.look()
+        l.reader.exit(0)
+        looks.look()
+      },
+      function() {
+        ok(!l.reader.running, "a look between a read's exit and its output starts no second read")
+        l.reader.end("\u001etheme nord\n")
+      },
+      function() {
+        ok(looks.list.theme === "nord", "the read it waited on is whole")
+        ok(l.reader.running, "and the look asked for follows it")
+        l.reader.finish(0, "\u001etheme nord\n")
+      },
+      function() {
         apps.set("editor", "helix")
         apps.look()
         a.writer.finish(1, "")
@@ -73,14 +96,27 @@ Item {
       },
       function() {
         ok(apps.busy !== "", "apps: a read that began before the change does not end it")
-        a.reader.finish(0, "editor\thelix\tnvim\thelix\n")
+        a.reader.finish(0, "editor\thelix\tnvim\thelix\n", true)
       },
       function() {
         ok(apps.busy === "" && apps.rows[0].now === "helix" && apps.failed, "apps: the read after the change ends it")
         apps.look()
         a.reader.finish(1, "")
       },
-      function() { ok(apps.rows.length === 1, "apps: rows that cannot be read keep the last ones") }
+      function() {
+        ok(apps.rows.length === 1, "apps: rows that cannot be read keep the last ones")
+        apps.look()
+        a.reader.exit(0)
+        apps.look()
+      },
+      function() {
+        ok(!a.reader.running, "apps: a look between a read's exit and its output starts no second read")
+        a.reader.end("editor\tnvim\tnvim\thelix\n")
+      },
+      function() {
+        ok(apps.rows[0].now === "nvim" && a.reader.running, "apps: the read is whole and the look asked for follows it")
+        a.reader.finish(0, "editor\tnvim\tnvim\thelix\n")
+      }
     ]
     set = true
   }
