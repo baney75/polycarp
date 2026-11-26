@@ -152,6 +152,13 @@ enum Render {
         guard save(SetupView(model: setup, close: {}, height: 1300).background(Color(nsColor: .windowBackgroundColor)),
                    "setup-keys-all.png", CGSize(width: SettingsSidebar.windowSize.width, height: 1300)) else { return 1 }
         setup.tab = .general
+        // The shortcut sheet with tiling on, in three columns and in five: Windows goes on in the next column.
+        var tiled = Surfaces.defaults
+        tiled.tiling.enabled = true
+        for count in [3, 5] {
+            let sheet = KeysSheetView(modifier: "⌃⌥", count: count, given: Keymap.rows(tiled)).environment(\.colorScheme, .dark)
+            guard save(sheet, "keys-sheet-\(count).png", NSHostingView(rootView: sheet).fittingSize) else { return 1 }
+        }
         // The ⌘Tab workspace switcher, second tile selected.
         let switcher = SwitcherModel()
         let icon = { (path: String) in NSWorkspace.shared.icon(forFile: path) }

@@ -133,16 +133,27 @@ final class KeysHoldWatcher {
 /// The sheet's window: over everything, on every desktop, never key, never in the way of a click.
 final class KeysSheetPanel {
     private var panel: NSPanel?
+    private static let counts = [3, 4, 5]
 
     func show() {
         let p = panel ?? make()
         panel = p
-        let view = KeysSheetView(modifier: Modifier.current.symbol).environment(\.colorScheme, Chrome.scheme)
-        let host = NSHostingView(rootView: AnyView(view))
-        p.contentView = host
-        let full = host.fittingSize
         let screen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main ?? NSScreen.screens[0]
         let area = screen.visibleFrame
+        func sheet(_ count: Int) -> some View {
+            KeysSheetView(modifier: Modifier.current.symbol, count: count).environment(\.colorScheme, Chrome.scheme)
+        }
+        let host = NSHostingView(rootView: AnyView(sheet(3)))
+        p.contentView = host
+        // As many columns as shrink it least: a short screen gets more, so the text stays its size.
+        let sizes = Self.counts.map { count -> (count: Int, size: CGSize) in
+            host.rootView = AnyView(sheet(count))
+            return (count, host.fittingSize)
+        }
+        let count = KeysSheetLayout.bestCount(sizes, in: area.size)
+        let view = sheet(count)
+        host.rootView = AnyView(view)
+        let full = sizes.first { $0.count == count }?.size ?? host.fittingSize
         // A display too small for every row (a narrow or short visible frame, larger text) gets the whole sheet, smaller.
         let scale = KeysSheetLayout.fitScale(full, in: area.size)
         let size = NSSize(width: (full.width * scale).rounded(.up), height: (full.height * scale).rounded(.up))
@@ -179,14 +190,19 @@ final class KeysSheetPanel {
     }
 }
 
-/// Every shortcut in three columns, by group: what it does at the left, the keys as caps at the right, and where it
-/// works under it when that is not everywhere.
+/// Every shortcut in `count` columns, by group: what it does at the left, the keys as caps at the right, and where it
+/// works under it when that is not everywhere. A long group goes on in the next column.
 struct KeysSheetView: View {
     let modifier: String
+    var count = 3
+    /// The rows for a rendered still; nil is yours.
+    var given: [KeyBinding]? = nil
     /// Your tiling keys and your keys for the default apps are in it.
-    private var rows: [KeyBinding] { Keymap.rows(DefaultAppsStore.shared.keys, in: Keymap.rows(SurfacesStore.shared.current)) }
+    private var rows: [KeyBinding] {
+        given ?? Keymap.rows(DefaultAppsStore.shared.keys, in: Keymap.rows(SurfacesStore.shared.current))
+    }
 
-    private var columns: [[KeyBinding.Group]] { KeysSheetLayout.columns(rows, count: 3) }
+    private var columns: [[KeysSheetLayout.Piece]] { KeysSheetLayout.pieces(rows, count: count) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -199,7 +215,7 @@ struct KeysSheetView: View {
             HStack(alignment: .top, spacing: 28) {
                 ForEach(columns.indices, id: \.self) { i in
                     VStack(alignment: .leading, spacing: 16) {
-                        ForEach(columns[i], id: \.self) { group in section(group) }
+                        ForEach(columns[i].indices, id: \.self) { j in section(columns[i][j]) }
                     }
                     .frame(width: 252, alignment: .topLeading)
                 }
@@ -213,10 +229,11 @@ struct KeysSheetView: View {
         .accessibilityLabel("Polycarp shortcuts")
     }
 
-    private func section(_ group: KeyBinding.Group) -> some View {
+    private func section(_ piece: KeysSheetLayout.Piece) -> some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(group.title.uppercased()).font(Chrome.font(10.5, .semibold)).kerning(0.6).foregroundStyle(Chrome.muted)
-            ForEach(rows.filter { $0.group == group }, id: \.id) { row($0) }
+            Text(piece.group.title.uppercased() + (piece.continued ? " (CONTINUED)" : ""))
+                .font(Chrome.font(10.5, .semibold)).kerning(0.6).foregroundStyle(Chrome.muted)
+            ForEach(piece.rows, id: \.id) { row($0) }
         }
     }
 
