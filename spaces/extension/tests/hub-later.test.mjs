@@ -97,4 +97,15 @@ test("search finds snoozed, waiting and due mail by the clock", () => {
   assert.deepEqual(q("is:waiting"), ["c"]);
   assert.deepEqual(q("is:due"), ["b", "d"]);
   assert.deepEqual(X.parse("is:waiting is:due").bad, []);
+
+  // New mail in a snoozed or waiting thread ends it for search too: its older messages still carry the time, the
+  // newest doesn't. Read in two pages, newest first, as the index builds, and again after the thread changes.
+  const f = X.create();
+  const older = (id, at, more) => Object.assign(msg(id, at, more), { threadId: "f" });
+  f.setThreads([], [older("6", 30)]);
+  f.setThreads([], [older("7", 10, { snoozeUntil: now + 6e4, remindAt: now - 6e4 }), older("8", 20, { snoozeUntil: now - 6e4, remindAt: now + 6e4 })]);
+  const fq = (s) => f.query(s).map((h) => h.threadId);
+  for (const s of ["is:snoozed", "is:waiting", "is:due"]) assert.deepEqual(fq(s), [], s);
+  f.setThreads(["f"], [older("7", 10, { snoozeUntil: now + 6e4 }), older("8", 20, { snoozeUntil: now + 6e4 })]);
+  assert.deepEqual(fq("is:snoozed"), ["f"], "and a snooze on the newest holds");
 });
