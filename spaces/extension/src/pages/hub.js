@@ -15,11 +15,13 @@
     inbox: { name: "Inbox", folder: "inbox", fold: true },
     archive: { name: "Archive", folder: "archive" },
     sent: { name: "Sent", folder: "sent" },
-    drafts: { name: "Drafts", drafts: true }
+    drafts: { name: "Drafts", drafts: true },
+    search: { name: "Search", search: true }
   };
   for (const b of O.BUNDLES) VIEWS[b.id] = { name: b.name, folder: "inbox", bundle: b.id };
 
-  const st = { view: "inbox", account: "", threads: [], more: false, opts: [], sel: -1, open: "", openSummary: null, loaded: 0, accounts: new Map(), undo: null };
+  const finder = globalThis.PolycarpHubSearch.live(S);
+  const st = { view: "inbox", q: "", account: "", threads: [], more: false, opts: [], sel: -1, open: "", openSummary: null, loaded: 0, accounts: new Map(), undo: null };
 
   // ---------- Accounts ----------
 
@@ -69,6 +71,7 @@
   async function load() {
     const v = VIEWS[st.view];
     if (v.drafts) return { threads: (await S.drafts(st.account || undefined)).map(draftRow), more: false };
+    if (v.search) return { threads: await found(st.q, 500), more: false };
     // A refresh keeps every page already shown.
     const q = { folder: v.folder, limit: Math.max(PAGE, st.loaded || 0) };
     if (st.account) q.account = st.account;
@@ -128,7 +131,7 @@
 
   function render() {
     const v = VIEWS[st.view];
-    $("where").textContent = v.name;
+    $("where").textContent = v.search ? "Search: " + st.q : v.name;
     $("up").hidden = st.view === "inbox";
     const rows = $("rows");
     const keep = st.opts[st.sel] && st.opts[st.sel].id;
@@ -153,7 +156,7 @@
     rows.hidden = none;
     $("tryFake").hidden = st.accounts.size > 0;
     $("emptyText").textContent = st.accounts.size
-      ? (st.view === "inbox" ? "Nothing new. Everything here is read and put away." : "Nothing in " + v.name + ".")
+      ? (st.view === "inbox" ? "Nothing new. Everything here is read and put away." : v.search ? "No mail matches " + st.q + "." : "Nothing in " + v.name + ".")
       : "Accounts you add show their mail here, in one inbox, with people first.";
     renderAccounts();
   }
@@ -503,14 +506,20 @@
     else list.push({ label: "Remove the made-up mail", key: "", run: () => S.removeAccount(MADE_UP).then(loadAccounts).then(() => { closeThread(true); return refresh(); }) });
     return list;
   }
+  // Threads that match a search, newest first, from the index over every message.
+  async function found(q, limit) {
+    const hits = await finder.query(q, { limit });
+    return (await Promise.all(hits.map((h) => S.summary(h.threadId)))).filter(Boolean);
+  }
+  function searchFor(q) {
+    st.q = q;
+    if (st.open) closeThread(true);
+    if (st.view === "search") { st.sel = 0; refresh(); } else go("search");
+  }
   async function search(q) {
-    const needle = q.toLowerCase();
-    const all = await S.allThreads();
-    return all
-      .filter((t) => (t.subject + " " + who(t) + " " + (t.snippet || "")).toLowerCase().includes(needle))
-      .sort((a, b) => b.lastDate - a.lastDate)
-      .slice(0, 20)
-      .map((t) => ({ label: who(t) + ": " + (t.subject || "(no subject)"), key: when(t.lastDate), run: () => openThread(t.id) }));
+    const list = await found(q, 8);
+    const rows = list.map((t) => ({ label: who(t) + ": " + (t.subject || "(no subject)"), key: when(t.lastDate), run: () => openThread(t.id) }));
+    return [{ label: list.length ? "Show every match for " + q : "No mail matches " + q, key: "", run: () => searchFor(q) }].concat(rows);
   }
   // Commands show at once; search results follow, and are dropped if the text changed while they were found.
   let asked = 0;
@@ -520,8 +529,8 @@
     const cs = commands().filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase()));
     showCmd(cs);
     if (!q) return;
-    const found = await search(q);
-    if (n === asked) showCmd(cs.concat(found), true);
+    const hits = await search(q);
+    if (n === asked) showCmd(cs.concat(hits), true);
   }
   function showCmd(items, keep) {
     cmd.items = items;

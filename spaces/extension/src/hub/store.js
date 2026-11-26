@@ -258,6 +258,7 @@
   }
 
   const message = (id) => backend().get("messages", id);
+  const summary = (id) => backend().get("threads", id);
 
   async function thread(id) {
     const summary = await backend().get("threads", id);
@@ -346,7 +347,7 @@
   globalThis.PolycarpHubStore = {
     DB_NAME, useMemoryStore, open: () => backend().open().then(() => true), onChange,
     putAccount, accounts, removeAccount,
-    upsert, remove, update, restore, message, thread, threads, after, allMessages, allThreads,
+    upsert, remove, update, restore, message, summary, thread, threads, after, allMessages, allThreads,
     saveDraft, draft, drafts, setSendAt, deleteDraft,
     getMeta, setMeta, cursor, setCursor
   };

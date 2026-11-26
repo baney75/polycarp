@@ -75,6 +75,7 @@ node --test tests/hub.test.mjs   # the Hub's model, store and account interface,
 node tests/hub-store.spec.mjs    # the Hub's store on real IndexedDB matches the memory store
 node tests/hub.spec.mjs          # Polycarp Mail on made-up mail: the list, keys, undo, command bar and narrow layout
 node tests/hub-compose.spec.mjs  # writing in Polycarp Mail: drafts, undo send, replies and an agent's draft
+node --test tests/hub-search.test.mjs # search: fields, filters, prefixes, and 100,000 messages in under 50 ms a query
 node tests/contact.mjs [piece]   # screenshots of every surface to tests/out/contact
 node tests/store-shots.mjs       # the Chrome Web Store screenshots and promo tile to tests/out/store
 node tests/voice.spec.mjs --deps <folder with playwright>   # downloads the Kokoro voice once
