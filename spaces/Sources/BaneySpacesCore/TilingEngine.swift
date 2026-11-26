@@ -351,7 +351,11 @@ public struct TilingEngine: Equatable, Sendable {
     /// Else it goes beside the window it was beside.
     func bring(_ id: WindowID, back was: Away, _ present: Set<WindowID>, _ slot: inout Slot) {
         if let mate = was.mates.last(where: { $0 != id && slot.holds($0) }) { return slot.join(id, to: mate, showing: false, mates: was.mates) }
-        defer { if !was.mates.isEmpty, slot.group(id) == nil { slot.groups.append(TilingGroup(members: [id])) } }
+        defer {
+            // Whatever its memory held, it has a tile.
+            if slot.group(id) == nil, !slot.layout.contains(id) { slot.layout.insert(id, beside: was.beside, area: slot.area) }
+            if !was.mates.isEmpty, slot.group(id) == nil { slot.groups.append(TilingGroup(members: [id])) }
+        }
         var whole = was.whole
         let now = Set(slot.layout.windows)
         for other in whole.windows where other != id && !now.contains(other) { whole.remove(other, area: slot.area) }

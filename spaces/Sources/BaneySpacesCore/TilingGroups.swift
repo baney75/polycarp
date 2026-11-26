@@ -58,7 +58,8 @@ extension TilingEngine.Slot {
     /// The layouts windows remember from before they went away name the group's front, whichever that was.
     private mutating func swapFront(_ old: WindowID, for id: WindowID) {
         layout.replace(old, with: id)
-        for other in away.keys { away[other]!.whole.replace(old, with: id) }
+        // Not the one going away: its own memory has it in its place.
+        for other in away.keys where other != old { away[other]!.whole.replace(old, with: id) }
     }
 
     /// Windows that are no longer here leave their groups; the next in a group comes to the front.

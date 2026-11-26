@@ -200,6 +200,18 @@ final class TilingGroupTests: XCTestCase {
         XCTAssertLessThan(frame(f, 1).minX, frame(f, 3).minX, "in the place they left")
     }
 
+    func testAFrontBackFromTheDockAfterItsLastMateClosedHasATile() {
+        var f = three()
+        _ = run(&f, .join(.left), 2)
+        XCTAssertEqual(f.engine.tabs(1)[0].front, 2)
+        f.wins[2]!.w.away = true; f.rest()
+        f.wins[1] = nil; f.focused = 3; f.rest()
+        f.wins[2]!.w.away = false; f.rest()
+        XCTAssertEqual(f.tiled(1).sorted(), [2, 3])
+        XCTAssertLessThan(frame(f, 2).minX, frame(f, 3).minX, "in the place it left")
+        XCTAssertEqual(tabs(f), [[2]], "a group of one until it is taken apart")
+    }
+
     func testAGroupOfOneIsOneAgainWhenItComesBack() {
         var f = three()
         _ = run(&f, .group, 1)
