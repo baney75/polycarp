@@ -21,6 +21,7 @@ jobs:
       spaces: ${{ steps.f.outputs.spaces }}
       spaces-rust: ${{ steps.f.outputs.spaces-rust }}
       omarchy: ${{ steps.f.outputs.omarchy }}
+      browser-sync: ${{ steps.f.outputs.browser-sync }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # A job gated on an output this job doesn't define is always skipped, and ci-ok counts a skip as a pass.
@@ -48,6 +49,8 @@ jobs:
             # The spaces Rust workspace: the shared core, the conformance cases, the Windows crates and the Linux update stub.
             spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', 'spaces/platforms/linux/**', '.github/workflows/ci.yml']
             omarchy: ['plugins/**', 'themes/**', '.github/workflows/ci.yml']
+            # Sync between a person's own devices: a crate of its own, tested against no real account, passkey or profile.
+            browser-sync: ['browser/sync/**', '.github/workflows/ci.yml']
 
   cli:
     needs: changes
@@ -74,6 +77,46 @@ jobs:
       - if: runner.os == 'macOS'
         working-directory: browser/launcher
         run: cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check
+
+  browser-sync:
+    needs: changes
+    if: needs.changes.outputs.browser-sync == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: browser/sync
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with: { workspaces: browser/sync }
+      - run: cargo test --locked
+      - run: cargo clippy --locked --all-targets -- -D warnings
+      - run: cargo fmt --check
+
+  # Known holes, licenses GPL-3.0 can carry, and no crate from anywhere but crates.io.
+  browser-sync-deny:
+    needs: changes
+    if: needs.changes.outputs.browser-sync == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@81891abc19297b21343b15ef67dc61e4aea74fda # v2.1.4
+        with:
+          manifest-path: browser/sync/Cargo.toml
+          arguments: --all-features
 
   spaces:
     needs: changes
@@ -286,7 +329,7 @@ jobs:
 
   ci-ok:
     if: always()
-    needs: [changes, cli, spaces, spaces-terminal, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle, omarchy]
+    needs: [changes, cli, browser-sync, browser-sync-deny, spaces, spaces-terminal, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle, omarchy]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped
