@@ -6,7 +6,7 @@ public enum DefaultAppsText {
     public static let groups: [(title: String, roles: [AppRole])] = [
         ("Work", [.agent, .terminal, .editor, .files]),
         ("Web and people", [.browser, .mail, .messages, .calendar]),
-        ("The rest", [.notes, .music, .passwords]),
+        ("The rest", [.notes, .music, .video, .passwords]),
     ]
 
     /// Under a job's name: who decided, and for the browser and mail what the rest of the Mac uses. `system` is macOS's
