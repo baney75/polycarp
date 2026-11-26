@@ -31,6 +31,7 @@
   // Invisible characters a sender can put inside a name to break a match: zero-width, joiners, bidi marks, fillers.
   const INVISIBLE = /[\p{Cf}\u034F\u115F\u1160\u3164\uFFA0]/gu;
   // Names that end like a file, not a site, so "report.pdf" in a link's text is not a site it names.
+  const LEAD = /^[\p{L}\p{M}]{2,}/u;
   const FILES = new Set(["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "jpg", "jpeg", "png", "gif", "htm", "html"]);
   // Every site a link's text names, anywhere in it and in any script ("Log in at paypal.com now", "p\u0430ypal.com."),
   // in the same form as hostOf, so a look-alike spelled in another alphabet compares as the different site it is.
@@ -42,16 +43,20 @@
     // One pass over words split at anything a host can't hold, so a long hostile text takes time in line with its length.
     for (const word of s.split(/[^\p{L}\p{N}\p{M}.-]+/u)) {
       if (!word.includes(".")) continue;
-      // The run of whole labels at the end: "a..b.example." names b.example.
-      const labels = word.split(".");
-      while (labels.length && !labels[labels.length - 1]) labels.pop();
-      let i = labels.length;
-      while (i > 0 && labels[i - 1]) i--;
-      const name = labels.slice(i);
-      const top = name[name.length - 1] || "";
-      if (name.length < 2 || !/^[\p{L}\p{M}]{2,}$/u.test(top) || FILES.has(top.toLowerCase())) continue;
-      const h = hostOf("http://" + name.join(".").slice(-253));
-      if (h) out.add(h);
+      // Each run of labels between empty ones names at most one site: from its first label to the last later label
+      // that starts with two letters, cut after those letters. "paypal.com..x" names paypal.com, "paypal.com-login"
+      // paypal.com, "a.b.123" nothing. Every label is looked at once per run.
+      let run = [];
+      for (const label of word.split(".").concat("")) {
+        if (label) { run.push(label); continue; }
+        let t = run.length - 1, top = null;
+        while (t >= 1 && !(top = LEAD.exec(run[t]))) t--;
+        if (top && !FILES.has(top[0].toLowerCase())) {
+          const h = hostOf("http://" + run.slice(0, t).join(".") + "." + top[0]);
+          if (h) out.add(h);
+        }
+        run = [];
+      }
     }
     return Array.from(out);
   }
