@@ -1,6 +1,6 @@
 import XCTest
 
-/// spec/tiling-speed.md R-TS10: every way a window leaves its workspace tells tiling before the model changes, and each
+/// spec/tiling-speed.md R-TS10: every way a window leaves its workspace tells tiling, and each
 /// frame write that returns counts toward the open closes and moves. Reads the wiring, as `WindowNotesWiringTests` does.
 final class WindowLeftWiringTests: XCTestCase {
     private func body(_ code: String, from start: String, to end: String) throws -> String {
@@ -12,12 +12,14 @@ final class WindowLeftWiringTests: XCTestCase {
     func testEveryLeaveCallsOnWindowsLeft() throws {
         let code = try SourceText.code("Sources/BaneySpaces/Spaces.swift")
         let note = try body(code, from: "private func windowNote(", to: "private func focusMovedWithin(")
-        XCTAssertTrue(note.contains("onWindowsLeft([id], \"destroyed\""))
+        XCTAssertTrue(note.contains("onWindowsLeft([id], \"destroyed\"") && note.contains("leaveNow([id], how: \"destroyed\""))
         XCTAssertTrue(note.contains("onWindowsLeft([id], \"minimized\""))
         let quit = try body(code, from: "func appQuit(", to: "activations.forget(")
-        XCTAssertTrue(quit.contains("\"quit\", at)"))
-        let move = try body(code, from: "func move(_ ids: [WindowID], to n: Int)", to: "model.assign(id, to: n")
-        XCTAssertTrue(move.contains("\"workspace\", at)"), "told before the model changes")
+        XCTAssertTrue(quit.contains("how: \"quit\", at: at)"))
+        let leave = try body(code, from: "private func leaveNow(", to: "private func mayBeTab(")
+        XCTAssertTrue(leave.contains("onWindowsLeft(here, how, at)"))
+        let move = try body(code, from: "func move(_ ids: [WindowID], to n: Int)", to: "func switcherOrder(")
+        XCTAssertTrue(move.contains("onWindowsLeft(leaving, \"workspace\", at)"))
         XCTAssertTrue(try SourceText.code("Sources/BaneySpaces/AppDelegate.swift").contains("spaces.onWindowsLeft = { [weak self] ids, how, at in self?.tiling.left(ids, how: how, at: at) }"))
     }
 

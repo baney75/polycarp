@@ -100,6 +100,11 @@ final class Spaces {
     /// in sight was opened or picked here, and joins the workspace you're on; it had a workspace
     /// before, so new-window rules leave it alone (`placedBefore`).
     private var dormant: [WindowID: (pid: pid_t, workspace: Int, frame: CGRect?)] = [:]
+    /// Windows taken out of the model on a note before the window server dropped them (R-TS8), with the workspace each
+    /// left. One its app still lists at a scan goes back there; one the window server dropped is gone for good.
+    private var leftEarly: [WindowID: Int] = [:]
+    /// Windows their app said it minimized, while the window server may still draw them for the animation (R-TS8).
+    private var minimizedAt: [WindowID: Date] = [:]
     /// Every window that has had a workspace, until the window server says it's gone. One coming
     /// back after Accessibility dropped it is never treated as new: new-window rules could send
     /// it to another workspace and hide it.
@@ -430,7 +435,7 @@ final class Spaces {
         let answered = Set(fresh.filter { $0.value.answered && !$0.value.partial }.keys)
         let closed = closedWindows(listed: listed, answered: answered, offscreen: snap.offscreen)
         for id in closed {
-            guard let ws = model.workspace(of: id), let pid = snap.offscreen[id] else { continue }
+            guard let ws = model.workspace(of: id) ?? leftEarly[id], let pid = snap.offscreen[id] else { continue }
             dormant[id] = (pid, ws, saved.frames[id])
         }
         let alive = snap.alive.subtracting(closed)
@@ -470,6 +475,13 @@ final class Spaces {
         var returned = false
         var fromLayout = Set<WindowID>()
         for id in added {
+            // A note said it left, yet its app still lists it: it was not closed, and goes back where it was.
+            if let n = leftEarly.removeValue(forKey: id) {
+                model.putBack(id, on: n)
+                fromLayout.insert(id)
+                returned = returned || !model.isShown(n)
+                continue
+            }
             if let d = dormant.removeValue(forKey: id), windows[id]?.pid == d.pid,
                snap.offscreen[id] != nil || bounds(id).map({ Geometry.isStranded($0, screens: screens) }) == true {
                 // A tab came back because the tab in front of it just closed: that one knows where
@@ -891,9 +903,12 @@ final class Spaces {
 
     private func prune(alive: Set<WindowID>) {
         // The app in front closing its window here (⌘W) hands focus to another app.
-        if windows.contains(where: { !alive.contains($0.key) && $0.value.pid == frontPid && model.workspace(of: $0.key).map(model.isShown) == true }) {
+        // One a note already took out (R-TS8) still counts from the workspace it left.
+        if windows.contains(where: { !alive.contains($0.key) && $0.value.pid == frontPid && (model.workspace(of: $0.key) ?? leftEarly[$0.key]).map(model.isShown) == true }) {
             leftAt = Date()
         }
+        leftEarly = leftEarly.filter { alive.contains($0.key) }
+        minimizedAt = minimizedAt.filter { alive.contains($0.key) }
         windows = windows.filter { alive.contains($0.key) }
         model.sync(seen: [], alive: alive)
         windowOrder.forget(except: alive)
@@ -1305,7 +1320,7 @@ final class Spaces {
     /// An app that quit loses its place in the order: its process id may come back as another app.
     func appQuit(_ pid: pid_t) {
         let at = ProcessInfo.processInfo.systemUptime
-        if active { onWindowsLeft(Set(windows.filter { $0.value.pid == pid && model.workspace(of: $0.key) != nil }.keys), "quit", at) }
+        if active { leaveNow(Set(windows.filter { $0.value.pid == pid }.keys), how: "quit", at: at) }
         activations.forget("\(pid)")
     }
 
@@ -1523,12 +1538,16 @@ final class Spaces {
         case .created: onWindowNote(TileCauses.Cause(.new, at: at, pid: pid))
         case .destroyed:
             if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key, let n = model.workspace(of: id) {
-                onWindowsLeft([id], "destroyed", at)
                 onWindowNote(TileCauses.Cause(.close, at: at, workspace: n))
+                if mayBeTab(id) { onWindowsLeft([id], "destroyed", at) } else { leaveNow([id], how: "destroyed", at: at) }
             }
         case .minimized:
-            if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key { onWindowsLeft([id], "minimized", at) }
-        case .restored: break
+            if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key, model.workspace(of: id) != nil {
+                minimizedAt[id] = Date()
+                onWindowsLeft([id], "minimized", at)
+            }
+        case .restored:
+            if let id = windows.first(where: { CFEqual($0.value.element, element) })?.key { minimizedAt[id] = nil }
         }
         let before = model
         refresh(full: false, asking: [pid], then: nil)
@@ -1536,6 +1555,31 @@ final class Spaces {
             persist()
             onChange?()
         }
+    }
+
+    /// R-TS8: windows that left their workspace give their space back now, not at the next scan. Each is kept in
+    /// `leftEarly`, so a note that was wrong costs a window nothing. Mid-switch the switch's own scan takes them out.
+    private func leaveNow(_ ids: Set<WindowID>, how: String, at: Double) {
+        let here = ids.filter { model.workspace(of: $0) != nil }
+        guard !here.isEmpty else { return }
+        if !switching {
+            for id in here { leftEarly[id] = model.workspace(of: id) }
+            model.sync(seen: [], alive: Set(model.home.keys).subtracting(here))
+            persist()
+        }
+        // Tiling times the close and looks at once (Tiling.left).
+        onWindowsLeft(here, how, at)
+        if !switching { onChange?() }
+    }
+
+    /// A closed tab's hidden sibling takes its tile (`TilingEngine` swaps it in); taking the tab out first would fill
+    /// the space and then give it back. With one of its app's windows on that workspace not drawn, the scan decides.
+    private func mayBeTab(_ id: WindowID) -> Bool {
+        guard let pid = windows[id]?.pid, let n = model.workspace(of: id) else { return false }
+        let mates = Set(model.windows(on: n).filter { $0 != id && windows[$0]?.pid == pid && !isMinimized($0) })
+        guard !mates.isEmpty else { return false }
+        let places = WindowMoves.places(of: mates)
+        return mates.contains { places[$0]?.onScreen != true }
     }
 
     private func focusMovedWithin(_ pid: pid_t) {
@@ -1692,6 +1736,9 @@ final class Spaces {
     }
     func window(_ id: WindowID) -> Window? { windows[id] }
     func isMinimized(_ id: WindowID) -> Bool { details[id]?.minimized ?? false }
+    /// Its app said it minimized in the last 2 s: drawn or not, it is out of the layout (R-TS8). After that the scan's
+    /// own reading (`isMinimized`, off screen) holds.
+    func minimizedJustNow(_ id: WindowID) -> Bool { minimizedAt[id].map { -$0.timeIntervalSinceNow < 2 } ?? false }
     /// Out of sight with its workspace.
     func isParked(_ id: WindowID) -> Bool { saved.frames[id] != nil }
 
@@ -2059,9 +2106,11 @@ final class Spaces {
         guard active, Workspaces.range.contains(n), !ids.isEmpty else { return }
         if switching { return enqueue { [weak self] in self?.move(ids, to: n) } }
         let at = ProcessInfo.processInfo.systemUptime
-        onWindowsLeft(Set(ids.filter { model.workspace(of: $0) != n }), "workspace", at)
+        let leaving = Set(ids.filter { model.workspace(of: $0) != n })
         // The window last used there stays the one a visit lands on.
         for id in ids { model.assign(id, to: n, focus: false) }
+        // The workspace it left fills now, before the switch parks it (R-TS8): it is away from there already.
+        onWindowsLeft(leaving, "workspace", at)
         switchTo(model.current, takeFocus: false, announce: false)
     }
 

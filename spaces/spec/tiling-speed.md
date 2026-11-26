@@ -83,6 +83,11 @@ dormant, so a window whose app still lists it at the next scan goes back to its 
 looks at once: no `lookSoon` delay, no scan and no settle first. The note still starts a scan of the app (R-TS6),
 which only confirms. A sheet or panel closing is not a window leaving: nothing is written.
 
+Two windows are the exception. A closed window whose app has another window on that workspace the window server
+doesn't draw may be a native tab, whose hidden sibling takes its tile (`TilingEngine` swaps it in); filling first would
+move the others twice, so the scan decides, as before. A minimized window stays in the model, out of the layout from
+its note for 2 s while the animation still draws it, then by the scan's own reading; brought back, it is tiled again.
+
 ### R-TS9 One frame per window, sent so it never shows a frame in between
 - A close or a move asks each window for at most one frame. A window is asked again only when it didn't land
   (R-TS5's tries), and that write counts.
