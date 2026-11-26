@@ -358,6 +358,16 @@ extension TilingEngine {
         key(workspace).flatMap { slots[$0] }.flatMap { $0.focused ?? $0.layout.windows.first }
     }
     public func windows(of workspace: Int) -> [WindowID] { key(workspace).flatMap { slots[$0]?.all } ?? [] }
+    /// For each workspace a tiled window of `leaving` is on, how many tiled windows stay there once they all leave.
+    public func staying(after leaving: Set<WindowID>) -> [Int: Int] {
+        var left: [Int: Int] = [:]
+        for (key, slot) in slots where options.tiles(key.workspace) && slot.layout.style != .floating {
+            let here = Set(slot.layout.windows)
+            guard !here.isDisjoint(with: leaving) else { continue }
+            left[key.workspace, default: 0] += here.subtracting(leaving).count
+        }
+        return left
+    }
 
     /// The display to the side of another, the nearest of those that share some of its height (or width).
     public static func display(_ d: TileDirection, of from: DisplayKey, in displays: [DisplayKey: CGRect]) -> DisplayKey? {

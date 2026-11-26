@@ -40,6 +40,7 @@ def kind_of(name):
     return name
 
 samples = {}
+unfilled = {}
 for line in open(os.path.join(folder, "timing.log"), encoding="utf-8", errors="replace"):
     parts = line.split()
     if not parts or not parts[0].isdigit() or int(parts[0]) < since:
@@ -54,6 +55,14 @@ for line in open(os.path.join(folder, "timing.log"), encoding="utf-8", errors="r
         m = re.search(r" asked=(\d+)", line)
         if m:
             samples.setdefault("tile-" + parts[1][5:], []).append(int(m.group(1)))
+        continue
+    # A close or move (spec/tiling-speed.md R-TS10): judged on fill=; fill=- (nothing written in 3 s) is counted apart.
+    if len(parts) >= 3 and parts[1] in ("close", "move") and parts[2].startswith("fill="):
+        kind = parts[1] + "-fill"
+        if parts[2][5:].isdigit():
+            samples.setdefault(kind, []).append(int(parts[2][5:]))
+        else:
+            unfilled[kind] = unfilled.get(kind, 0) + 1
         continue
     kv = {}
     for k, v in re.findall(r"(\w+)=(\S+)", line):
@@ -99,6 +108,11 @@ for kind in list(budgets) + sorted(set(samples) - set(budgets)):
     elif len(values) < least:
         result = "few"
     print(f"{kind:<16}{len(values):>5}  {cells[0]}  {cells[1]}  {cells[2]}  {result}")
+
+for kind in sorted(unfilled):
+    print(f"{kind:<16}{unfilled[kind]:>5}  with nothing written in 3 s (fill=-), not in the percentiles")
+    # A close nothing filled is the miss Donovan reported (spec/tiling-speed.md R-TS8): it fails the report.
+    missed.append(f"{kind}: {unfilled[kind]} with nothing written")
 
 # Gap G8: lines that mean a glitch Donovan reported came back.
 glitches = {

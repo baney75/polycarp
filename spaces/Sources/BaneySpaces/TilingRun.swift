@@ -17,6 +17,7 @@ extension Tiling {
             case .nothing(let why): done(why)
             case .changed:
                 key()
+                if case .move = command, let pressed { action(.move, how: "key", at: pressed, workspace: n) }
                 look()
                 done(nil)
             case .focus(let id):

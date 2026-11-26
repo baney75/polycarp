@@ -42,18 +42,21 @@ final class SpeedBudgetTests: XCTestCase {
                 }
             }
         }
-        // Three writers: the switch line, the open line and tiling's line (one `tile-<cause>` kind per cause). A fourth
-        // kind of line needs a kind here.
-        XCTAssertTrue(try Repo.code("Sources/BaneySpaces/Tiling.swift").contains("TileCauses.line("), "tiling's line")
+        // Four writers: the switch line, the open line, tiling's line (one `tile-<cause>` kind per cause) and the close
+        // and move line (`close-fill`, `move-fill`, spec/tiling-speed.md case 41). A fifth kind of line needs a kind here.
+        let tiling = try Repo.code("Sources/BaneySpaces/Tiling.swift")
+        XCTAssertTrue(tiling.contains("TileCauses.line("), "tiling's line")
         kinds.formUnion(TileCauses.Kind.allCases.map { "tile-" + $0.rawValue })
-        XCTAssertEqual(appends, 3, "a new timing.log writer needs its kind in loggedKinds and a budget")
+        XCTAssertTrue(tiling.contains("TileActions.line("), "the close and move line")
+        kinds.formUnion(["close-fill", "move-fill"])
+        XCTAssertEqual(appends, 4, "a new timing.log writer needs its kind in loggedKinds and a budget")
         return kinds
     }
 
     func testEveryLoggedKindHasABudget() throws {
         let kinds = try loggedKinds()
         XCTAssertTrue(kinds.isSuperset(of: ["switch", "parked", "launcher", "overview", "settings", "settings-pane",
-                                            "tile-key", "tile-new", "tile-close", "tile-switch"]), "\(kinds)")
+                                            "tile-key", "tile-new", "tile-close", "tile-switch", "close-fill", "move-fill"]), "\(kinds)")
         let budgets = try budgets()
         for kind in kinds.sorted() {
             let b = try XCTUnwrap(budgets[kind], "timing.log kind \(kind) has no budget in spec/speed.json spacesTiming")
@@ -140,10 +143,31 @@ final class SpeedBudgetTests: XCTestCase {
         XCTAssertFalse(r.out.contains("no budget"), r.out)
     }
 
-    /// The tiling targets (R-TS3) can't be loosened.
+    /// spec/tiling-speed.md R-TS11: close and move lines are judged on fill=, and fill=- is counted apart.
+    func testCloseAndMoveLinesCountUnderFill() throws {
+        let r = try report(timing: fast() + ["\(now) close fill=30 writes=2 windows=2 how=destroyed",
+                                             "\(now) close fill=- writes=0 windows=0 how=quit",
+                                             "\(now) move fill=12 writes=1 windows=2 how=key"])
+        XCTAssertTrue(r.out.contains("close-fill          1"), r.out)
+        XCTAssertTrue(r.out.contains("move-fill           1"), r.out)
+        XCTAssertTrue(r.out.contains("close-fill          1  with nothing written in 3 s"), r.out)
+        XCTAssertTrue(r.out.range(of: #"close-fill\s+1\s+-/25"#, options: .regularExpression) != nil, "only the filled close counts toward the percentiles: \(r.out)")
+        XCTAssertTrue(r.out.range(of: #"move-fill\s+1\s+-/25"#, options: .regularExpression) != nil, r.out)
+        XCTAssertFalse(r.out.contains("no budget"), r.out)
+        XCTAssertNotEqual(r.status, 0, "a close nothing filled fails the report (R-TS8): \(r.out)")
+    }
+
+    /// Review of #871, second-F6: a log where no close ever filled must not pass.
+    func testALogOfOnlyUnfilledClosesFails() throws {
+        let r = try report(timing: fast() + (0..<20).map { _ in "\(now) close fill=- writes=0 windows=0 how=destroyed" })
+        XCTAssertNotEqual(r.status, 0, r.out)
+        XCTAssertTrue(r.out.contains("close-fill: 20 with nothing written"), r.out)
+    }
+
+    /// The tiling targets (R-TS3, R-TS11) can't be loosened.
     func testTheTilingBudgetsMeetTheirTargets() throws {
         let b = try budgets()
-        for (kind, p90) in ["tile-key": 50, "tile-new": 150, "tile-close": 100, "tile-switch": 80] {
+        for (kind, p90) in ["tile-key": 50, "tile-new": 150, "tile-close": 100, "tile-switch": 80, "close-fill": 50, "move-fill": 50] {
             XCTAssertLessThanOrEqual(try XCTUnwrap(b[kind]?["p90"] as? Int), p90, kind)
         }
     }

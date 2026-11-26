@@ -25,6 +25,9 @@ final class Tiling {
     private var waits: [WindowID: Int] = [:]
     /// What the looks answer, for timing.log (`TileCauses`), and the windows a frame was ever asked for.
     var causes = TileCauses()
+    /// Each close and move, until its writes stop (spec/tiling-speed.md R-TS10).
+    var actions = TileActions()
+    private var flush: Timer?
     private var placed: Set<WindowID> = []
     private var writes = TilingWrites()
     private var watching = false
@@ -125,13 +128,42 @@ final class Tiling {
         guard !go.isEmpty else { return }
         let answered = causes.answer(now: looked, wrote: go.map { TileCauses.Wrote(pid: $0.pid, workspace: at[$0.id] ?? 0, new: !placed.contains($0.id)) })
         placed.formUnion(go.map(\.id))
-        write(go, view.windows, clock, Timed(causes: answered, looked: looked))
+        write(go, view.windows, clock, Timed(causes: answered, looked: looked), at)
     }
 
     /// A cause a look will answer (spec/tiling-speed.md R-TS2).
     func cause(_ c: TileCauses.Cause) { causes.add(c) }
 
     static var uptime: Double { ProcessInfo.processInfo.systemUptime }
+
+    /// A close or move whose writes are timed (R-TS10); its line comes once they stop.
+    func action(_ kind: TileActions.Kind, how: String, at: Double, workspace: Int) {
+        // A quit or a move of several windows at once is one action.
+        guard !actions.open.contains(where: { $0.kind == kind && $0.how == how && $0.at == at && $0.workspace == workspace }) else { return }
+        actions.begin(kind, how: how, at: at, workspace: workspace)
+        guard flush == nil else { return }
+        flush = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
+            guard let self else { return timer.invalidate() }
+            // A close whose workspace left sight before any write wasn't missed: nothing writes there out of sight.
+            let shown = self.spaces.shownWorkspaces
+            let done = self.actions.due(now: Self.uptime).filter { $0.last != nil || shown.contains($0.workspace) }
+            if self.actions.open.isEmpty { timer.invalidate(); self.flush = nil }
+            guard !done.isEmpty else { return }
+            let epoch = Int(Date().timeIntervalSince1970)
+            let lines = done.map { TileActions.line(epoch: epoch, $0) }
+            let url = Spaces.folder.appendingPathComponent("timing.log")
+            DispatchQueue.global(qos: .utility).async { TimingLog.append(lines.joined(separator: "\n"), to: url) }
+        }
+    }
+
+    /// Windows leaving their workspaces together (a quit, a move of several): timed on each workspace in sight where
+    /// one was tiled and another tiled window stays (R-TS10). Out of sight, no look writes there until it is shown.
+    func left(_ ids: Set<WindowID>, how: String, at: Double) {
+        let shown = spaces.shownWorkspaces
+        for (workspace, others) in engine.staying(after: ids) where others > 0 && shown.contains(workspace) {
+            action(.close, how: how, at: at, workspace: workspace)
+        }
+    }
 
     /// The causes one write answers, and when its look began; the rest of each line comes as the write goes on.
     struct Timed {
@@ -235,7 +267,7 @@ final class Tiling {
     /// The left button is down, read on any thread.
     private static var pressed: Bool { CGEventSource.buttonState(.combinedSessionState, button: .left) }
 
-    private func write(_ moves: [TilingMove], _ windows: [WindowID: Window], _ clock: OpenClock, _ timed: Timed) {
+    private func write(_ moves: [TilingMove], _ windows: [WindowID: Window], _ clock: OpenClock, _ timed: Timed, _ spots: [WindowID: Int]) {
         busy = true
         let list = moves.compactMap { m in windows[m.id].map { (m, $0) } }
         let gate = Window.gate
@@ -258,6 +290,7 @@ final class Tiling {
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
                 let ids = Set(wrote.filter(\.1).map(\.0))
+                self.actions.wrote(wrote.filter(\.1).compactMap { w in spots[w.0].map { (id: w.0, workspace: $0) } }, looked: timed.looked, at: Self.uptime)
                 self.writes.done(Set(wrote.filter { !$0.1 }.map(\.0)), serial)
                 self.engine.flying(ids)
                 let again = self.ready()

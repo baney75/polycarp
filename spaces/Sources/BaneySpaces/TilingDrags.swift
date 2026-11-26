@@ -33,6 +33,7 @@ extension Tiling {
         let home = spaces.model.workspace(of: id).flatMap { spaces.model.display(showing: $0) }
         let end = d.release(at: point, floating: floatKeyDown, taken: taken, under: under, home: home)
         guard end != .nothing else { return endDrag() }
+        let at = Self.uptime
         dragLetGo = true
         stopEscape()
         dragTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] timer in
@@ -40,16 +41,18 @@ extension Tiling {
             let now = TopDragWatcher.bounds(of: id)
             guard self.drag?.settled(now) ?? true else { return }
             self.endDrag()
-            self.finish(end, id, now, from: d.press)
+            self.finish(end, id, now, from: d.press, at: at)
         }
     }
 
-    private func finish(_ end: TilingDrag.Release, _ id: WindowID, _ now: CGRect?, from press: CGRect) {
+    private func finish(_ end: TilingDrag.Release, _ id: WindowID, _ now: CGRect?, from press: CGRect, at: Double) {
         switch end {
         case .nothing: return
         case .back: engine.touched(id)
         case .float: engine.setFloating(id, true)
-        case .drop(let p): engine.drop(id, on: p)
+        case .drop(let p):
+            // Timed from the let-go (R-TS10).
+            if engine.drop(id, on: p), let n = spaces.model.workspace(of: id) { action(.move, how: "drag", at: at, workspace: n) }
         case .resize: if let now { engine.resized(id, to: now, from: press) } else { engine.touched(id) }
         case .across(let display, let p):
             engine.touched(id)
