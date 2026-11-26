@@ -20,6 +20,8 @@ enum BarWords {
 struct WorkspaceStrip: View {
     let shown: [Int]
     let here: Int
+    /// What the other displays show, which the wheel passes over.
+    let elsewhere: Set<Int>
     let style: ComputedStyle
     let region: StyleBook.Region
     let book: StyleBook
@@ -30,8 +32,9 @@ struct WorkspaceStrip: View {
 
     private var marker: BarWorkspaces.Marker? {
         guard shown.contains(here) else { return nil }
-        return BarWorkspaces.marker(Chrome.spec.indicator, current: book.workspace(in: region, current: true),
-                                    other: book.workspace(in: region, current: false))
+        let hover = over == here
+        return BarWorkspaces.marker(Chrome.spec.indicator, current: book.workspace(in: region, current: true, hover: hover),
+                                    other: book.workspace(in: region, current: false, hover: hover))
     }
 
     var body: some View {
@@ -44,9 +47,9 @@ struct WorkspaceStrip: View {
         .background {
             PointerArea(onScroll: { event in
                 let way = wheel.step(Double(event.scrollingDeltaY), across: Double(event.scrollingDeltaX),
-                                     precise: event.hasPreciseScrollingDeltas, began: event.phase.contains(.began),
-                                     momentum: !event.momentumPhase.isEmpty, at: event.timestamp)
-                if let n = BarScroll.target(from: here, way: way, shown: shown) { pick(n) }
+                                     precise: event.hasPreciseScrollingDeltas, phased: !event.phase.isEmpty,
+                                     began: event.phase.contains(.began), momentum: !event.momentumPhase.isEmpty, at: event.timestamp)
+                if let n = BarScroll.target(from: here, way: way, shown: shown, elsewhere: elsewhere) { pick(n) }
             }) { _ in }
         }
     }

@@ -76,17 +76,18 @@ public struct BarScroll: Equatable, Sendable {
     static let points = 28.0
     /// The least time between two steps.
     static let pause = 0.14
-    /// A trackpad quiet this long has begun another gesture, where it doesn't say so itself.
+    /// Quiet this long begins another gesture on a device that doesn't say when one begins.
     static let rest = 0.3
 
     public init() {}
 
     /// -1 for the workspace before, 1 for the next, 0 to stay. `precise` is a trackpad's points rather than a wheel's
-    /// clicks, one step a gesture, which `began` starts; `momentum` is the glide after the fingers lift, which never
-    /// switches, and neither does a swipe more `across` than down.
-    public mutating func step(_ delta: Double, across: Double = 0, precise: Bool, began: Bool = false, momentum: Bool = false,
-                              at time: Double) -> Int {
-        if began || time - seen > Self.rest { (carried, done) = (0, false) }
+    /// clicks, one step a gesture, which `began` starts on a device that is `phased`; fingers held still don't end one.
+    /// `momentum` is the glide after the fingers lift, which never switches, and neither does a swipe more `across` than
+    /// down.
+    public mutating func step(_ delta: Double, across: Double = 0, precise: Bool, phased: Bool = false, began: Bool = false,
+                              momentum: Bool = false, at time: Double) -> Int {
+        if began || !phased && time - seen > Self.rest { (carried, done) = (0, false) }
         seen = time
         guard !momentum, delta != 0, abs(delta) >= abs(across), !(precise && done) else { return 0 }
         if carried * delta < 0 { carried = 0 }
@@ -99,9 +100,11 @@ public struct BarScroll: Equatable, Sendable {
         return way
     }
 
-    /// The workspace `way` along from `n` among the ones drawn, or nil at either end.
-    public static func target(from n: Int, way: Int, shown: [Int]) -> Int? {
-        guard way != 0, let i = shown.firstIndex(of: n), shown.indices.contains(i + way) else { return nil }
-        return shown[i + way]
+    /// The workspace `way` along from `n` among the ones drawn, or nil at either end. One another display shows
+    /// (`elsewhere`) is passed over: going to it leaves this display where it was, so the wheel would stop there.
+    public static func target(from n: Int, way: Int, shown: [Int], elsewhere: Set<Int> = []) -> Int? {
+        let stops = shown.filter { $0 == n || !elsewhere.contains($0) }
+        guard way != 0, let i = stops.firstIndex(of: n), stops.indices.contains(i + way) else { return nil }
+        return stops[i + way]
     }
 }
