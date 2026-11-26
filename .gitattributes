@@ -1,2 +1,4 @@
 # Plugin files are installed as-is; a shell script with CRLF endings will not run.
 plugins/** text eol=lf
+# Images are not text, whatever folder they are in.
+plugins/**/*.png binary
