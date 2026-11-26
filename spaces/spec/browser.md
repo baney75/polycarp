@@ -13,9 +13,9 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   row's use adds up to 60. Ties go to the row added last.
 - **R-B2 Speed.** With 2,000 tabs and 50,000 visited pages a key press's search stays under 16 ms at p90
   (`BrowserTableTests` and `BrowserSpeedTests`, built optimized as it ships, for the slowest of the searches it tries).
-- **R-B3 Private windows.** Nothing from a private window enters the record. A tab or download counts only when the
+- **R-B3 Private windows.** Nothing from a private window enters the record. A tab, tab group or download counts only when the
   extension says outright that it isn't private; one that doesn't say is left out.
-- **R-B4 Switches.** Tabs, bookmarks, history and downloads each have a switch. Off, Polycarp takes nothing of that kind,
+- **R-B4 Switches.** Tabs, tab groups, bookmarks, history and downloads each have a switch. Off, Polycarp takes nothing of that kind,
   drops what it held and answers nothing from it. What came while it was off isn't there when it goes back on.
 - **R-B5 Memory only.** The record is in the app's memory: never on disk, never in a log, a trace or a crash's text,
   never sent to another machine. It goes when the browser goes, the switch goes off or Polycarp quits. A row can't be
@@ -24,8 +24,8 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
 - **R-B6 One place, one row.** An address that is open in a tab is offered as that tab and not again as a bookmark, a
   visited page or a download; a bookmark goes before a visited page. Two tabs of one page are two rows. A tab's id is the
   session engine's id for it, so a tab both know is one row.
-- **R-B7 Limits.** At most 5,000 tabs, 20,000 bookmarks, 50,000 visited pages and 500 downloads are kept from one browser
-  profile. A tab's use is 25 and a bookmark's 10; a visited page's is its visits, up to 30, and 20 for today, 12 for this
+- **R-B7 Limits.** At most 5,000 tabs, 500 tab groups, 20,000 bookmarks, 50,000 visited pages and 500 downloads are kept from one browser
+  profile. A tab's use is 25, a tab group's 30 and a bookmark's 10; a visited page's is its visits, up to 30, and 20 for today, 12 for this
   week or 5 for this month.
 - **R-B8 Site icons.** A site's icon is the browser's own copy, asked for the first time a row shows it, once a site: a PNG of
   at most 64 KB. One nobody asked for is dropped. The newest 400 sites' are held, in memory, until the last browser goes or a
@@ -39,3 +39,6 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   two profiles and no known window here, or without the extension, the address opens as macOS opens it.
 - **R-B11 Cmd-Tab.** A browser's window in the switcher is named by its front tab's title and shows its site's icon on the
   browser's, where the window is known; every other window is named as it was.
+- **R-B12 Tab groups.** A group's name and a workspace's number sends the whole group there: into the browser's window on that
+  workspace when one is known, else into a window of its own, which is taken there as it opens. The group belongs to the
+  workspace its window is on and Polycarp keeps no other record of it.

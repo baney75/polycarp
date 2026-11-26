@@ -44,7 +44,8 @@
   "optional_permissions": [
     "bookmarks",
     "downloads",
-    "history"
+    "history",
+    "tabGroups"
   ],
   "host_permissions": [
     "<all_urls>"

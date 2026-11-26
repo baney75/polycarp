@@ -236,6 +236,9 @@ struct LauncherActions {
     /// The browser that can search with its own engine, and doing it.
     var searcher: () -> BrowserPeer? = { nil }
     var searchIn: (String, BrowserPeer) -> Void = { _, _ in }
+    /// The tab group a name means, and sending it to a workspace.
+    var tabGroup: (String) -> (peer: BrowserPeer, row: BrowserRow)? = { _ in nil }
+    var sendGroup: (BrowserPeer, BrowserRow, Int) -> Void = { _, _, _ in }
     /// An empty tab in a browser, on this workspace.
     var newTab: (BrowserPeer) -> Void = { _ in }
     /// The launcher is opening: read every app's tabs and splits again, since the session engine
@@ -713,6 +716,7 @@ final class LauncherModel: ObservableObject {
                 if above == ranked.count { out += pages }
                 out += agentItems(q)
                 out += provided.normal.map(providedItem)
+                out += groupItem(q)
                 out += workspaceItems(q)
                 out += commandItems(q)
                 out += keysEntry(q)
@@ -938,6 +942,17 @@ final class LauncherModel: ObservableObject {
                              self?.actions.openBrowser(r.hit)
                          })
         }
+    }
+
+    /// "trip planning 3": that tab group, sent to workspace 3.
+    private func groupItem(_ q: String) -> [LauncherItem] {
+        guard let (name, n) = BrowserListing.sending(q, to: Workspaces.range), let g = actions.tabGroup(name) else { return [] }
+        return [LauncherItem(id: "group:\(g.peer.bundleID):\(g.row.key):\(n)", section: "Workspaces", title: "Send “\(g.row.title)” to Workspace \(n)",
+                             subtitle: "Tab group · \(Self.appName(g.peer.bundleID))", icon: .symbol("rectangle.stack"), workspaces: [n],
+                             run: { [weak self] in
+                                 self?.close()
+                                 self?.actions.sendGroup(g.peer, g.row, n)
+                             })]
     }
 
     private static var appNames: [String: String] = [:]

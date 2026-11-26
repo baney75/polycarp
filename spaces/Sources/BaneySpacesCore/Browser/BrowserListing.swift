@@ -18,6 +18,7 @@ public enum BrowserListing {
             func line(_ parts: String...) -> String { parts.filter { !$0.isEmpty }.joined(separator: " · ") }
             switch r.source {
             case .tabs: return Row(hit: h, title: r.title, subtitle: line(name, r.site), badge: r.audible ? "Playing" : "Tab", symbol: nil)
+            case .groups: return Row(hit: h, title: r.title, subtitle: line("Tab group", name, "add a workspace's number to send it there"), badge: "", symbol: "rectangle.stack")
             case .bookmarks: return Row(hit: h, title: r.title, subtitle: line("Bookmark", place, "opens in \(name)"), badge: "", symbol: "bookmark")
             case .history: return Row(hit: h, title: r.title, subtitle: line("Visited", place, "opens in \(name)"), badge: "", symbol: "clock")
             case .downloads:
@@ -48,6 +49,7 @@ public enum BrowserListing {
     public static func setting(_ s: BrowserSource) -> (title: String, help: String) {
         switch s {
         case .tabs: return ("Open tabs", "Return goes to the exact tab. Off, the extension sends none; the tabs Polycarp reads from your default browser itself still show.")
+        case .groups: return ("Tab groups", "Return goes to the group; its name and a workspace's number sends it there.")
         case .bookmarks: return ("Bookmarks", "Opens in the browser that has it.")
         case .history: return ("Recent history", "The pages visited in the last 90 days.")
         case .downloads: return ("Downloads", "Return shows the file in Finder.")
@@ -57,11 +59,19 @@ public enum BrowserListing {
     /// The sources on, from the names of those the person switched off.
     public static func sources(off: [String]) -> Set<BrowserSource> { Set(BrowserSource.allCases.filter { !off.contains($0.rawValue) }) }
 
+    /// "trip planning 3": what a tab group is called and the workspace to send it to.
+    public static func sending(_ typed: String, to workspaces: ClosedRange<Int>) -> (name: String, workspace: Int)? {
+        let words = typed.split(separator: " ")
+        guard words.count > 1, let n = Int(words.last!), workspaces.contains(n) else { return nil }
+        return (words.dropLast().joined(separator: " "), n)
+    }
+
     /// What the app asks a browser's extension to do about a row; nil for one it opens itself (a web page).
     public static func ask(_ row: BrowserRow) -> [String: Any]? {
         guard let id = Int(row.key) else { return nil }
         switch row.source {
         case .tabs: return ["op": "browser.go", "tab": id]
+        case .groups: return ["op": "browser.go", "group": id]
         case .downloads: return ["op": "browser.show", "download": id]
         case .bookmarks, .history: return nil
         }

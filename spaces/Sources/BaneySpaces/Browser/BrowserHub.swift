@@ -85,6 +85,13 @@ final class BrowserHub {
         return image
     }
 
+    /// Moves a tab group to one of the browser's windows, or to a new one.
+    func send(_ group: BrowserRow, in peer: BrowserPeer, to window: Any) -> Bool {
+        guard let id = Int(group.key), let link = links[peer] else { return false }
+        link.send(["op": "browser.group", "group": id, "window": window])
+        return true
+    }
+
     /// The front tab of each of a browser's windows that is known for sure (`BrowserWindows`).
     func fronts(of bundleID: String, _ windows: [(id: UInt32, title: String)], items: [Item]) -> [UInt32: BrowserWindows.Front] {
         guard links.keys.contains(where: { $0.bundleID == bundleID }) else { return [:] }

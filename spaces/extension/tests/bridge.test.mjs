@@ -8,7 +8,7 @@ const B = globalThis.PolycarpBridge;
 const event = () => { const fns = new Set(); return { addListener: (f) => fns.add(f), fire: (...a) => [...fns].map((f) => f(...a)) }; };
 const tab = (id, title, more = {}) => ({ id, windowId: 1, title, url: `https://site${id}.example/`, incognito: false, active: false, groupId: -1, ...more });
 
-function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], windows = [], fails = '' } = {}) {
+function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], windows = [], groups = [], fails = '' } = {}) {
   const ports = [], timers = [], did = [];
   const granted = new Set(perms);
   const chrome = {
@@ -20,10 +20,13 @@ function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [
     } },
     permissions: { contains: async ({ permissions }) => permissions.every((p) => granted.has(p)) },
     storage: { local: { get: async (k) => ({ [k]: set }) } },
-    tabs: { query: async (q) => tabs.filter((t) => q.windowId === undefined || t.windowId === q.windowId), get: async (id) => { const t = tabs.find((x) => x.id === id); if (!t) throw new Error('no tab'); return t; },
+    tabs: { query: async (q) => tabs.filter((t) => (q.windowId === undefined || t.windowId === q.windowId) && (q.groupId === undefined || t.groupId === q.groupId)), get: async (id) => { const t = tabs.find((x) => x.id === id); if (!t) throw new Error('no tab'); return t; },
       create: async (o) => { did.push(['newTab', o]); return { id: 400 }; },
+      remove: async (id) => { did.push(['closeTab', id]); },
       update: async (id, o) => { did.push(['tab', id, o]); return tabs.find((t) => t.id === id); },
       onCreated: event(), onUpdated: event(), onAttached: event(), onReplaced: event(), onRemoved: event(), onActivated: event() },
+    tabGroups: { query: async () => groups, get: async (id) => groups.find((g) => g.id === id), move: async (id, o) => { did.push(['moveGroup', id, o]); },
+      onCreated: event(), onUpdated: event(), onMoved: event(), onRemoved: event() },
     search: { query: async (o) => did.push(['search', o]) },
     windows: { getAll: async () => windows, create: async (o) => { did.push(['newWindow', o]); return { id: 50, tabs: [{ id: 500 }] }; }, update: async (id, o) => did.push(['window', id, o]) },
     bookmarks: { getTree: async () => marks, onCreated: event(), onRemoved: event(), onChanged: event(), onMoved: event() },
@@ -259,4 +262,36 @@ test("a site's icon is the browser's own copy, and only once something is sent",
     await ask('https://b.example/');
     assert.equal(x.sent('browser.icon').length, 1, 'a big one is left');
   } finally { globalThis.fetch = real; }
+});
+
+test('tab groups: named, never a private one, and moved whole to a window or one of its own', async () => {
+  const windows = [{ id: 1, incognito: false }, { id: 2, incognito: false }, { id: 9, incognito: true }, { id: 8 }];
+  const groups = [{ id: 11, windowId: 1, title: 'Trip', color: 'blue' }, { id: 12, windowId: 1, title: '', color: 'red' }, { id: 13, windowId: 9, title: 'Secret', color: 'red' }, { id: 14, windowId: 8, title: 'Unsaid', color: 'red' }];
+  const off = browser({ groups, windows, set: { groups: true } });
+  await off.open(['groups']);
+  assert.deepEqual(off.sent('browser.rows'), [], 'not without the permission');
+  const x = browser({ groups, windows, set: { groups: true }, perms: ['nativeMessaging', 'tabGroups'], tabs: [tab(5, 'A', { groupId: 11 }), tab(6, 'B', { groupId: 11 })] });
+  const ask = async (m) => { x.did.length = 0; x.port().onMessage.fire({ op: 'browser.group', ...m }); await x.settle(); return structuredClone(x.did); };
+  await x.b.start();
+  assert.deepEqual(await ask({ group: 11, window: 2 }), [], 'nothing before it is asked for');
+  await x.open(['groups']);
+  const want = [{ id: 11, window: 1, title: 'Trip', incognito: false }, { id: 12, window: 1, title: 'Tab group (red)', incognito: false }];
+  assert.deepEqual(x.sent('browser.rows')[0].rows, want);
+  groups[0].title = 'Trips';
+  x.chrome.tabGroups.onUpdated.fire(groups[0]);
+  await x.settle();
+  assert.equal(x.sent('browser.rows').at(-1).rows[0].title, 'Trips');
+  assert.deepEqual(await ask({ group: 11, window: 2 }), [['moveGroup', 11, { windowId: 2, index: -1 }]]);
+  assert.deepEqual(await ask({ group: 11, window: 'new' }), [['newWindow', { focused: false }], ['moveGroup', 11, { windowId: 50, index: -1 }], ['closeTab', 500]]);
+  for (const m of [{ group: 11, window: 1 }, { group: 11, window: 9 }, { group: 13, window: 2 }, { group: 14, window: 'new' }, { group: 11, window: 77 }]) assert.deepEqual(await ask(m), [], JSON.stringify(m));
+  x.did.length = 0;
+  x.port().onMessage.fire({ op: 'browser.go', group: 11 });
+  await x.settle();
+  assert.deepEqual(structuredClone(x.did), [['tab', 5, { active: true }], ['window', 1, { focused: true }]]);
+  x.set.groups = false;
+  await x.b.refresh();
+  x.did.length = 0;
+  x.port().onMessage.fire({ op: 'browser.go', group: 11 });
+  await x.settle();
+  assert.deepEqual(structuredClone(x.did), [], 'switched off: a group is no longer gone to');
 });

@@ -22,19 +22,29 @@ final class BrowserMessageTests: XCTestCase {
         }
     }
 
-    func testAPrivateWindowsTabOrDownloadNeverGetsIn() {
+    func testAPrivateWindowsTabGroupOrDownloadNeverGetsIn() {
         let open = Self.tab(1, "Open", "https://a.example/")
         var unsaid = Self.tab(3, "Unsaid", "https://c.example/")
         unsaid["incognito"] = nil
         let all = [open, Self.tab(2, "Secret", "https://b.example/", ["incognito": true]), unsaid,
                    Self.tab(4, "Odd", "https://d.example/", ["incognito": "no"])]
-        for source in [BrowserSource.tabs, .downloads] {
+        for source in [BrowserSource.tabs, .groups, .downloads] {
             for op in ["browser.rows", "browser.change"] {
                 let m = Self.message(["op": op, "source": source.rawValue, "rows": all])
                 XCTAssertEqual(rows(m).map(\.title), ["Open"], "\(op) \(source.rawValue)")
                 XCTAssertEqual(m?.folded.count, 1)
             }
         }
+    }
+
+    func testAGroupNeedsItsWindowAndRanksAboveATab() {
+        let group: [String: Any] = ["id": 12, "window": 2, "title": "Trip", "incognito": false]
+        let got = rows(Self.all(.groups, [group, group.merging(["id": 13, "window": NSNull()]) { $1 }, group.merging(["id": 14, "window": 0]) { $1 }]))
+        XCTAssertEqual(got.map(\.key), ["12"], "no window, no group")
+        XCTAssertEqual(got.first?.window, 2)
+        XCTAssertEqual(got.first?.weight, 30)
+        XCTAssertEqual(rows(Self.all(.tabs, [Self.tab(1, "Trip", "https://a.example/")])).first?.weight, 25)
+        XCTAssertEqual(BrowserSource.allCases.map(\.most), [5_000, 500, 20_000, 50_000, 500])
     }
 
     func testATabIsInAGroupOnlyWhenTheBrowserGivesOne() {

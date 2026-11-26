@@ -23,8 +23,8 @@ final class BrowserBookTests: XCTestCase {
 
     // MARK: Private windows
 
-    func testAPrivateWindowsTabOrDownloadNeverGetsIn() {
-        for source in [BrowserSource.tabs, .downloads] {
+    func testAPrivateWindowsTabGroupOrDownloadNeverGetsIn() {
+        for source in [BrowserSource.tabs, .groups, .downloads] {
             let open = Self.tab(1, "Open gardening", "https://a.example/")
             let secret = Self.tab(2, "Secret gardening", "https://b.example/", ["incognito": true])
             var unsaid = Self.tab(3, "Unsaid gardening", "https://c.example/")

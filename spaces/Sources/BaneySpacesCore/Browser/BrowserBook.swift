@@ -106,6 +106,15 @@ public final class BrowserBook {
         }
     }
 
+    /// The tab group `typed` names best.
+    public func group(_ typed: String) -> (peer: BrowserPeer, row: BrowserRow)? {
+        let q = Fuzzy.fold(typed)
+        return browsers.sorted { $0.key < $1.key }.compactMap { peer, shelves -> (peer: BrowserPeer, row: BrowserRow, score: Int)? in
+            guard let shelf = shelves[.groups], let h = shelf.table.search(q, limit: 1).first, let row = shelf.rows[h.slot] else { return nil }
+            return (peer, row, h.score)
+        }.max { $0.score < $1.score }.map { ($0.peer, $0.row) }
+    }
+
     /// A source's rows ever added since its last rebuild, for the tests.
     func slots(_ source: BrowserSource, _ peer: BrowserPeer) -> Int { browsers[peer]?[source]?.table.slots ?? 0 }
 
