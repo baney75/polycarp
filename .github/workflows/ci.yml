@@ -2,9 +2,9 @@ name: CI
 on:
   push:
     branches: [main]
-    paths: ['cli/**', 'spaces/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'plugins/**', 'themes/**', 'install.sh', '.github/workflows/ci.yml']
   pull_request:
-    paths: ['cli/**', 'spaces/**', 'install.sh', '.github/workflows/ci.yml']
+    paths: ['cli/**', 'spaces/**', 'plugins/**', 'themes/**', 'install.sh', '.github/workflows/ci.yml']
 # A new push to a pull request cancels its older run. Each push to main gets its own group and is never cancelled:
 # with one group per ref, back-to-back merges cancelled each other (49 of the 102 cancelled runs in 200), leaving main
 # untested.
@@ -20,6 +20,7 @@ jobs:
       cli: ${{ steps.f.outputs.cli }}
       spaces: ${{ steps.f.outputs.spaces }}
       spaces-rust: ${{ steps.f.outputs.spaces-rust }}
+      omarchy: ${{ steps.f.outputs.omarchy }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # A job gated on an output this job doesn't define is always skipped, and ci-ok counts a skip as a pass.
@@ -46,6 +47,7 @@ jobs:
             spaces: ['spaces/**', 'install.sh', '.github/workflows/ci.yml']
             # The spaces Rust workspace: the shared core, the conformance cases, the Windows crates and the Linux update stub.
             spaces-rust: ['spaces/Cargo.toml', 'spaces/Cargo.lock', 'spaces/crates/**', 'spaces/spec/**', 'spaces/platforms/windows/**', 'spaces/platforms/linux/**', '.github/workflows/ci.yml']
+            omarchy: ['plugins/**', 'themes/**', '.github/workflows/ci.yml']
 
   cli:
     needs: changes
@@ -261,9 +263,21 @@ jobs:
           codesign --verify --deep --strict build/Polycarp.app
           test ! -e build/Polycarp.app/Contents/Resources/browser
           test ! -e build/Polycarp.app/Contents/Frameworks
+  omarchy:
+    needs: changes
+    if: needs.changes.outputs.omarchy == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: The plugin's models, scripts and package
+        working-directory: plugins/omarchy
+        run: node --test test/*.test.mjs
+      - name: Its publish script, against throwaway repos
+        run: bash plugins/publish-omarchy-test.sh
+
   ci-ok:
     if: always()
-    needs: [changes, cli, spaces, spaces-terminal, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle]
+    needs: [changes, cli, spaces, spaces-terminal, spaces-windows, spaces-windows-live, spaces-windows-speed, spaces-bundle, omarchy]
     runs-on: ubuntu-24.04
     steps:
       - name: Every job passed or was skipped
