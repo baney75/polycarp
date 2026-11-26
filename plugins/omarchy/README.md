@@ -33,7 +33,7 @@ Set them in `~/.config/omarchy/shell.json`, beside the widget's `id`:
 
 | Setting | Values | What it does |
 | --- | --- | --- |
-| `show` | `all`, `mark`, `workspaces`, `agents`, `clock`, `tray` | Which part this place on the bar shows. `all` is the mark, the workspaces and the agents. |
+| `show` | `all`, `mark`, `workspaces`, `agents`, `clock`, `tray` | Which part this place on the bar shows. `all` is the mark, the workspaces and the agents. `tray` steps aside while Omarchy's own tray is on the bar, so the bar has one. |
 | `icons` | `true`, `false` | App icons on workspaces |
 | `maxIcons` | 1 to 8 | Icons on one workspace before a count |
 | `empty` | 0 to 10 | Empty workspaces shown |
