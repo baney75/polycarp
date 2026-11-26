@@ -8,7 +8,7 @@ const B = globalThis.PolycarpBridge;
 const event = () => { const fns = new Set(); return { addListener: (f) => fns.add(f), fire: (...a) => [...fns].map((f) => f(...a)) }; };
 const tab = (id, title, more = {}) => ({ id, windowId: 1, title, url: `https://site${id}.example/`, incognito: false, active: false, groupId: -1, ...more });
 
-function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], windows = [], groups = [], fails = '' } = {}) {
+function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [], downloads = [], marks = [], windows = [], groups = [], fails = '', share = {} } = {}) {
   const ports = [], timers = [], did = [], kept = {};
   const granted = new Set(perms);
   const chrome = {
@@ -33,7 +33,7 @@ function browser({ perms = ['nativeMessaging'], tabs = [], set = {}, history = [
     history: { search: async () => history, onVisited: event(), onVisitRemoved: event() },
     downloads: { show: (id) => did.push(['show', id]), search: async (q) => (q.id === undefined ? downloads : downloads.filter((d) => d.id === q.id)), onCreated: event(), onChanged: event(), onErased: event() },
   };
-  const b = B.make(chrome, { later: (f) => timers.push(f), now: () => 1e12 });
+  const b = B.make(chrome, { later: (f) => timers.push(f), now: () => 1e12, share });
   b.listenTabs();
   const settle = async () => { for (let i = 0; i < 12; i++) { await new Promise((r) => setImmediate(r)); for (const f of timers.splice(0)) f(); } };
   return { b, chrome, ports, did, windows, kept, tabs, downloads, granted, set, settle, port: () => ports[ports.length - 1],
@@ -379,4 +379,38 @@ test('the app windows of one browser are all kept', async () => {
   x.port().onMessage.fire({ op: 'browser.app', id: 'mail-1', url: 'https://mail.example/' });
   await x.settle();
   assert.deepEqual(x.kept['polycarp.apps'], { 3: 'map-2', 50: 'mail-1' });
+});
+
+test('a tab sent from the launcher goes to the Reader or the library, and never a private one', async () => {
+  const got = [];
+  const share = { reader: (t) => got.push(['reader', t.id]), library: (t) => got.push(['library', t.id]), mail: (t) => got.push(['mail', t.id]) };
+  const x = browser({ share, tabs: [tab(1, 'One'), tab(2, 'Secret', { incognito: true }), tab(3, 'Unsaid', { incognito: undefined }), tab(4, 'File', { url: 'file:///etc/hosts' })] });
+  const send = async (tabId, to) => { x.port().onMessage.fire({ op: 'browser.send', tab: tabId, to }); await x.settle(); };
+  await x.b.start();
+  await send(1, 'reader');
+  assert.deepEqual(got, [], 'not before the app asked for tabs');
+  x.port().onMessage.fire({ op: 'browser.want', sources: ['tabs'] });
+  await x.settle();
+  for (const [id, to] of [[1, 'reader'], [1, 'library'], [2, 'reader'], [3, 'library'], [4, 'reader'], [1, 'mail'], ['1', 'reader']]) await send(id, to);
+  assert.deepEqual(got, [['reader', 1], ['library', 1]]);
+});
+
+test('chosen text goes to the launcher only while the app is there, and never from a private window', async () => {
+  const x = browser();
+  const open = { incognito: false };
+  assert.equal(x.b.find('hello', open), false, 'no line yet');
+  await x.b.start();
+  assert.equal(x.b.find('hello', open), false, 'the app has not said it is there');
+  x.port().onMessage.fire({ op: 'browser.want', sources: [] });
+  await x.settle();
+  assert.equal(x.b.find('  a\n  b ', open), true);
+  assert.equal(x.b.find('secret', { incognito: true }), false);
+  assert.equal(x.b.find('unsaid', {}), false);
+  assert.equal(x.b.find('   ', open), false);
+  x.b.find('c'.repeat(500), open);
+  assert.deepEqual(x.sent('browser.find').map((m) => m.text.length), [3, 200]);
+  assert.equal(x.sent('browser.find')[0].text, 'a b');
+  x.port().onMessage.fire({ op: 'browser.away' });
+  await x.settle();
+  assert.equal(x.b.find('later', open), false, 'not once the app is gone');
 });

@@ -129,6 +129,8 @@ public final class BrowserServer {
     public var joined: (Link) -> Void = { _ in }
     public var message: (BrowserMessage, Link) -> Void = { _, _ in }
     public var icon: (BrowserIcon, Link) -> Void = { _, _ in }
+    /// Text the person chose on a page, for the launcher.
+    public var find: (String, Link) -> Void = { _, _ in }
     public var gone: (Link) -> Void = { _ in }
 
     private let path: String
@@ -218,6 +220,7 @@ public final class BrowserServer {
             for line in got {
                 if let m = BrowserMessage(line) { DispatchQueue.main.async { self.message(m, link) } }
                 else if let i = BrowserIcon(line) { DispatchQueue.main.async { self.icon(i, link) } }
+                else if let t = BrowserShare.find(line) { DispatchQueue.main.async { self.find(t, link) } }
             }
         }
         link.end()

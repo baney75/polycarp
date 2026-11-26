@@ -65,3 +65,9 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   its own way, so every one is written. Polycarp Browser loads the folder beside its built-in pages when it starts, and takes
   a change at its next start: Chromium has no way to change a theme while it runs that Polycarp may use. The new tab and the
   extension's pages change at once.
+- **R-B17 Sharing a page.** The launcher sends the page in front on this workspace to its browser's Reader or library, which
+  the extension does as its own page menu does, or adds a line for it, `- [title](address) date`, at the end of a Markdown
+  file the person chose; Polycarp writes nothing else there and never rewrites what is in it. Only a tab with a web page is
+  sent, and the extension takes only a tab it told the app of, never a private one. Text chosen on a page goes to the
+  launcher by the page's menu, as one line of at most 200 characters, only while the app is there and never from a private
+  window; it is the launcher's query and nothing keeps it.

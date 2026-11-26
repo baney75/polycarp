@@ -158,6 +158,7 @@ function buildMenus() {
     chrome.contextMenus.create({ id: "reader-link", title: "Open link in Polycarp Reader", contexts: ["link"] });
     chrome.contextMenus.create({ id: "remember", title: "Remember this with Polycarp", contexts: ["selection"] });
     chrome.contextMenus.create({ id: "note-selection", title: "Highlight in Polycarp", contexts: ["selection"] });
+    chrome.contextMenus.create({ id: "find-selection", title: "Find \u201c%s\u201d with Polycarp", contexts: ["selection"] });
     chrome.contextMenus.create({ id: "save-page", title: "Save page to your Polycarp library", contexts: ["page"] });
     chrome.contextMenus.create({ id: "save-link", title: "Save link to your Polycarp library", contexts: ["link"] });
     chrome.contextMenus.create({ id: "edit-page", title: "Edit this page with Polycarp", contexts: ["page"], documentUrlPatterns: ["http://*/*", "https://*/*"] });
@@ -173,6 +174,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   else if (info.menuItemId === "remember") rememberFromTab(info.selectionText, tab);
   else if (info.menuItemId === "save-page") saveTab(tab).then((it) => tell(tab, it ? "Saved to your library" : "Could not save this page", it ? it.title : ""));
   else if (info.menuItemId === "save-link") saveLinkOnly(info.linkUrl, info.selectionText || "").then((it) => tell(tab, it ? "Link saved to your library" : "Could not save that link", it ? it.title : ""));
+  else if (info.menuItemId === "find-selection") {
+    if (!bridge || !bridge.find(info.selectionText, tab)) tell(tab, "Polycarp isn't open", "Open the Polycarp app, then try again.");
+  }
   else if (info.menuItemId === "note-selection") noteSelection(info.selectionText, tab).then((ok) => tell(tab, ok ? "Highlighted" : "Could not save that highlight", ok ? "Saved with this page in your library." : ""));
 });
 
@@ -532,7 +536,12 @@ chrome.runtime.onStartup.addListener(() => refreshAppFilters());
 chrome.runtime.onInstalled.addListener(() => refreshAppFilters());
 // ---------- The line to the Polycarp app (src/shared/bridge.js) ----------
 // Open while the worker lives (the open port keeps it alive), and looked for again with the filters' 30 second alarm.
-const bridge = globalThis.PolycarpBridge ? globalThis.PolycarpBridge.make(chrome) : null;
+// A page sent from the launcher opens in the Reader, or is saved to the library as the page's menu saves it.
+const share = {
+  reader: (tab) => openReaderForTab(tab),
+  library: (tab) => saveTab(tab).then((it) => tell(tab, it ? "Saved to your library" : "Could not save this page", it ? it.title : ""))
+};
+const bridge = globalThis.PolycarpBridge ? globalThis.PolycarpBridge.make(chrome, { share }) : null;
 if (bridge) {
   bridge.listenTabs();
   bridge.start();

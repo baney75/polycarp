@@ -43,10 +43,11 @@ final class BrowserRelayTests: XCTestCase {
         let s = BrowserServer(path: path, identify: { _ in bundle })
         s.joined = { box.links.append($0); $0.send(["op": "browser.want", "sources": ["tabs"]]) }
         s.message = { m, link in box.book.take(m, from: link.peer); box.count += 1 }
+        s.find = { t, _ in box.found.append(t) }
         s.gone = { link in box.book.forget(link.peer); box.links.removeAll { $0 === link }; box.gone += 1 }
         return (s, box)
     }
-    private final class Box { var links: [BrowserServer.Link] = []; let book = BrowserBook(); var count = 0; var gone = 0 }
+    private final class Box { var links: [BrowserServer.Link] = []; let book = BrowserBook(); var count = 0; var gone = 0; var found: [String] = [] }
 
     private func until(_ what: String, _ done: () -> Bool) {
         let end = Date().addingTimeInterval(5)
@@ -113,7 +114,8 @@ final class BrowserRelayTests: XCTestCase {
         b.sendRaw("not json")
         b.send(["op": "focus", "id": "x"])
         b.send(tabs("Second"))
-        until("both") { box.book.rows(.tabs).count == 2 }
+        b.send(["op": "browser.find", "text": "a\nchosen line"])
+        until("both") { box.book.rows(.tabs).count == 2 && box.found == ["a chosen line"] }
         XCTAssertEqual(box.count, 2)
         XCTAssertEqual(Set(box.book.rows(.tabs).map(\.peer)).count, 2)
         a.close(); b.close()

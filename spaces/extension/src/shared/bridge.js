@@ -73,8 +73,10 @@
   }
 
   // ---------- The line ----------
-  function make(chrome, { later = (fn, ms) => setTimeout(fn, ms), now = () => Date.now() } = {}) {
+  // `share`: what the extension does with a tab the person sends from the launcher, `{ reader(tab), library(tab) }`.
+  function make(chrome, { later = (fn, ms) => setTimeout(fn, ms), now = () => Date.now(), share = {} } = {}) {
     let port = null;
+    let here = false; // the app said what it wants, and hasn't gone
     let wanted = []; // what the app asked for
     let sending = []; // of those, what this browser gives
     let refused = false; // an app from before the line, or none on this computer: asked again at the next start
@@ -151,21 +153,22 @@
         const err = chrome.runtime.lastError; // read, so the browser doesn't log it
         if (p !== port) return;
         port = null;
-        wanted = []; sending = [];
+        here = false; wanted = []; sending = [];
         if (!heard && err && /not found|forbidden/i.test(String(err.message || err))) refused = true;
       });
       post({ op: "browser.join" });
     }
     async function start() { if (await has(["nativeMessaging"])) connect(); else stop(); }
-    function stop() { const p = port; port = null; wanted = []; sending = []; if (p) try { p.disconnect(); } catch (e) { /* gone */ } }
+    function stop() { const p = port; port = null; here = false; wanted = []; sending = []; if (p) try { p.disconnect(); } catch (e) { /* gone */ } }
 
     async function take(m) {
       if (m.op === "browser.want") {
+        here = true;
         wanted = (Array.isArray(m.sources) ? m.sources : []).filter((s) => SOURCES.includes(s));
         sending = []; // the app may be a new one: all of it again
         return refresh();
       }
-      if (m.op === "browser.away") { wanted = []; sending = []; return; }
+      if (m.op === "browser.away") { here = false; wanted = []; sending = []; return; }
       if (m.op === "browser.group" && Number.isInteger(m.group) && sending.includes("groups")) return move(m);
       if (m.op === "browser.go" && Number.isInteger(m.group) && sending.includes("groups")) {
         const [first] = await chrome.tabs.query({ groupId: m.group });
@@ -178,6 +181,11 @@
         if (t) await chrome.windows.update(t.windowId, { focused: true });
       }
       if (m.op === "browser.open") return open(m);
+      // A tab the person sends from the launcher, to the Reader or the library; only a tab the app was told of.
+      if (m.op === "browser.send" && Number.isInteger(m.tab) && ["reader", "library"].includes(m.to) && sending.includes("tabs") && share[m.to]) {
+        const t = await chrome.tabs.get(m.tab);
+        if (t.incognito === false && /^https?:\/\//i.test(t.url || "")) return share[m.to](t);
+      }
       if (m.op === "browser.app") return (opening = opening.then(() => app(m)).catch(() => {}));
       if (m.op === "browser.icon" && typeof m.url === "string") return icon(m.url);
       if (m.op === "browser.show" && Number.isInteger(m.download) && sending.includes("downloads")) await chrome.downloads.show(m.download);
@@ -325,7 +333,15 @@
       chrome.tabs.onRemoved.addListener((id) => mark("tabs", id, null));
       chrome.tabs.onActivated.addListener((a) => fronts(a.windowId));
     }
-    return { start, stop, connect, refresh, listenTabs, again: () => { refused = false; return start(); }, get open() { return !!port; }, get sending() { return [...sending]; } };
+    // Text the person chose on a page, for the app's launcher to search; never from a private window. False when the
+    // app isn't there to take it.
+    function find(text, tab) {
+      const t = String(text || "").replace(/\s+/g, " ").trim().slice(0, 200);
+      if (!t || !here || !tab || tab.incognito !== false) return false;
+      post({ op: "browser.find", text: t });
+      return true;
+    }
+    return { start, stop, connect, refresh, listenTabs, find, again: () => { refused = false; return start(); }, get open() { return !!port; }, get sending() { return [...sending]; } };
   }
 
   const api = { HOST, SOURCES, NEEDS, KEY, DEFAULTS, MOST, tabRow, groupRow, bookmarkRows, historyRow, downloadRow, pieces, make };
