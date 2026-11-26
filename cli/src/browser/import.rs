@@ -3,11 +3,13 @@
 
 use std::fs;
 use std::io;
+use std::os::unix::fs::DirBuilderExt;
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Map, Value};
 
-use super::{clear, pages, refuse, running, Asked, Place, Refused};
+use super::tools::Tools;
+use super::{chromium, clear, pages, refuse, running, Asked, Place, Refused};
 
 const CHECK: &str = "import";
 /// Both browsers name the item the same; the name is compiled in.
@@ -161,7 +163,7 @@ pub fn pick<'a>(profiles: &'a [Profile], asked: Option<&str>) -> Result<&'a Prof
 }
 
 /// `polycarp browser import [browser [--profile NAME] --yes]`.
-pub fn answer(place: &Place, asked: &Asked) -> Result<String, Refused> {
+pub fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Refused> {
     let Some(word) = &asked.what else {
         return Ok(list(&place.home));
     };
@@ -169,20 +171,30 @@ pub fn answer(place: &Place, asked: &Asked) -> Result<String, Refused> {
         let words = BROWSERS.map(|b| b.word).join(", ");
         return Err(Refused::new(CHECK, format!("{word} is not one of {words}")));
     };
-    if from.word != "helium" {
-        let name = from.name;
-        let why = format!("{name} can't be copied yet. In Polycarp Browser, chrome://settings/importData takes its bookmarks and history");
-        return Err(Refused::new(CHECK, why));
+    let whole = from.word == "helium";
+    if !whole {
+        chromium::installed(place)?;
     }
     let profiles = from.profiles(&place.home);
     let profile = pick(&profiles, asked.profile.as_deref())?;
     if asked.flags.is_empty() {
+        let (what, also) = match whole {
+            true => ("profile", KEYCHAIN),
+            false => (
+                "bookmarks and history, from profile",
+                "Its passwords and sign-ins stay there.",
+            ),
+        };
         return Ok(format!(
-            "This copies {}'s profile {} into Polycarp Browser; {}'s own stays as it is. {}\nAdd --yes to do it. Without it nothing is copied, and Polycarp Browser starts with an empty profile.",
-            from.name, profile.name, from.name, KEYCHAIN
+            "This copies {}'s {what} {} into Polycarp Browser; {}'s own stays as it is. {also}\nAdd --yes to do it. Without it nothing is copied, and Polycarp Browser starts with an empty profile.",
+            from.name, profile.name, from.name
         ));
     }
-    let dir = clone(&place.home, place, from, profile)?;
+    if !whole {
+        let brought = chromium::import(tools, place, from, profile)?;
+        return Ok(brought.text(from, profile));
+    }
+    let dir = clone(place, from, profile)?;
     let app = place.spot.installed().is_some();
     let next = if app {
         "open Polycarp Browser and it is there"
@@ -206,45 +218,52 @@ pub fn target(data: &Path) -> String {
 }
 
 /// Copies the profile whole. macOS's copy-on-write keeps it quick and small.
-pub fn clone(
-    home: &Path,
+fn clone(place: &Place, from: &Browser, profile: &Profile) -> Result<String, Refused> {
+    into_profile(place, from, &profile.name, |part| {
+        copy(&profile.folder, part, true).map_err(refuse(CHECK, "copying the profile"))
+    })
+}
+
+/// A new profile of `name`, as `fill` makes it in the private folder it is given. Both browsers stay closed while it does,
+/// and one that fails leaves nothing.
+pub fn into_profile(
     place: &Place,
     from: &Browser,
-    profile: &Profile,
+    name: &str,
+    fill: impl FnOnce(&Path) -> Result<(), Refused>,
 ) -> Result<String, Refused> {
+    let home = &place.home;
     place.prepare()?;
     let _lock = place.lock()?;
-    let closed = |check: &'static str| match (
-        from.open(home),
-        place.spot.running() || locked(&place.data),
-    ) {
+    let closed = || match (from.open(home), place.spot.running() || locked(&place.data)) {
         (true, _) => Err(Refused::new(
-            check,
+            "running",
             format!("{} is open. Quit it first", from.name),
         )),
         (_, true) => Err(Refused::new(
-            check,
+            "running",
             "Polycarp Browser is open. Quit it first",
         )),
         _ => Ok(()),
     };
-    closed("running")?;
+    closed()?;
     pages::first_run(&place.data).map_err(refuse(CHECK, "making the data folder"))?;
     let part = place.data.join(".import");
-    let copied = clear(&part)
-        .and_then(|_| copy(&profile.folder, &part, true))
-        .map_err(refuse(CHECK, "copying the profile"));
+    let made = clear(&part)
+        .and_then(|_| fs::DirBuilder::new().mode(0o700).create(&part))
+        .map_err(refuse(CHECK, "making a folder for the copy"));
     // Opened while it was copied, the copy may be half of two states.
-    let done = copied
-        .and_then(|_| closed("running"))
-        .and_then(|_| place_profile(place, &part, &profile.name));
+    let done = made
+        .and_then(|_| fill(&part))
+        .and_then(|_| closed())
+        .and_then(|_| place_profile(place, &part, name));
     if done.is_err() {
         clear(&part).map_err(refuse(CHECK, "clearing the copy"))?;
     }
     done
 }
 
-pub fn place_profile(place: &Place, part: &Path, name: &str) -> Result<String, Refused> {
+fn place_profile(place: &Place, part: &Path, name: &str) -> Result<String, Refused> {
     let dir = target(&place.data);
     let to = place.data.join(&dir);
     // The folder first: one that is there but not listed is harmless, a listed one that isn't there is not.
@@ -303,8 +322,6 @@ fn profile_count(profile: &Value) -> u64 {
 
 /// Plain files and folders only. What is left out is left out only at the top: an extension may hold a folder named `Cache`.
 fn copy(from: &Path, to: &Path, top: bool) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    fs::DirBuilder::new().mode(0o700).create(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -316,6 +333,7 @@ fn copy(from: &Path, to: &Path, top: bool) -> io::Result<()> {
         let kind = entry.file_type()?;
         let to = to.join(&name);
         if kind.is_dir() {
+            fs::DirBuilder::new().mode(0o700).create(&to)?;
             copy(&entry.path(), &to, false)?;
         } else if kind.is_file() {
             // A clone, where the disk can make one.
@@ -337,7 +355,7 @@ mod tests {
 
     /// A made-up Helium with two profiles.
     fn made_up(t: &Fake) -> PathBuf {
-        let home = t.work().join("home");
+        let home = t.place().home;
         let data = helium().data(&home);
         for dir in ["Default", "Profile 1"] {
             fs::create_dir_all(data.join(dir).join("Cache")).unwrap();
@@ -405,14 +423,8 @@ mod tests {
         let before = all(&t, &home);
         let profiles = helium().profiles(&home);
         // A profile nobody used yet gives up its place; the next import goes beside it.
-        assert_eq!(
-            clone(&home, &place, helium(), &profiles[0]).unwrap(),
-            "Default"
-        );
-        assert_eq!(
-            clone(&home, &place, helium(), &profiles[1]).unwrap(),
-            "Profile 1"
-        );
+        assert_eq!(clone(&place, helium(), &profiles[0]).unwrap(), "Default");
+        assert_eq!(clone(&place, helium(), &profiles[1]).unwrap(), "Profile 1");
         assert_eq!(all(&t, &home), before, "the original was changed");
         let read = |p: &str| fs::read_to_string(place.data.join(p)).unwrap();
         assert_eq!(read("Default/Cookies"), "cookies of Default");
@@ -438,10 +450,10 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_copied_without_yes_or_from_another_browser() {
+    fn nothing_is_copied_without_yes() {
         let t = Fake::new();
-        let home = made_up(&t);
-        let place = Place { home, ..t.place() };
+        made_up(&t);
+        let place = t.place();
         let ask = |what: &str, yes: bool| {
             let asked = Asked {
                 verb: "import".into(),
@@ -450,10 +462,9 @@ mod tests {
                 flags: yes.then(|| "--yes".to_string()).into_iter().collect(),
                 ..Asked::default()
             };
-            answer(&place, &asked).map_err(|e| e.why)
+            answer(&t, &place, &asked).map_err(|e| e.why)
         };
         assert!(ask("helium", false).unwrap().contains("Add --yes"));
-        assert!(ask("chrome", true).unwrap_err().contains("yet"));
         assert!(ask("netscape", true).unwrap_err().contains("not one of"));
         assert!(!place.data.exists());
         let done = ask("helium", true).unwrap();
@@ -471,7 +482,7 @@ mod tests {
         let me = std::process::id();
         for held in [format!("mac-{me}"), "mac".into()] {
             symlink(held, &lock).unwrap();
-            let e = clone(&home, &place, helium(), &profiles[0]).unwrap_err();
+            let e = clone(&place, helium(), &profiles[0]).unwrap_err();
             assert_eq!(e.check, "running");
             fs::remove_file(&lock).unwrap();
         }
@@ -483,15 +494,31 @@ mod tests {
         fs::create_dir_all(&place.data).unwrap();
         let ours = place.data.join("SingletonLock");
         symlink(format!("mac-{me}"), &ours).unwrap();
-        let e = clone(&home, &place, helium(), &profiles[0]).unwrap_err();
+        let e = clone(&place, helium(), &profiles[0]).unwrap_err();
         assert_eq!(e.check, "running");
         fs::remove_file(&ours).unwrap();
         t.built_app(&place.spot.app(), "1.0", 1);
         let mut open = t.start_inside(&place.spot.app());
-        let e = clone(&home, &place, helium(), &profiles[0]).unwrap_err();
+        let e = clone(&place, helium(), &profiles[0]).unwrap_err();
         assert_eq!(e.check, "running");
         open.kill().unwrap();
         open.wait().unwrap();
+    }
+
+    #[test]
+    fn one_opened_while_it_was_copied_is_not_placed() {
+        let t = Fake::new();
+        let home = made_up(&t);
+        let place = t.place();
+        let lock = helium().data(&home).join("SingletonLock");
+        let e = into_profile(&place, helium(), "Home", |part| {
+            fs::write(part.join("Cookies"), "half").unwrap();
+            symlink(format!("mac-{}", std::process::id()), &lock).unwrap();
+            Ok(())
+        });
+        assert_eq!(e.unwrap_err().check, "running");
+        assert!(!place.data.join(".import").exists());
+        assert!(pages::untouched(&place.data));
     }
 
     #[test]
@@ -502,10 +529,7 @@ mod tests {
         pages::first_run(&place.data).unwrap();
         fs::write(place.data.join("Default/History"), "mine").unwrap();
         let profiles = helium().profiles(&home);
-        assert_eq!(
-            clone(&home, &place, helium(), &profiles[0]).unwrap(),
-            "Profile 1"
-        );
+        assert_eq!(clone(&place, helium(), &profiles[0]).unwrap(), "Profile 1");
         let mine = fs::read_to_string(place.data.join("Default/History")).unwrap();
         assert_eq!(mine, "mine");
     }
@@ -519,7 +543,7 @@ mod tests {
         let profiles = helium().profiles(&home);
         let cookies = profiles[0].folder.join("Cookies");
         fs::set_permissions(&cookies, fs::Permissions::from_mode(0o000)).unwrap();
-        let e = clone(&home, &place, helium(), &profiles[0]).unwrap_err();
+        let e = clone(&place, helium(), &profiles[0]).unwrap_err();
         assert_eq!(e.check, "import");
         assert!(!place.data.join(".import").exists());
         assert!(pages::untouched(&place.data));
