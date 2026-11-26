@@ -14,6 +14,7 @@
 <header class="cmd">
   <a class="wordmark" href="hub.html" data-wordmark title="Polycarp Mail"></a>
   <button class="box" id="openCmd" type="button" aria-haspopup="dialog" aria-keyshortcuts="Meta+K Control+K /"><span id="boxIcon"></span><span>Search, or a command</span><kbd>⌘K</kbd></button>
+  <button class="btn quiet write" id="write" type="button" aria-keyshortcuts="C" title="Write a message (C)"></button>
   <div class="acc" id="accounts" role="group" aria-label="Accounts" hidden></div>
 </header>
 <div class="panes" id="panes">
@@ -41,6 +42,8 @@
 <script src="../hub/adapter.js"></script>
 <script src="../hub/fake.js"></script>
 <script src="../hub/organize.js"></script>
+<script src="../hub/outbox.js"></script>
+<script src="hub-compose.js"></script>
 <script src="hub.js"></script>
 </body>
 </html>

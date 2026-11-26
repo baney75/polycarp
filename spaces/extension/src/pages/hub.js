@@ -14,7 +14,8 @@
   const VIEWS = {
     inbox: { name: "Inbox", folder: "inbox", fold: true },
     archive: { name: "Archive", folder: "archive" },
-    sent: { name: "Sent", folder: "sent" }
+    sent: { name: "Sent", folder: "sent" },
+    drafts: { name: "Drafts", drafts: true }
   };
   for (const b of O.BUNDLES) VIEWS[b.id] = { name: b.name, folder: "inbox", bundle: b.id };
 
@@ -61,8 +62,16 @@
   }
   const who = (t) => (t.people && t.people.length ? t.people.map((p) => p.name || p.addr).join(", ") : (t.from && (t.from.name || t.from.addr)) || "Me");
 
+  // Drafts list like threads: who they go to, the subject and the start of the text.
+  const draftRow = (d) => ({ id: d.id, draft: true, by: d.by, account: d.account, subject: d.subject, people: d.to, lastDate: d.updated, snippet: d.text.slice(0, 160), unread: 0, count: 1 });
+
   async function load() {
     const v = VIEWS[st.view];
+    if (v.drafts) {
+      st.threads = (await S.drafts(st.account || undefined)).map(draftRow);
+      st.more = false;
+      return;
+    }
     // A refresh keeps every page already shown.
     const q = { folder: v.folder, limit: Math.max(PAGE, st.loaded || 0) };
     if (st.account) q.account = st.account;
@@ -90,15 +99,16 @@
     const o = el("div", "row" + (t.unread ? " unread" : ""));
     o.id = "t-" + t.id;
     o.setAttribute("role", "option");
-    o.dataset.thread = t.id;
-    const name = who(t);
-    o.setAttribute("aria-label", [t.unread ? "Unread" : "", name, t.subject || "(no subject)", t.flagged ? "flagged" : "", t.count > 1 ? t.count + " messages" : "", when(t.lastDate)].filter(Boolean).join(", "));
+    if (t.draft) o.dataset.draft = t.id; else o.dataset.thread = t.id;
+    const name = t.draft ? (t.people.length ? "To " + who(t) : "No one yet") : who(t);
+    o.setAttribute("aria-label", [t.draft ? (t.by ? "Draft by an agent" : "Draft") : "", t.unread ? "Unread" : "", name, t.subject || "(no subject)", t.flagged ? "flagged" : "", t.count > 1 ? t.count + " messages" : "", when(t.lastDate)].filter(Boolean).join(", "));
     o.append(el("span", "dot"));
     const b = el("b", "", name + (t.count > 1 ? " (" + t.count + ")" : ""));
     o.append(b, el("span", "when", when(t.lastDate)));
     const s = el("span", "s", t.subject || "(no subject)");
     if (t.snippet) s.append(el("span", "muted", t.snippet));
     if (t.flagged) { const f = el("span", "flag"); f.innerHTML = I.icon("flag"); s.prepend(f); }
+    if (t.draft) s.prepend(el("span", "tag", t.by ? "Agent's draft" : "Draft"));
     o.append(s);
     return o;
   }
@@ -182,7 +192,7 @@
   async function refresh() {
     await load();
     render();
-    if (st.open) {
+    if (st.open && !compose.isOpen) {
       const got = await S.thread(st.open);
       if (got) paint(got); else closeThread(true);
     }
@@ -284,6 +294,13 @@
       }
       wrap.append(sec);
     }
+    const rb = el("button", "btn primary reply");
+    rb.type = "button";
+    rb.innerHTML = I.icon("reply");
+    rb.append(" Reply ", el("kbd", "", "R"));
+    rb.setAttribute("aria-keyshortcuts", "R");
+    rb.addEventListener("click", () => reply(t, messages));
+    wrap.append(rb);
     pane.replaceChildren(wrap);
   }
 
@@ -306,17 +323,83 @@
       if (a && a.adapter && ids.length) A.actions.markRead(a.rec.id, a.adapter, S, ids, true).catch((e) => toast("Couldn't mark it read: " + e.message));
     }
   }
+  const hint = () => $("pane").replaceChildren(el("p", "hint", "Pick a conversation, or press J and K to move and Return to open."));
   function closeThread(quiet) {
+    if (compose.isOpen) compose.close();
     st.open = "";
     document.body.classList.remove("reading");
-    const hint = el("p", "hint", "Pick a conversation, or press J and K to move and Return to open.");
-    $("pane").replaceChildren(hint);
+    hint();
     if (!quiet && history.state?.t) {
       if (st.pushed) history.back(); else history.replaceState(null, "", location.pathname);
     }
     st.pushed = false;
     $("rows").focus({ preventScroll: true });
   }
+
+  // ---------- Writing ----------
+
+  // A reply goes to whoever wrote last, or, when that was you, to the people you wrote to. A draft already started
+  // for this conversation opens again instead of a new one.
+  async function reply(t, messages) {
+    if (!messages) { const got = await S.thread(t.id); if (!got) return; messages = got.messages; }
+    if (st.open !== t.id) await openThread(t.id);
+    const box = document.querySelector("#pane .thread");
+    if (!box) return;
+    const old = (await S.drafts(t.account)).find((d) => d.threadId === t.id);
+    if (old) return compose.open({ id: old.id }, box);
+    const me = st.accounts.get(t.account)?.rec.address || "";
+    const last = messages[messages.length - 1];
+    const mine = last.folder === "sent" || last.from.addr === me;
+    const to = mine ? last.to : (last.replyTo && last.replyTo.length ? last.replyTo : [last.from]);
+    compose.open({ account: t.account, to, subject: /^re:/i.test(last.subject) ? last.subject : "Re: " + last.subject, replyTo: last.remoteId, threadId: t.id }, box);
+  }
+  function write() {
+    const first = st.account || st.accounts.keys().next().value;
+    if (!first) return toast("Add an account first, or try it with made-up mail.");
+    if (st.open) closeThread(true);
+    document.body.classList.add("reading");
+    compose.open({ account: first }, $("pane"));
+  }
+  async function resume(id) {
+    const d = await S.draft(id);
+    if (!d) return;
+    if (d.threadId && (await S.thread(d.threadId))) {
+      await openThread(d.threadId);
+      return compose.open({ id }, document.querySelector("#pane .thread"));
+    }
+    if (st.open) closeThread(true);
+    document.body.classList.add("reading");
+    compose.open({ id }, $("pane"));
+  }
+  function activate(o) {
+    if (o.dataset.bundle) go(o.dataset.bundle);
+    else if (o.dataset.draft) resume(o.dataset.draft);
+    else openThread(o.dataset.thread);
+  }
+
+  const SEND_DELAY = 10000;
+  const outbox = globalThis.PolycarpHubOutbox.create({
+    delay: SEND_DELAY,
+    adapterFor: (id) => st.accounts.get(id)?.adapter || null,
+    onSent: () => { toast("Sent"); refresh(); },
+    onFail: (d, e) => { toast("It didn't send, and it's still in Drafts: " + e.message); refresh(); }
+  });
+  const compose = globalThis.PolycarpMailCompose.init({
+    accounts: () => st.accounts,
+    toast,
+    async send(id) {
+      const r = await outbox.send(id);
+      if (r.ok) {
+        st.undo = async () => { if (outbox.undo(id)) await resume(id); else toast("It already went."); };
+        toast("Sending in " + SEND_DELAY / 1000 + " seconds", true, SEND_DELAY);
+      }
+      return r;
+    },
+    closed() {
+      if (!st.open) { document.body.classList.remove("reading"); hint(); $("rows").focus({ preventScroll: true }); }
+      refresh();
+    }
+  });
 
   async function save(m, f) {
     const a = st.accounts.get(m.account);
@@ -382,14 +465,14 @@
   }
 
   let toastTimer = 0;
-  function toast(text, canUndo) {
+  function toast(text, canUndo, ms) {
     $("toastText").textContent = text;
     $("toastUndo").hidden = !canUndo;
     $("toast").hidden = false;
     // An undo lasts only while it is offered on screen.
     if (!canUndo) st.undo = null;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { $("toast").hidden = true; st.undo = null; }, canUndo ? 8000 : 4000);
+    toastTimer = setTimeout(() => { $("toast").hidden = true; st.undo = null; }, ms || (canUndo ? 8000 : 4000));
   }
 
   // ---------- The command bar ----------
@@ -400,6 +483,9 @@
       { label: "Go to the inbox", key: "G I", run: () => go("inbox") },
       { label: "Go to Archive", key: "G A", run: () => go("archive") },
       { label: "Go to Sent", key: "G S", run: () => go("sent") },
+      { label: "Go to Drafts", key: "G D", run: () => go("drafts") },
+      { label: "Write a message", key: "C", run: write },
+      { label: "Reply", key: "R", run: () => { const t = current(); if (t) reply(t); } },
       ...O.BUNDLES.map((b) => ({ label: "Open " + b.name, key: "", run: () => go(b.id) })),
       { label: "Check for new mail", key: "", run: () => pullAll().then(refresh) },
       { label: "Move down, move up", key: "J K", run: () => {} },
@@ -479,7 +565,7 @@
     if (gPending) {
       clearTimeout(gPending);
       gPending = 0;
-      const to = { i: "inbox", a: "archive", s: "sent" }[k];
+      const to = { i: "inbox", a: "archive", s: "sent", d: "drafts" }[k];
       if (to) { e.preventDefault(); go(to); }
       return;
     }
@@ -494,9 +580,11 @@
           if (e.target.tagName === "BUTTON") return false;
           const o = st.opts[st.sel];
           if (!o) return false;
-          if (o.dataset.bundle) go(o.dataset.bundle); else openThread(o.dataset.thread);
+          activate(o);
           return true;
         }
+        case "r": if (t && !t.draft) reply(t); return !!t;
+        case "c": write(); return true;
         case "e": if (t && t.folder === "inbox") archive(t); return !!t;
         case "i": if (t && t.folder !== "inbox") moveTo(t, "inbox"); return !!t;
         case "s": if (t) flag(t); return !!t;
@@ -522,6 +610,8 @@
     $("up").innerHTML = I.icon("back");
     $("up").addEventListener("click", () => go("inbox"));
     $("openCmd").addEventListener("click", () => openCmd());
+    $("write").innerHTML = I.icon("pen") + "<span>Write</span>";
+    $("write").addEventListener("click", write);
     $("tryFake").addEventListener("click", tryMadeUp);
     $("more").addEventListener("click", loadMore);
     $("toastUndo").addEventListener("click", undo);
@@ -529,7 +619,7 @@
       const o = e.target.closest('[role="option"]');
       if (!o) return;
       select(st.opts.indexOf(o), false);
-      if (o.dataset.bundle) go(o.dataset.bundle); else openThread(o.dataset.thread);
+      activate(o);
     });
     $("cmdIn").addEventListener("input", fillCmd);
     $("cmdIn").addEventListener("keydown", (e) => {

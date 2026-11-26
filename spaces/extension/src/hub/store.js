@@ -162,6 +162,8 @@
       await backend().del("threads", Array.from(threads));
       await backend().del("accounts", [id]);
       await backend().del("meta", ["cursor:" + id]);
+      const drafts = (await backend().all("drafts")).filter((d) => d.account === id);
+      await backend().del("drafts", drafts.map((d) => d.id));
     }).then(() => emit({ type: "accounts" }));
   }
 
@@ -291,6 +293,37 @@
   const allMessages = () => backend().all("messages");
   const allThreads = () => backend().all("threads");
 
+  // ---------- Drafts ----------
+
+  // A draft lives only here until it is sent. `replyTo` is the remote id of the message it answers ("" for new mail).
+  // `by` names an agent that wrote it ("" when the person did); only the person sends, whoever wrote it.
+  const newDraftId = () => "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  async function saveDraft(d) {
+    if (!d || !d.account) throw new Error("a draft needs an account");
+    const old = d.id ? await backend().get("drafts", d.id) : null;
+    const rec = {
+      id: d.id || newDraftId(),
+      account: String(d.account),
+      to: M.addresses(d.to), cc: M.addresses(d.cc), bcc: M.addresses(d.bcc),
+      subject: String(d.subject || ""), text: String(d.text || ""),
+      replyTo: String(d.replyTo || ""), threadId: String(d.threadId || ""),
+      by: old ? old.by : String(d.by || ""),
+      updated: Date.now()
+    };
+    await queue(() => backend().put("drafts", [rec]));
+    emit({ type: "drafts" });
+    return rec;
+  }
+  const draft = (id) => backend().get("drafts", id);
+  async function drafts(account) {
+    const all = await backend().all("drafts");
+    return all.filter((d) => !account || d.account === account).sort((a, b) => b.updated - a.updated);
+  }
+  async function deleteDraft(id) {
+    await queue(() => backend().del("drafts", [id]));
+    emit({ type: "drafts" });
+  }
+
   // ---------- Meta: sync cursors and settings ----------
 
   async function getMeta(key) { const v = await backend().get("meta", key); return v ? v.value : undefined; }
@@ -302,6 +335,7 @@
     DB_NAME, useMemoryStore, open: () => backend().open().then(() => true), onChange,
     putAccount, accounts, removeAccount,
     upsert, remove, update, restore, message, thread, threads, after, allMessages, allThreads,
+    saveDraft, draft, drafts, deleteDraft,
     getMeta, setMeta, cursor, setCursor
   };
 })();
