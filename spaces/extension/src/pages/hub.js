@@ -65,21 +65,18 @@
   // Drafts list like threads: who they go to, the subject and the start of the text.
   const draftRow = (d) => ({ id: d.id, draft: true, by: d.by, account: d.account, subject: d.subject, people: d.to, lastDate: d.updated, snippet: d.text.slice(0, 160), unread: 0, count: 1 });
 
+  // What the current view lists. It changes nothing itself: refresh applies the newest answer only.
   async function load() {
     const v = VIEWS[st.view];
-    if (v.drafts) {
-      st.threads = (await S.drafts(st.account || undefined)).map(draftRow);
-      st.more = false;
-      return;
-    }
+    if (v.drafts) return { threads: (await S.drafts(st.account || undefined)).map(draftRow), more: false };
     // A refresh keeps every page already shown.
     const q = { folder: v.folder, limit: Math.max(PAGE, st.loaded || 0) };
     if (st.account) q.account = st.account;
     let list = await S.threads(q);
-    st.more = list.length === q.limit;
-    st.loaded = list.length;
+    const more = list.length === q.limit;
+    const loaded = list.length;
     if (v.bundle) list = list.filter((t) => O.bundleOf(t) === v.bundle);
-    st.threads = list;
+    return { threads: list, more, loaded };
   }
   async function loadMore() {
     const last = st.threads[st.threads.length - 1];
@@ -189,8 +186,15 @@
   }
   const selectedThread = () => { const o = st.opts[st.sel]; return o && o.dataset.thread ? st.threads.find((t) => t.id === o.dataset.thread) : null; };
 
+  // A slow load begun before a view switch must not draw the old view under the new name, so only the newest counts.
+  let loads = 0;
   async function refresh() {
-    await load();
+    const n = ++loads;
+    const got = await load();
+    if (n !== loads) return;
+    st.threads = got.threads;
+    st.more = got.more;
+    if (got.loaded !== undefined) st.loaded = got.loaded;
     render();
     if (st.open && !compose.isOpen) {
       const got = await S.thread(st.open);
