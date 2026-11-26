@@ -99,7 +99,7 @@ The person moves the bar's modules with the mouse; Windows draws a fixed set and
   the next move or a quit.
 - **R-BA6 VoiceOver.** Each module has the actions Move Left, Move Right (past the next module that draws, into the next
   row at an edge), Move to Left Section, Move to Center and Move to Right Section (the end of that row nearest the
-  module), each the same move as a drop.
+  module), each the same move as a drop: a row that takes no drop of the module takes no step either.
 
 | Lists (left / center / right) | Move | Result |
 | --- | --- | --- |

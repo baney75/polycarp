@@ -269,12 +269,16 @@ final class ArrangeKeys: NSPanel, NSWindowDelegate {
     override var canBecomeKey: Bool { true }
     override func cancelOperation(_ sender: Any?) { onEscape() }
     override func keyDown(with event: NSEvent) { if event.keyCode == 53 { onEscape() } }
-    /// ⌘Z undoes; every other shortcut stops here, so ⌘Q or ⌘W pressed while it holds the keyboard never reaches
-    /// Polycarp's own menu.
+    /// Escape and ⌘Z call back; every other ⌘ shortcut stops here (`BarArrange.panelKey`).
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
-           event.charactersIgnoringModifiers?.lowercased() == "z" { onUndo() }
-        return true
+        let flags = event.modifierFlags.intersection([.command, .shift, .option, .control])
+        switch BarArrange.panelKey(keyCode: event.keyCode, command: flags.contains(.command),
+                                   otherModifiers: flags != .command, characters: event.charactersIgnoringModifiers) {
+        case .escape: onEscape(); return true
+        case .undo: onUndo(); return true
+        case .swallow: return true
+        case .pass: return super.performKeyEquivalent(with: event)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) { onResign() }
@@ -296,9 +300,6 @@ final class BlockMenuItem: NSMenuItem {
 
 /// The island split `|`, drawn as a small grip while arranging or moving so it can be taken like a module.
 struct BarSplitHandle: View {
-    /// What a VoiceOver step passes over: modules that draw nothing in any bar, never a split, which parts islands.
-    static func shown(_ m: Surfaces.BarModule) -> Bool { m == .split || BarLayout.drawn(m) }
-
     @Environment(\.barFace) private var face
     var body: some View {
         Capsule().fill(Chrome.wash(0.55)).frame(width: 3, height: max(8, face * 0.55))
@@ -307,25 +308,34 @@ struct BarSplitHandle: View {
     }
 }
 
-/// The VoiceOver moves on a module (R-BA6): only the ones it can make, where the system can list them.
+/// The VoiceOver moves on a module (R-BA6): only the ones it can make, where the system can list them. `shown` and
+/// `refused` are what this bar draws now, so each step is the same move a drop would make.
 struct BarMoveActions: ViewModifier {
     let slot: BarSlot
     let bar: Surfaces.Bar
-    let run: (BarSlot, BarArrange.Step) -> Void
+    let shown: (Surfaces.BarModule) -> Bool
+    let refused: (BarRow) -> Bool
+    let run: (BarSlot, BarSlot) -> Void
+
+    private func target(_ step: BarArrange.Step) -> BarSlot? {
+        BarArrange.slot(for: step, from: slot, in: bar, shown: shown, refused: refused)
+    }
+
+    private func go(_ step: BarArrange.Step) { if let to = target(step) { run(slot, to) } }
 
     func body(content: Content) -> some View {
         if #available(macOS 14, *) {
-            let steps = BarArrange.Step.allCases.filter { BarArrange.slot(for: $0, from: slot, in: bar, shown: BarSplitHandle.shown) != nil }
+            let steps = BarArrange.Step.allCases.filter { target($0) != nil }
             content.accessibilityActions {
-                ForEach(steps, id: \.self) { step in Button(step.rawValue) { run(slot, step) } }
+                ForEach(steps, id: \.self) { step in Button(step.rawValue) { go(step) } }
             }
         } else {
             content
-                .accessibilityAction(named: BarArrange.Step.left.rawValue) { run(slot, .left) }
-                .accessibilityAction(named: BarArrange.Step.right.rawValue) { run(slot, .right) }
-                .accessibilityAction(named: BarArrange.Step.toLeft.rawValue) { run(slot, .toLeft) }
-                .accessibilityAction(named: BarArrange.Step.toCenter.rawValue) { run(slot, .toCenter) }
-                .accessibilityAction(named: BarArrange.Step.toRight.rawValue) { run(slot, .toRight) }
+                .accessibilityAction(named: BarArrange.Step.left.rawValue) { go(.left) }
+                .accessibilityAction(named: BarArrange.Step.right.rawValue) { go(.right) }
+                .accessibilityAction(named: BarArrange.Step.toLeft.rawValue) { go(.toLeft) }
+                .accessibilityAction(named: BarArrange.Step.toCenter.rawValue) { go(.toCenter) }
+                .accessibilityAction(named: BarArrange.Step.toRight.rawValue) { go(.toRight) }
         }
     }
 }

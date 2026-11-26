@@ -258,4 +258,28 @@ final class BarArrangeTests: XCTestCase {
             XCTAssertEqual(BarArrange.list(after, at.row)[at.index], BarArrange.list(b, from.row)[from.index], "\(from) to \(to)")
         }
     }
+
+    /// Escape reaches the key panel through `performKeyEquivalent`, which AppKit offers every key-down first, so it must
+    /// not be swallowed there with the other shortcuts (PR #869 review round 2, first-F1).
+    func testPanelKeys() {
+        XCTAssertEqual(BarArrange.panelKey(keyCode: 53, command: false, otherModifiers: false, characters: "\u{1b}"), .escape)
+        XCTAssertEqual(BarArrange.panelKey(keyCode: 6, command: true, otherModifiers: false, characters: "z"), .undo)
+        XCTAssertEqual(BarArrange.panelKey(keyCode: 6, command: true, otherModifiers: true, characters: "z"), .swallow)
+        XCTAssertEqual(BarArrange.panelKey(keyCode: 12, command: true, otherModifiers: false, characters: "q"), .swallow)
+        XCTAssertEqual(BarArrange.panelKey(keyCode: 0, command: false, otherModifiers: false, characters: "a"), .pass)
+    }
+
+    /// A VoiceOver step never goes into a row a drop would refuse: one the style sheet hides, or one hiding the module
+    /// (PR #869 review round 2, second-S1).
+    func testStepsSkipRefusedRows() {
+        let b = bar(["mark", "workspaces"], ["clock"], ["status"])
+        let center: (BarRow) -> Bool = { $0 == .center }
+        XCTAssertNil(BarArrange.slot(for: .toCenter, from: BarSlot(.left, 0), in: b, refused: center))
+        XCTAssertEqual(BarArrange.slot(for: .right, from: BarSlot(.left, 1), in: b, refused: center), BarSlot(.right, 0))
+        XCTAssertEqual(BarArrange.slot(for: .left, from: BarSlot(.right, 0), in: b, refused: center), BarSlot(.left, 2))
+        XCTAssertNil(BarArrange.slot(for: .right, from: BarSlot(.left, 1), in: b, refused: { $0 != .left }))
+        // A module this bar doesn't draw now is passed, as on screen: past a hidden mark the left row has no edge to cross.
+        XCTAssertEqual(BarArrange.slot(for: .left, from: BarSlot(.left, 1), in: b), BarSlot(.left, 0))
+        XCTAssertNil(BarArrange.slot(for: .left, from: BarSlot(.left, 1), in: b, shown: { $0 != .mark }))
+    }
 }

@@ -151,10 +151,7 @@ final class TopBar {
         dragger.start()
         dragger.onUndo = { [weak self] in self?.undoMove() }
         model.onDone = { [weak self] in self?.dragger.endArranging("Done") }
-        model.onStep = { [weak self] from, step in
-            guard let self, let to = BarArrange.slot(for: step, from: from, in: self.model.bar, shown: BarSplitHandle.shown) else { return }
-            self.move(from, to: to)
-        }
+        model.onStep = { [weak self] from, to in self?.move(from, to: to) }
         rightClicks = NSEvent.addLocalMonitorForEvents(matching: .rightMouseDown) { [weak self] e in
             self?.rightClick(e) == true ? nil : e
         }
@@ -511,8 +508,8 @@ final class TopBarModel: ObservableObject {
     @Published var drag: BarDrag?
     /// Arrange mode: modules outlined, a plain drag moves one, a click runs none (R-BA1).
     @Published var arranging = false
-    /// A VoiceOver move of the module at a slot (R-BA6).
-    var onStep: (BarSlot, BarArrange.Step) -> Void = { _, _ in }
+    /// A VoiceOver move of the module at a slot to a gap (R-BA6).
+    var onStep: (BarSlot, BarSlot) -> Void = { _, _ in }
     /// Ends arrange mode, from its Done pill.
     var onDone: () -> Void = {}
     /// Where each bar last laid out its rows and modules; read at a press, never drawn from.
@@ -752,7 +749,18 @@ struct TopBarView: View {
             }
             .barMeasured(.item(place, index))
             .accessibilityLabel("Island split")
-            .modifier(BarMoveActions(slot: BarSlot(place, index), bar: model.bar, run: model.onStep))
+            .modifier(moveActions(BarSlot(place, index), .split))
+    }
+
+    /// The VoiceOver moves for the module at `slot`: past the modules this bar draws (a split parts islands, so it
+    /// counts), and never into a row that takes no drop of it.
+    private func moveActions(_ slot: BarSlot, _ module: Surfaces.BarModule) -> BarMoveActions {
+        let m = model.measure[display]
+        let region = StyleBook.Region(rawValue: slot.row.rawValue) ?? .left
+        return BarMoveActions(slot: slot, bar: model.bar,
+                              shown: { $0 == .split || (BarLayout.drawn($0) && draws($0, region)) },
+                              refused: { r in m?.closed.contains(r) == true || m?.hides[r]?.contains(module) == true },
+                              run: model.onStep)
     }
 
     /// Arrange mode's Done pill, after the middle's modules.
@@ -782,8 +790,7 @@ struct TopBarView: View {
                 if moving, model.drag?.target != nil { Capsule().fill(Chrome.accent).frame(width: 2).padding(.vertical, 5) }
             }
             .barMeasured(.item(place, p.index))
-            .accessibilityElement(children: .contain)
-            .modifier(BarMoveActions(slot: BarSlot(place, p.index), bar: model.bar, run: model.onStep))
+            .modifier(moveActions(BarSlot(place, p.index), p.module))
     }
 
     /// The module being moved, lifted under the pointer.
