@@ -104,7 +104,7 @@ final class TilingShortcutsTests: XCTestCase {
         let code = try SourceText.code("Sources/BaneySpaces/AppDelegate.swift")
         XCTAssertTrue(code.contains("for key in tilingShortcuts?.keys ?? [] {"))
         XCTAssertTrue(code.contains("hotkeys.register(keyCode: key.chord.keyCode, modifiers: key.chord.carbon)"))
-        XCTAssertTrue(code.contains("guard let self, self.stillTrusted() else { return }\n                self.tiling.run(command)"))
+        XCTAssertTrue(code.contains("guard let self, self.stillTrusted() else { return }\n                self.tiling.run(command, pressed: Hotkeys.pressedAt)"))
     }
 }
 

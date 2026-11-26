@@ -73,6 +73,34 @@
         "measured": null,
         "target": "8 windows, from the look to the last frame sent, under 50 ms of our own time"
       },
+      "tile-key": {
+        "p50": 25,
+        "p90": 50,
+        "p99": 100,
+        "measured": null,
+        "target": "R-TS3: a tiling key, from the key down to the last frame asked for, p90 under 50"
+      },
+      "tile-new": {
+        "p50": 80,
+        "p90": 150,
+        "p99": 300,
+        "measured": null,
+        "target": "R-TS3: a new window, from kAXWindowCreated to its frame asked for, p90 under 150"
+      },
+      "tile-close": {
+        "p50": 50,
+        "p90": 100,
+        "p99": 200,
+        "measured": null,
+        "target": "R-TS3: a closed window, from kAXUIElementDestroyed to the others asked for, p90 under 100"
+      },
+      "tile-switch": {
+        "p50": 40,
+        "p90": 80,
+        "p99": 160,
+        "measured": null,
+        "target": "R-TS3: tiling's look after a switch, from the switch asked for, p90 under 80"
+      },
       "launcher-first": {
         "p50": 150,
         "p90": 250,
