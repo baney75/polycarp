@@ -29,8 +29,11 @@ enum RoleOpener {
         switch step {
         case .nothing(let why): return .init(ok: false, error: why)
         case .ask:
-            // After the reply: the question waits for a person.
-            DispatchQueue.main.async { ask(r, resolved) }
+            guard !asking else { return .init(ok: false, error: "Polycarp is already asking which agent to use: answer it on screen") }
+            asking = true
+            // After the reply: the question waits for a person. A run loop turn, not a main-queue block: a modal loop
+            // run inside a main-queue block holds the queue, and everything else on it waits for the answer.
+            RunLoop.main.perform { defer { asking = false }; ask(r, resolved) }
             return .init(ok: true, info: ["role": r.role.rawValue, "did": "asked on screen which agent to use"])
         case .program(let id, let path): run(id, path, r, hooks)
         case .terminalWindow: if let bundle { terminal(bundle, r.folder ?? hooks.folder() ?? NSHomeDirectory(), hooks) }
@@ -112,6 +115,9 @@ enum RoleOpener {
     private static func fail(_ line: String) { Toast.show(line, symbol: "exclamationmark.triangle.fill") }
 
     // MARK: Asking
+
+    /// The question is on screen: one at a time, so two calls never start two agents.
+    private static var asking = false
 
     /// First use, or the chosen one is gone: you choose, it is saved, and it opens.
     private static func ask(_ r: RoleRequest, _ resolved: ResolvedDefault) {
