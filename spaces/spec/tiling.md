@@ -65,6 +65,11 @@ its tile's height. The layout is not changed by either and neither makes a macOS
 asked back, dragged or floated, through other windows' focus, other workspaces, the Dock and restarts. A group is zoomed as
 one, and no strip of tabs is drawn under a zoomed window.
 
+### R-T13 Widths
+A workspace's only window is as wide as the setting says until the person gives it a width of its own, which stays with the
+workspace, in the middle, never past the area and never under the window's minimum; evening out or another setting ends it.
+A kept width is by app and workspace, the app's latest elsewhere. It changes the layout only as a pulled edge does.
+
 ### R-T7 Fast
 From a look to the last frame sent, Polycarp's own time is under 50 ms with 8 windows (`open tile=` in timing.log, budget
 in speed.json), apps are written side by side off the main thread, and a workspace switch takes no longer than without

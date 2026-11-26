@@ -82,6 +82,8 @@ only while a Settings switch is on; Always means it always works there.
 | ⌃⌥M | Give the window the whole area, or put it back | Anywhere | While this workspace tiles |
 | ⌃⌥⇧M | Fill the display with the tile, or put it back | Anywhere | While this workspace tiles |
 | ⌃⌥W | Give the tile the whole width, or put it back | Anywhere | While this workspace tiles |
+| ⌃⌥⇧\ | Keep the window's width for its app | Anywhere | While this workspace tiles |
+| ⌃⌥\ | Give the window the width kept for its app | Anywhere | While this workspace tiles |
 | ⌃⌥G | Make the tile a group of tabs, or take it apart | Anywhere | While this workspace tiles |
 | ⌃⌥⇧⌘←→↑↓ | Move the window into the tile that way, or out of its group | Anywhere | While this workspace tiles |
 | ⌃⌥Tab | Focus the next window of the group | Anywhere | While this workspace tiles |

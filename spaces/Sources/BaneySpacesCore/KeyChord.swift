@@ -118,6 +118,8 @@ public enum TilingKeys {
         add("full", "Give the window the whole area, or put it back", "ctrl+opt+M")
         add("fullscreen", "Fill the display with the tile, or put it back", "ctrl+opt+shift+M")
         add("full-width", "Give the tile the whole width, or put it back", "ctrl+opt+W")
+        add("width-keep", "Keep the window's width for its app", "ctrl+opt+shift+\\")
+        add("width-restore", "Give the window the width kept for its app", "ctrl+opt+\\")
         add("group", "Make the tile a group of tabs, or take it apart", "ctrl+opt+G")
         for d in sides { add("group-" + d.name, "Move the window into the tile " + d.phrase + ", or out of its group", "ctrl+opt+shift+cmd+" + d.key) }
         add("group-next", "Focus the next window of the group", "ctrl+opt+Tab")

@@ -1147,6 +1147,8 @@ const TILING_COMMANDS: &[&str] = &[
     "full",
     "fullscreen",
     "full width",
+    "width keep",
+    "width restore",
     "group",
     "group left",
     "group right",

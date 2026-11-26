@@ -359,6 +359,8 @@ Off until you turn it on: [docs/tiling.md](../../docs/tiling.md).
 | `tiling.keys.full` | `"ctrl+opt+M"` | Give the window the whole area, or put it back. |
 | `tiling.keys.fullscreen` | `"ctrl+opt+shift+M"` | Fill the display with the tile, or put it back. |
 | `tiling.keys.full-width` | `"ctrl+opt+W"` | Give the tile the whole width, or put it back. |
+| `tiling.keys.width-keep` | `"ctrl+opt+shift+\\"` | Keep the window's width for its app. |
+| `tiling.keys.width-restore` | `"ctrl+opt+\\"` | Give the window the width kept for its app. |
 | `tiling.keys.group` | `"ctrl+opt+G"` | Make the tile a group of tabs, or take it apart. |
 | `tiling.keys.group-left` | `"ctrl+opt+shift+cmd+Left"` | Move the window into the tile to the left, or out of its group. |
 | `tiling.keys.group-right` | `"ctrl+opt+shift+cmd+Right"` | Move the window into the tile to the right, or out of its group. |

@@ -47,6 +47,8 @@ The same list with your changes: `polycarp-spaces keys`.
 | ⌃⌥M | Give the window the whole area, or put it back |
 | ⌃⌥⇧M | Fill the display with the tile, or put it back |
 | ⌃⌥W | Give the tile the whole width, or put it back |
+| ⌃⌥⇧\ | Keep the window's width for its app |
+| ⌃⌥\ | Give the window the width kept for its app |
 | ⌃⌥G | Make the tile a group of tabs, or take it apart |
 | ⌃⌥⇧⌘ arrows | Move the window into the tile that way, or out of its group |
 | ⌃⌥Tab and ⌃⌥⇧Tab | Focus the next or previous window of the group |
@@ -72,6 +74,14 @@ The layout treats a group as one window. A tile under 120 points high has no str
 fills the display under the bar, without gaps and without going to a macOS desktop of its own. ⌃⌥W gives a window the whole
 width and leaves it its height. Both last until you press the key again, also while you are in another window or on another
 workspace, and the window's place in the layout is kept. Dragging such a window makes it a tile again.
+
+## Widths
+
+⌃⌥⇧\ keeps the width the window in front has, for its app on this workspace. ⌃⌥\ gives it back to any window of that app
+here: its neighbors make room or take what is left. On a workspace where you kept none, the app's latest one is used.
+
+A workspace's only window can have a width of its own too: ⌃⌥⌘← and ⌃⌥⌘→ make it narrower or wider in the middle of the
+display, and so does pulling an edge. ⌃⌥B gives it the width from Settings again. Both are kept across restarts.
 
 ## Scratchpad
 
