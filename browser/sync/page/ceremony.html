@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polycarp Sync</title>
+<style nonce="__NONCE__">
+:root { color-scheme: light dark; font: 16px/1.5 system-ui, sans-serif; }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: Canvas; color: CanvasText; }
+main { width: min(30rem, 100vw - 3rem); padding: 2rem 0; }
+h1 { font-size: 1.5rem; line-height: 1.25; margin: 0 0 1rem; }
+p { margin: 0 0 1rem; }
+#code { font: 600 2.5rem/1 ui-monospace, monospace; letter-spacing: .1em; margin: 1.5rem 0; }
+button { font: inherit; padding: .6rem 1.2rem; min-height: 44px; margin: .5rem .5rem 0 0; border-radius: .5rem; cursor: pointer; }
+#go { background: LinkText; color: Canvas; border: 1px solid LinkText; }
+#skip { background: none; color: inherit; border: 1px solid GrayText; }
+[hidden] { display: none; }
+</style>
+<main>
+<h1 id="title"></h1>
+<div id="lines"></div>
+<p id="code" hidden></p>
+<button id="go" type="button"></button><button id="skip" type="button" hidden></button>
+<p id="said" role="status" aria-live="polite"></p>
+</main>
+<script type="application/json" id="data" nonce="__NONCE__">__DATA__</script>
+<script nonce="__NONCE__">
+const data = JSON.parse(document.getElementById("data").textContent);
+const el = (id) => document.getElementById(id);
+const say = (text) => { el("said").textContent = text; };
+el("title").textContent = data.words.title;
+for (const line of data.words.lines) {
+  const p = document.createElement("p");
+  p.textContent = line;
+  el("lines").append(p);
+}
+if (data.words.code) { el("code").textContent = data.words.code; el("code").hidden = false; }
+el("go").textContent = data.words.go;
+if (data.words.skip) { el("skip").textContent = data.words.skip; el("skip").hidden = false; }
+const bytes = (text) => Uint8Array.from(atob(text.replaceAll("-", "+").replaceAll("_", "/")), (c) => c.charCodeAt(0));
+const text = (buffer) => btoa(String.fromCharCode(...new Uint8Array(buffer)))
+  .replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+async function send(body) {
+  el("go").disabled = el("skip").disabled = true;
+  const reply = await fetch(data.post, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  const said = await reply.json().catch(() => ({}));
+  el("go").hidden = el("skip").hidden = true;
+  say(said.said ?? "This page was used already. Start again in Polycarp.");
+}
+async function ask() {
+  const { extensions, ...plain } = data.options;
+  const parse = data.register ? "parseCreationOptionsFromJSON" : "parseRequestOptionsFromJSON";
+  const publicKey = PublicKeyCredential[parse](plain);
+  if (extensions?.prf) {
+    const first = extensions.prf.eval?.first;
+    publicKey.extensions = { prf: first ? { eval: { first: bytes(first) } } : {} };
+  }
+  const credential = await navigator.credentials[data.register ? "create" : "get"]({ publicKey });
+  const made = credential.getClientExtensionResults().prf;
+  const answer = credential.toJSON();
+  // A PRF output is a key. It goes back on its own and never inside the answer that is kept as proof.
+  answer.clientExtensionResults = {};
+  return { answer, prf: made?.results?.first ? text(made.results.first) : null, makes_keys: made?.enabled ?? null };
+}
+el("go").onclick = async () => {
+  say("");
+  let body;
+  try {
+    body = await ask();
+  } catch (e) {
+    say(e.name === "InvalidStateError" ? "That passkey is already in use here. Choose another." : "Nothing was sent. You can try again.");
+    return;
+  }
+  await send(body).catch(() => say("Polycarp is no longer waiting. Start again there."));
+};
+el("skip").onclick = () => send({ skip: true }).catch(() => say("Polycarp is no longer waiting. Start again there."));
+</script>
+</html>
