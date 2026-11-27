@@ -31,6 +31,11 @@ pub const FIELDS: &[(&str, bool, &str)] = &[
         "whether apps' status items fold into a drawer",
     ),
     (
+        "bar.batteryPercent",
+        true,
+        "whether the battery shows its charge in digits",
+    ),
+    (
         "desktop.scene",
         true,
         "a drawn scene; an image: names a file of the person's and is dropped",

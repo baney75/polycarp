@@ -136,9 +136,10 @@ struct StatusRow: View {
                 .clipped()
                 .allowsHitTesting(out)
                 .accessibilityHidden(!out)
-            BarButton(width: 20, held: model.trayHeld, label: out ? "Hide apps' status items" : "Show apps' status items",
+            BarButton(width: 18, held: model.trayHeld, label: out ? "Hide apps' status items" : "Show apps' status items",
                       help: "\(apps.count) status items", action: toggle) {
-                Image(systemName: "chevron.left").font(.system(size: 9.5, weight: .semibold))
+                // A step smaller than the symbols beside it and no heavier, so it reads as a control, not an item.
+                Image(systemName: "chevron.left").font(.system(size: 11, weight: .medium))
                     .foregroundStyle(style.ink(out ? Chrome.wash(0.88) : Chrome.muted))
                     .rotationEffect(.degrees(out ? 180 : 0))
             }
@@ -161,16 +162,24 @@ struct StatusRow: View {
 
     private func item(_ i: Int) -> some View {
         let item = model.status.indices.contains(i) ? model.status[i] : BarStatus.Item(owner: "")
-        return BarButton(label: item.name, help: item.name, action: { model.onStatus(i) }) { glyph(item) }
+        // The battery is wider than the slot: it keeps a symbol's room either side, so the gaps stay even.
+        let wide = BarStatus.isBattery(item) && model.charge != nil
+        return BarButton(width: wide ? 0 : CGFloat(BarGeometry.slot), inset: wide ? CGFloat(BarGeometry.glyphSide) : 0,
+                         label: item.name, help: item.name, action: { model.onStatus(i) }) { glyph(item) }
     }
 
     /// macOS's items as symbols and a template icon in the bar's ink; any other app's icon in its own colors, since a
     /// gray one is a smudge at this size.
     @ViewBuilder private func glyph(_ item: BarStatus.Item) -> some View {
         let size = CGFloat(BarGeometry.canvas)
-        if BarStatus.isBattery(item), let c = model.charge {
-            BatteryGlyph(look: BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower, lowPower: c.lowPower),
-                         ink: ink)
+        if BarStatus.isBattery(item), let c = model.charge,
+           let look = BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower, lowPower: c.lowPower) {
+            HStack(spacing: 4) {
+                if model.bar.batteryPercent {
+                    BarWords.text("\(c.percent)%", style).monospacedDigit().foregroundStyle(ink)
+                }
+                BatteryGlyph(look: look, ink: ink, outline: BatteryGlyph.outline(style, wash: 0.88))
+            }
         } else if let symbol = BarStatus.symbol(item, percent: model.charge?.percent, charging: model.charge?.charging ?? false) {
             BarSymbol(name: symbol).foregroundStyle(ink)
         } else if let icon = model.icons[item.owner], icon.isTemplate {

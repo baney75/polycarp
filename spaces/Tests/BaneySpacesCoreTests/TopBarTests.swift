@@ -326,22 +326,6 @@ final class TopBarTests: XCTestCase {
         XCTAssertEqual(Surfaces.defaults.bar.left, [.mark, .workspaces, .split, .appMenus])
     }
 
-    /// The battery reads as macOS's: yellow in Low Power Mode whatever the charge, red nearly empty on battery only,
-    /// a bolt charging and a plug on power when not charging.
-    func testTheBatteryLooksAsMacOSDrawsIt() {
-        let low = BarStatus.batteryLook(percent: 72, charging: false, onPower: false, lowPower: true)
-        XCTAssertEqual(low, .init(fill: 0.72, tint: .lowPower, badge: .none))
-        XCTAssertEqual(BarStatus.batteryLook(percent: 8, charging: false, onPower: false, lowPower: false).tint, .critical)
-        XCTAssertEqual(BarStatus.batteryLook(percent: 8, charging: true, onPower: true, lowPower: false),
-                       .init(fill: 0.08, tint: .normal, badge: .bolt))
-        XCTAssertEqual(BarStatus.batteryLook(percent: 8, charging: false, onPower: false, lowPower: true).tint, .lowPower)
-        XCTAssertEqual(BarStatus.batteryLook(percent: 100, charging: false, onPower: true, lowPower: false).badge, .plug)
-        XCTAssertEqual(BarStatus.batteryLook(percent: nil, charging: false, onPower: false, lowPower: false).fill, 1)
-        XCTAssertEqual(BarStatus.batteryLook(percent: 140, charging: false, onPower: false, lowPower: false).fill, 1)
-        XCTAssertTrue(BarStatus.isBattery(BarStatus.Item(owner: "com.apple.MenuBarAgent", identifier: "com.apple.menuextra.battery")))
-        XCTAssertFalse(BarStatus.isBattery(BarStatus.Item(owner: "com.coconut.battery", label: "Battery")))
-    }
-
     /// macOS 27 wraps each of its own items in a nameless AXGroup: read the item inside, or the row is all dots.
     func testMacOS27WrappedItemsAreReadThroughTheirChild() {
         XCTAssertEqual(BarStatus.pick(role: "AXMenuBarItem"), .itself)

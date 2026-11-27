@@ -9,6 +9,9 @@ public enum BarGeometry {
     public static let canvas = 16.0
     /// A symbol's point size: about 13 of ink in the slot.
     public static let symbol = 13.0
+    /// The room either side of a symbol in its slot (about 17 pt of ink in 27). A glyph wider than the slot (the
+    /// battery) keeps it, so the gaps between status items stay even.
+    public static let glyphSide = 5.0
     /// A title's room either side, inside its face.
     public static let textInset = 6.0
     /// A workspace number's slot, across.

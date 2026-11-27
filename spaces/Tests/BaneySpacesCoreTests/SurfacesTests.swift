@@ -98,7 +98,7 @@ final class SurfacesTests: XCTestCase {
         let sets: [(String, String)] = [
             ("bar.enabled", "true"), ("bar.height", "34"), ("bar.style", "\"glass\""),
             ("bar.modules", #"{"left":["mark","custom:weather"],"center":["hour","verse"],"right":["clock"]}"#),
-            ("bar.clockFormat", "\"24h\""), ("bar.hourNames", "false"), ("bar.tray", "\"row\""),
+            ("bar.clockFormat", "\"24h\""), ("bar.hourNames", "false"), ("bar.tray", "\"row\""), ("bar.batteryPercent", "true"),
             ("desktop.scene", "\"image:dawn-field.heic\""), ("desktop.followDaylight", "false"), ("desktop.verse", "false"),
             ("desktop.versePosition", "\"top-center\""), ("desktop.verseRotation", "\"fixed:1 Corinthians 13:4-7\""),
             ("menu.order", #"["quit","settings"]"#), ("menu.hidden", #"["update","agents"]"#),
@@ -114,7 +114,8 @@ final class SurfacesTests: XCTestCase {
         guard case .document(let d) = SurfacesFile.load(path: file) else { return XCTFail("the file reads back") }
         let s = d.surfaces
         XCTAssertEqual(s.bar, .init(enabled: true, height: 34, style: .glass, left: [.mark, .custom("weather")], center: [.hour, .verse],
-                                    right: [.clock], clockFormat: .twentyFourHour, hourNames: false, tray: .row))
+                                    right: [.clock], clockFormat: .twentyFourHour, hourNames: false, tray: .row,
+                                    batteryPercent: true))
         XCTAssertEqual(s.desktop, .init(scene: .image("dawn-field.heic"), followDaylight: false, verse: false, versePosition: .topCenter,
                                         verseRotation: .fixed("1 Corinthians 13:4-7")))
         XCTAssertEqual(s.menu.rows, [.quit, .settings, .workspaces, .showAll, .find], "left-out rows follow; hidden ones go")

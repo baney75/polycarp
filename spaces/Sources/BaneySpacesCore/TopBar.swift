@@ -296,9 +296,10 @@ public enum BarStatus {
         return !barTops.contains { y >= $0 - 2 && y < $0 + 50 }
     }
 
-    /// How the battery glyph is drawn, as macOS draws its own: filled to the charge, yellow in Low Power Mode, red when
-    /// nearly empty on battery, a bolt while charging and a plug on power but not charging (a full battery, or one held
-    /// back by Optimized Charging).
+    /// How the battery glyph is drawn (`BatteryGlyphSpec` has its measures): filled to the charge in the bar's ink, the
+    /// theme's `working` in Low Power Mode, `urgent` at 10% or below on battery, a bolt while charging and a plug on
+    /// power but not charging (a full battery, or one held back by Optimized Charging). Charging never tints the fill,
+    /// Low Power Mode included, so a charging battery always reads as a gauge in ink.
     public struct BatteryLook: Equatable, Sendable {
         public enum Tint: Equatable, Sendable { case normal, lowPower, critical }
         public enum Badge: Equatable, Sendable { case none, bolt, plug }
@@ -311,11 +312,16 @@ public enum BarStatus {
             self.tint = tint
             self.badge = badge
         }
+
+        /// The fill's width in points.
+        public var fillWidth: Double { BatteryGlyphSpec.fillWidth(fill) }
     }
 
-    public static func batteryLook(percent: Int?, charging: Bool, onPower: Bool, lowPower: Bool) -> BatteryLook {
-        let fill = percent.map { min(1, max(0, Double($0) / 100)) } ?? 1
-        let tint: BatteryLook.Tint = lowPower ? .lowPower : ((percent ?? 100) <= 10 && !onPower && !charging ? .critical : .normal)
+    /// The battery's look, or nil with no battery (a desktop Mac), where the battery hides.
+    public static func batteryLook(percent: Int?, charging: Bool, onPower: Bool, lowPower: Bool) -> BatteryLook? {
+        guard let percent else { return nil }
+        let fill = min(1, max(0, Double(percent) / 100))
+        let tint: BatteryLook.Tint = charging ? .normal : lowPower ? .lowPower : (percent <= 10 && !onPower ? .critical : .normal)
         let badge: BatteryLook.Badge = charging ? .bolt : (onPower ? .plug : .none)
         return BatteryLook(fill: fill, tint: tint, badge: badge)
     }

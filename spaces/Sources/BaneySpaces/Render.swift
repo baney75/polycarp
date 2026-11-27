@@ -53,10 +53,11 @@ enum Render {
         // Drawn by AppKit in an offscreen window (never shown), so colors match the live app.
         // BANEYSPACES_RENDER_ONLY=<prefix> draws only the images whose names start with it.
         let only = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_ONLY"] ?? ""
-        func save(_ view: some View, _ name: String, _ size: CGSize) -> Bool {
+        func save(_ view: some View, _ name: String, _ size: CGSize, scale: CGFloat? = nil) -> Bool {
             guard name.hasPrefix(only) else { return true }
             let height: CGFloat? = size.height == 0 ? nil : size.height
             let framed = view.frame(width: size.width, height: height).environment(\.colorScheme, Chrome.scheme).environment(\.controlActiveState, .key)
+                .transformEnvironment(\.displayScale) { if let scale { $0 = scale } }
             let host = NSHostingView(rootView: framed)
             // Height 0 means "as tall as the content".
             let size = size.height == 0 ? CGSize(width: size.width, height: host.fittingSize.height) : size
@@ -67,7 +68,14 @@ enum Render {
             host.frame = NSRect(origin: .zero, size: size)
             host.layoutSubtreeIfNeeded()
             RunLoop.current.run(until: Date().addingTimeInterval(0.3))
-            guard let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+            // `scale` draws at that many pixels a point, whatever the screen's own (1x and 2x checks of thin lines).
+            let made = scale.flatMap { k in
+                NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(size.width * k), pixelsHigh: Int(size.height * k),
+                                 bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,
+                                 bytesPerRow: 0, bitsPerPixel: 0)
+            }
+            made?.size = size
+            guard let rep = made ?? host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
             host.cacheDisplay(in: host.bounds, to: rep)
             let png = rep.representation(using: .png, properties: [:])
             return (try? png?.write(to: folder.appendingPathComponent(name))) != nil
@@ -250,6 +258,52 @@ enum Render {
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: nil).background(Color(white: 0.35)), "topbar-arrange.png", CGSize(width: 1512, height: 26)) else { return 1 }
             guard save(TopBarView(model: topBar, display: id, screen: screen, sides: (left: 656, right: 656)).background(Color(white: 0.35)), "topbar-arrange-notch.png", CGSize(width: 1512, height: 37)) else { return 1 }
             topBar.arranging = false
+        }
+
+        // The right of the bar for each battery case, at 1x and 2x, under SF Symbols' own battery at the bar's size:
+        // the tray's chevron, Now Playing, Wi-Fi, the battery, Control Center, the bell and the date.
+        if let screen = NSScreen.main, let id = screen.displayID {
+            let cases: [(Int, Bool, Bool, Bool, Bool)] = [ // percent, charging, on power, Low Power, percent shown
+                (100, false, false, false, false), (50, false, false, false, false), (5, false, false, false, false),
+                (72, false, false, true, false), (80, true, true, true, false), (100, false, true, false, false),
+                (82, false, false, false, true),
+            ]
+            let rows = cases.map { c -> TopBarModel in
+                let m = TopBarModel()
+                m.now = topBar.now
+                m.bar.left = []
+                m.bar.center = []
+                m.bar.right = [.status, .split, .notifications, .split, .date]
+                m.bar.batteryPercent = c.4
+                m.charge = .init(percent: c.0, charging: c.1, onPower: c.2, lowPower: c.3)
+                m.battery = BarText.battery(percent: c.0, charging: c.1, onPower: c.2) ?? ""
+                for (i, path) in ["/System/Applications/Music.app", "/System/Applications/Notes.app"].enumerated() {
+                    m.icons["sample.\(i)"] = icon(path)
+                }
+                m.status = (0..<2).map { BarStatus.Item(owner: "sample.\($0)", label: "App \($0)") }
+                    + [("nowplaying", "Now Playing"), ("wifi", "Wi-Fi"), ("battery", "Battery"), ("controlcenter", "Control Center")]
+                    .map { BarStatus.Item(owner: "com.apple.controlcenter", identifier: "com.apple.menuextra." + $0.0, label: $0.1) }
+                return m
+            }
+            let sheet = VStack(alignment: .trailing, spacing: 4) {
+                HStack(spacing: 10) {
+                    Image(systemName: "battery.100percent").font(.system(size: CGFloat(BarGeometry.symbol), weight: .medium))
+                    Image(systemName: "battery.50percent").font(.system(size: CGFloat(BarGeometry.symbol), weight: .medium))
+                    Image(systemName: "battery.100percent.bolt").font(.system(size: CGFloat(BarGeometry.symbol), weight: .medium))
+                }
+                .foregroundStyle(Chrome.wash(0.88))
+                .frame(height: 22)
+                .padding(.horizontal, 12)
+                .background(Chrome.panel(0.94), in: Chrome.shape(.overviewChip))
+                ForEach(rows.indices, id: \.self) { i in
+                    TopBarView(model: rows[i], display: id, screen: screen, sides: nil).frame(width: 760, height: 26)
+                }
+            }
+            .padding(8)
+            .background(Color(white: 0.35))
+            for k in [1.0, 2.0] {
+                guard save(sheet, "battery-\(Int(k))x.png", CGSize(width: 776, height: 22 + 4 + Double(rows.count) * 30 + 16), scale: k) else { return 1 }
+            }
         }
 
         // The bar's `page` module: a page with its icon, one playing elsewhere and a download.
