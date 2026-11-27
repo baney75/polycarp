@@ -28,6 +28,9 @@ final class Tiling {
     /// Each close and move, until its writes stop (spec/tiling-speed.md R-TS10).
     var actions = TileActions()
     private var flush: Timer?
+    /// R-TS13: each app's windows when its `new` cause came, and the trace line each skipped new window last had.
+    private var newBefore: [pid_t: Set<WindowID>] = [:]
+    private var skips: [String: String] = [:]
     private var placed: Set<WindowID> = []
     private var writes = TilingWrites()
     private var watching = false
@@ -118,7 +121,7 @@ final class Tiling {
         let moves = engine.plan(shot)
         spaces.stowed = engine.stowed
         for (old, new) in engine.swaps { spaces.model.tab(old, became: new) }
-        waitForLate(facts, Set(view.shown.keys))
+        let late = waitForLate(facts, Set(view.shown.keys))
         let at = Dictionary(facts.map { ($0.id, $0.workspace) }, uniquingKeysWith: { a, _ in a })
         forget(facts)
         saveSoon()
@@ -127,6 +130,7 @@ final class Tiling {
         let (later, go) = (moves.filter { silent[$0.id].map { $0 > now } ?? false }, moves.filter { silent[$0.id].map { $0 <= now } ?? true })
         for m in later { engine.touched(m.id) }
         causes.looked(shown: Set(view.shown.keys), wrote: go.map { TileCauses.Wrote(pid: $0.pid, workspace: at[$0.id] ?? 0, new: false) })
+        traceSkips(facts, Set(view.shown.keys), wrote: Set(go.map(\.id)), waiting: late, now: now)
         guard !go.isEmpty else { return }
         let answered = causes.answer(now: looked, wrote: go.map { TileCauses.Wrote(pid: $0.pid, workspace: at[$0.id] ?? 0, new: !placed.contains($0.id)) })
         placed.formUnion(go.map(\.id))
@@ -134,7 +138,30 @@ final class Tiling {
     }
 
     /// A cause a look will answer (spec/tiling-speed.md R-TS2).
-    func cause(_ c: TileCauses.Cause) { causes.add(c) }
+    func cause(_ c: TileCauses.Cause) {
+        if c.kind == .new, let pid = c.pid, !causes.waitsForNew(pid: pid, now: c.at) {
+            newBefore[pid] = Set(facts.values.filter { $0.pid == pid }.map(\.id))
+        }
+        causes.add(c)
+    }
+
+    /// R-TS13: a trace line for each window of a pending `new` cause this look wrote no frame for, when its reason changed.
+    private func traceSkips(_ facts: [TilingFacts], _ shown: Set<Int>, wrote: Set<WindowID>, waiting: Set<WindowID>, now: Date) {
+        let at = Self.uptime
+        let pids = Set(causes.pending.compactMap { $0.kind == .new ? $0.pid : nil }).filter { causes.waitsForNew(pid: $0, now: at) }
+        var seen: [String: String] = [:]
+        for pid in pids {
+            let fresh = facts.filter { $0.pid == pid && newBefore[pid]?.contains($0.id) != true && !placed.contains($0.id) }
+            if fresh.isEmpty { seen["\(pid)"] = "id=- pid=\(pid) why=not-in-model" }
+            for f in fresh where !wrote.contains(f.id) {
+                let why = TilingRead.skipped(f, shown: shown, silent: silent[f.id].map { $0 > now } ?? false, waited: waiting.contains(f.id))
+                seen["\(pid) \(f.id)"] = "id=\(f.id) pid=\(pid) why=\(why)"
+            }
+        }
+        for (key, line) in seen where skips[key] != line { Trace.log("tile new skip \(line)") }
+        skips = seen
+        newBefore = newBefore.filter { pids.contains($0.key) }
+    }
 
     static var uptime: Double { ProcessInfo.processInfo.systemUptime }
 
@@ -250,12 +277,17 @@ final class Tiling {
         bundles = bundles.filter { pids.contains($0.key) }
     }
 
-    /// A window just opened may not be drawn yet, and no event says when it is.
-    private func waitForLate(_ facts: [TilingFacts], _ shown: Set<Int>) {
-        let late = TilingRead.late(facts, shown: shown, known: { waits[$0, default: 0] >= 4 })
-        guard !late.isEmpty else { return }
+    /// A window just opened may not be drawn yet, and no event says when it is. Four looks wait for it, or every look
+    /// while its app's `new` cause is pending (R-TS13). The windows still waited for.
+    private func waitForLate(_ facts: [TilingFacts], _ shown: Set<Int>) -> Set<WindowID> {
+        let at = Self.uptime, pids = Dictionary(facts.map { ($0.id, $0.pid) }, uniquingKeysWith: { a, _ in a })
+        let late = TilingRead.late(facts, shown: shown, known: { id in
+            !causes.keepsWaiting(pid: pids[id] ?? 0, looks: waits[id, default: 0], now: at)
+        })
+        guard !late.isEmpty else { return late }
         for id in late { waits[id, default: 0] += 1 }
         lookSoon(0.1)
+        return late
     }
 
     // MARK: Asking and writing, off the main thread

@@ -83,4 +83,13 @@ public enum TilingRead {
     public static func late(_ facts: [TilingFacts], shown: Set<Int>, known: (WindowID) -> Bool) -> Set<WindowID> {
         Set(facts.filter { shown.contains($0.workspace) && !$0.onScreen && !$0.minimized && !$0.parked && !known($0.id) }.map(\.id))
     }
+
+    /// R-TS13: why a look wrote no frame for a window whose app's `new` cause is pending. `waited` is whether the look
+    /// still waits for it to be drawn, `silent` whether its app didn't answer and is asked later.
+    public static func skipped(_ f: TilingFacts, shown: Set<Int>, silent: Bool, waited: Bool) -> String {
+        if !shown.contains(f.workspace) || f.parked || f.minimized { return "out-of-sight" }
+        if silent || f.answer == nil && f.onScreen { return "silent" }
+        if !f.onScreen { return waited ? "not-on-screen" : "wait-ended" }
+        return "not-planned"
+    }
 }

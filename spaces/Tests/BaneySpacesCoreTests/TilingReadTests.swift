@@ -89,6 +89,18 @@ final class TilingReadTests: XCTestCase {
         XCTAssertEqual(late(window(1) { $0.onScreen = false; $0.minimized = true }), [])
         XCTAssertEqual(late(window(1) { $0.onScreen = false; $0.parked = true }), [])
     }
+
+    /// R-TS13 case 72: the reason a skipped new window's trace line gives.
+    func testCase72ASkippedNewWindowSaysWhy() {
+        let why = { (f: TilingFacts, silent: Bool, waited: Bool) in TilingRead.skipped(f, shown: [1], silent: silent, waited: waited) }
+        XCTAssertEqual(why(window(1, on: 2), false, false), "out-of-sight")
+        XCTAssertEqual(why(window(1) { $0.parked = true }, false, false), "out-of-sight")
+        XCTAssertEqual(why(window(1), true, false), "silent")
+        XCTAssertEqual(why(window(1) { $0.answer = nil }, false, false), "silent")
+        XCTAssertEqual(why(window(1) { $0.onScreen = false; $0.answer = nil }, false, true), "not-on-screen")
+        XCTAssertEqual(why(window(1) { $0.onScreen = false }, false, false), "wait-ended")
+        XCTAssertEqual(why(window(1), false, false), "not-planned")
+    }
 }
 
 final class WriteGateTests: XCTestCase {

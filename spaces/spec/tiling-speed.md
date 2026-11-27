@@ -177,6 +177,26 @@ so the probe tiles there, off every display, with windows of its own.
     refusal. `--json` prints the result's JSON.
 13. The agent workspace never tiles outside a probe.
 
+### R-TS13 A new window not drawn yet is waited for while its note is pending
+Donovan's timing.log, 2026-11-26: four `tile=new` lines from 725 to 2865 ms, three of them answered by the look of a
+close or a switch that came later. The window was in the model; the looks after its scan wrote nothing for it, and
+`waitForLate` stopped looking after 4 looks, about 0.3 s. When the app drew the window later, nothing looked again.
+
+1. A window that is not drawn yet on a workspace in sight is looked at again 0.1 s later (`lookSoon`), for 4 looks
+   (`TileCauses.lateLooks`). While a `new` cause of its app is pending (R-TS2, younger than `TileCauses.keep`), the
+   count does not end the wait (`TileCauses.keepsWaiting`). The wait ends when the window is drawn and tiled, or the
+   cause is answered or expires. No look waits sooner than `lookSoon` paces it.
+2. Each look that writes no frame for a window of an app whose `new` cause is pending, and that the app didn't have
+   when the cause came, writes one trace.log line when the reason changes:
+
+       tile new skip id=<id> pid=<pid> why=<not-in-model|not-on-screen|wait-ended|silent|out-of-sight|not-planned>
+
+   `not-in-model` is an app with no such window in the model yet, with `id=-`. `out-of-sight`: its workspace isn't
+   shown, or it is parked or minimized. `silent`: its app didn't answer and is asked later. `not-on-screen`: not drawn,
+   still waited for. `wait-ended`: not drawn, no longer waited for. `not-planned`: the plan asked nothing of it
+   (`TilingRead.skipped`). Nothing else is written.
+3. Waiting writes no frame: R-TS9 holds.
+
 ## Measuring
 
 - In real use: the `tile=` lines in timing.log, read by `scripts/speed-report.sh`.
@@ -257,4 +277,9 @@ Each row is a test; the test names it.
 | 65 | R-TS2 | a `switch` to 2 at 10.0, then one to 3 at 10.4; a look writes on 3 | only the switch to 3 answered; none pending |
 | 66 | R-TS2 | a `switch` to 3 and a `close` on 3; a look with 3 in sight writes nothing; a later look writes on 3 | the switch leaves with no line; the later look answers the close alone |
 | 67 | R-TS2 | a `switch` to 3; a look with only 1 in sight writes nothing | the switch stays; the next look writing on 3 answers it |
+| 68 | R-TS13.1 | a window not drawn at look 5; its app's `new` cause 1 s old | still waited for |
+| 69 | R-TS13.1 | the same at 3.1 s | the wait ends |
+| 70 | R-TS13.1 | no pending `new` cause of its app (none, another app's, a close) | waited for at look 3, not at look 4 |
+| 71 | R-TS13.1 | its app's `new` cause answered | the wait ends at look 5 |
+| 72 | R-TS13.2 | a skipped new window: on workspace 2, parked, silent, unanswered, undrawn and waited for, undrawn and not, drawn | `out-of-sight`, `out-of-sight`, `silent`, `silent`, `not-on-screen`, `wait-ended`, `not-planned` |
 Cases 21, 22 and 24 to 30 have no safe pure test: they are wiring tests that read `Spaces.swift`, plus the probe live.

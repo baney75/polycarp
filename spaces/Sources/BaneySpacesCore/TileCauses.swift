@@ -77,6 +77,19 @@ public struct TileCauses: Equatable, Sendable {
         return answered
     }
 
+    /// How many looks wait for a window not drawn yet when no `new` cause of its app is pending.
+    public static let lateLooks = 4
+
+    /// Whether a `new` cause of `pid` is pending at `now`, younger than `keep`.
+    public func waitsForNew(pid: Int32, now: Double) -> Bool {
+        pending.contains { $0.kind == .new && $0.pid == pid && now - $0.at <= Self.keep }
+    }
+
+    /// R-TS13: whether a look waits again for a window of `pid` not drawn yet, after `looks` looks waited for it.
+    public func keepsWaiting(pid: Int32, looks: Int, now: Double) -> Bool {
+        looks < Self.lateLooks || waitsForNew(pid: pid, now: now)
+    }
+
     /// `1795726000 tile=key looked=4 asked=21 landed=140 moves=3`, each mark in ms from the cause; `landed=-` when the
     /// settle never reported.
     public static func line(epoch: Int, _ c: Cause, looked: Double, asked: Double, landed: Double?, moves: Int) -> String {
