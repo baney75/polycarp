@@ -2191,7 +2191,8 @@ final class Spaces {
         let parkedApps = parkedPids()
         // An app whose window a switch held for a workspace not shown goes out of sight with that workspace.
         let heldAway = Set(pendingLayout.values.filter { heldWindows.contains($0.window) && !model.isShown($0.workspace) }.map(\.pid))
-        let how = Concealment(plan: plan, owner: windows.mapValues(\.pid), alsoShown: waiting, neverHidden: parkedApps,
+        let how = Concealment(plan: plan, owner: TilingProbe.switchOwners(windows.mapValues(\.pid), probe: probe?.pids ?? []),
+                              alsoShown: waiting, neverHidden: parkedApps,
                               alsoHidden: heldAway)
         // One tiling keeps in the corner stays there.
         for id in plan.show where stowed[id] != nil { saved.frames[id] = nil }
@@ -2361,8 +2362,7 @@ final class Spaces {
         // Apps with a window here parked theirs already (`parkAlongside`).
         // On a native full-screen Space the window server lists only that Space, so "not listed" says nothing about a window.
         let inSight: Set<WindowID>? = DockSpaces.current().unsafe ? nil : Windows.onScreenIDs()
-        // A probe's helpers stay in its area off screen (spec/tiling-speed.md R-TS12): never parked.
-        let there = how.park.compactMap { windows[$0] }.filter { !how.showApps.contains($0.pid) && probe?.pids.contains($0.pid) != true }.filter { w in
+        let there = how.park.compactMap { windows[$0] }.filter { !how.showApps.contains($0.pid) }.filter { w in
             // Hidden by its own app (a tool's reused window): nothing to park, and a record would say Polycarp put it away.
             saved.frames[w.id] != nil || saved.hiddenApps.contains(w.pid) || (inSight?.contains(w.id) ?? true)
                 || (NSRunningApplication(processIdentifier: w.pid)?.isHidden ?? false)

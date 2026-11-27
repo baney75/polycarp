@@ -136,6 +136,12 @@ public enum TilingProbe {
         return Dictionary(added.filter { probe.contains($0.pid) }.map { ($0.id, agent) }, uniquingKeysWith: { a, _ in a })
     }
 
+    /// R-TS12.7: the window owners a switch's `Concealment` is built from. A probe helper's windows are left out, so a
+    /// switch neither hides the helper nor parks them: they stay in the probe area.
+    public static func switchOwners(_ owner: [WindowID: Int32], probe: Set<Int32>) -> [WindowID: Int32] {
+        probe.isEmpty ? owner : owner.filter { !probe.contains($0.value) }
+    }
+
     // MARK: The numbers
 
     public enum Kind: String, CaseIterable, Codable, Sendable {

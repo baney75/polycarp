@@ -153,7 +153,7 @@ final class TilingProbeRun {
         case .wrote(let ids):
             for id in ids where opened.contains(id) { writes[id, default: 0] += 1 }
             return false
-        case .timed(let c, _, _): mine = ours.contains(c.at)
+        case .timed(let c, _, _): mine = ours.contains(c.at) || c.pid.map { spaces.probe?.pids.contains($0) == true } == true
         case .action(let a): mine = a.workspace == session?.workspace
         }
         guard let w = waiting else { return mine }

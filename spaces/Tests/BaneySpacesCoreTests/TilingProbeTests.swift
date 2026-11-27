@@ -214,4 +214,18 @@ final class TilingProbeTests: XCTestCase {
         XCTAssertEqual(close?.writes, 2)
         XCTAssertEqual(TilingProbe.code(TilingProbe.stats(samples)), 1)
     }
+
+    func testCase62ASwitchNeitherHidesNorParksTheProbeHelper() {
+        // Helper pid 77 owns 5 and 6 on the agent workspace; his app 40 owns 1 (hidden), app 41 owns 2 (shown).
+        let owner: [WindowID: Int32] = [1: 40, 2: 41, 5: 77, 6: 77]
+        let plan = SwitchPlan(hide: [1, 5, 6], show: [2], focus: 2)
+        let how = Concealment(plan: plan, owner: TilingProbe.switchOwners(owner, probe: [77]))
+        XCTAssertFalse(how.hideApps.contains(77))
+        XCTAssertFalse(how.park.contains(5))
+        XCTAssertFalse(how.park.contains(6))
+        XCTAssertTrue(how.hideApps.contains(40))
+        // Without the probe, the helper would be hidden like any app with nothing here.
+        XCTAssertTrue(Concealment(plan: plan, owner: owner).hideApps.contains(77))
+        XCTAssertEqual(TilingProbe.switchOwners(owner, probe: []), owner)
+    }
 }
