@@ -3,19 +3,21 @@
 //! nothing from the release is run. The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
-
-// One copy of the listing code serves the Mac and Windows, so a test build loads it twice on purpose. Windows does
-// not read every field.
+// One copy of the listing code serves the Mac, Windows and Linux, so a test build loads it more than once on purpose.
+// Windows does not read every field.
 #[allow(clippy::duplicate_mod)]
 #[allow(dead_code)]
 #[path = "browser/listing.rs"]
 mod listing;
+// What Windows and Linux share, loaded the same way.
+#[allow(clippy::duplicate_mod)]
+#[path = "browser/dry.rs"]
+mod dry;
 
+use dry::{is_link, refuse, relative, Refused};
 use listing::Release;
 
 #[cfg(windows)]
@@ -24,80 +26,19 @@ const DOWNLOADS: &str = "https://github.com/imputnet/helium-windows/releases/dow
 /// Helium's signer, as `X509Certificate2.Subject` spells it. The leaf certificate rotates, so the subject is
 /// pinned, never a thumbprint, and it must match whole.
 const SIGNER: &str = "CN=imput LLC, O=imput LLC, L=Sheridan, S=Wyoming, C=US";
-/// The browser's first words, the same as the Mac's.
-const VERBS: [&str; 7] = [
-    "install",
-    "update",
-    "status",
-    "open",
-    "import",
-    "uninstall",
-    "finish",
-];
 const ONLY: &str = "polycarp browser: only `install --dry-run` works on Windows so far.";
-
-/// Why nothing was installed: the check that failed, and what it found.
-#[derive(Debug, PartialEq)]
-pub struct Refused {
-    pub check: &'static str,
-    pub why: String,
-}
-
-impl Refused {
-    fn new(check: &'static str, why: impl Into<String>) -> Refused {
-        Refused {
-            check,
-            why: why.into(),
-        }
-    }
-}
-
-fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error) -> Refused + 'a {
-    move |e| Refused::new(check, format!("{doing}: {e}"))
-}
 
 /// None when these arguments are not a browser command.
 pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> Option<i32> {
-    let verb = args.first().map_or(Some("--help"), |a| a.to_str())?;
-    if ["--help", "-h", "help"].contains(&verb) {
-        println!("{ONLY}");
-        return Some(0);
-    }
-    if !VERBS.contains(&verb) {
-        return None;
-    }
-    if verb != "install" || args.len() != 2 || args[1] != "--dry-run" {
-        eprintln!("{ONLY}");
-        return Some(2);
-    }
-    let (Some(_), Some(cache)) = (home, cache) else {
-        eprintln!("polycarp browser: no home folder");
-        return Some(1);
-    };
-    #[cfg(windows)]
-    let done = dry_run(&cache.join("browser"));
-    #[cfg(not(windows))]
-    let done = Err(Refused::new(
-        "system",
-        format!("{} is not Windows", cache.display()),
-    ));
-    Some(print(done))
+    dry::run(args, home, cache, ONLY, dry_run)
 }
 
-fn print(done: Result<String, Refused>) -> i32 {
-    match done {
-        Ok(line) => {
-            println!("{line}");
-            0
-        }
-        Err(r) => {
-            eprintln!(
-                "polycarp browser: the {} check failed: {}. Nothing was installed.",
-                r.check, r.why
-            );
-            1
-        }
-    }
+#[cfg(not(windows))]
+fn dry_run(dir: &Path) -> Result<String, Refused> {
+    Err(Refused::new(
+        "system",
+        format!("{} is not Windows", dir.display()),
+    ))
 }
 
 /// Helium's name for this processor.
@@ -114,61 +55,14 @@ fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
     listing::parse(json, DOWNLOADS, name).map_err(|why| Refused::new("release", why))
 }
 
-/// The zip with the release's own digest, downloaded by `download` unless the folder already has it.
+/// The zip with the release's own digest; zips of other releases, and halves of them, are removed.
 fn fetch(
     release: &Release,
     dir: &Path,
     download: &dyn Fn(&Path) -> Result<(), Refused>,
 ) -> Result<PathBuf, Refused> {
-    let zip = dir.join(&release.name);
-    if !digest(&zip).is_ok_and(|d| d == release.sha256) {
-        let part = dir.join(format!("{}.part", release.name));
-        let _ = fs::remove_file(&part);
-        download(&part)?;
-        let got = digest(&part).map_err(refuse("digest", "reading the download"))?;
-        if got != release.sha256 {
-            let _ = fs::remove_file(&part);
-            let why = format!("{} does not match the release's sha256", release.name);
-            return Err(Refused::new("digest", why));
-        }
-        fs::rename(&part, &zip).map_err(refuse("download", "keeping it"))?;
-    }
-    // Zips of other releases, and halves of them.
-    for other in fs::read_dir(dir).into_iter().flatten().flatten() {
-        let name = other.file_name().to_string_lossy().into_owned();
-        if name.starts_with("helium_") && name.contains(".zip") && name != release.name {
-            let _ = fs::remove_file(other.path());
-        }
-    }
-    Ok(zip)
-}
-
-fn digest(path: &Path) -> io::Result<String> {
-    if !fs::symlink_metadata(path)?.is_file() {
-        return Err(io::Error::other("not a plain file"));
-    }
-    let mut file = File::open(path)?;
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0; 1 << 20];
-    loop {
-        let n = file.read(&mut buffer)?;
-        if n == 0 {
-            return Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect());
-        }
-        hash.update(&buffer[..n]);
-    }
-}
-
-/// A link, or on Windows any reparse point such as a junction.
-fn is_link(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    meta.file_type().is_symlink()
+    let old = |name: &str| name.starts_with("helium_") && name.contains(".zip");
+    dry::fetch(release, dir, download, &old)
 }
 
 /// The unpacked folder, when the work folder holds exactly Helium's one folder with its program and manifest.
@@ -222,13 +116,6 @@ fn programs(root: &Path) -> Result<Vec<PathBuf>, Refused> {
         }
     }
     Ok(found)
-}
-
-fn relative(root: &Path, path: &Path) -> String {
-    path.strip_prefix(root)
-        .unwrap_or(path)
-        .display()
-        .to_string()
 }
 
 /// A path inside the release as both sides spell it: Windows ignores case, and either slash may separate.
@@ -469,6 +356,9 @@ use system::dry_run;
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "macos")]
+    use dry::VERBS;
+    use sha2::{Digest, Sha256};
 
     const VERSION: &str = "0.22.5.1";
 
