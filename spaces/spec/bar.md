@@ -17,7 +17,8 @@ it may the appearance settings, and the `set` is logged with who asked.
 ## What it shows
 
 - **Workspaces** (left): every workspace with at least one of your windows, and the one this display shows, in number
-  order (`bar::workspaces`, macOS `BarLayout.dots`). A display showing none of the nine adds nothing. An agent's
+  order (`bar::workspaces`, macOS `BarLayout.dots`). On macOS 1 to 5 always show, as Omarchy's bar does, and an
+  empty one is drawn at half opacity (`BarWorkspaces.shown`). A display showing none of the nine adds nothing. An agent's
   windows never count. Click one to go there: the click runs the same switch the workspace key runs, asked from this
   display (`switch n --monitor <this display>`, R-S7 in [workspaces.md](workspaces.md)), so the workspace comes to
   this display or you go to the display that shows it, whichever display you were on before the click.

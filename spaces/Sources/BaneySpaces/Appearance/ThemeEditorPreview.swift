@@ -47,7 +47,7 @@ struct ThemeEditorPreview: View {
 
     // MARK: Surfaces
 
-    /// The top bar's workspaces (`TopBarView.numbers`), in the theme's own font: workspaces 1, 2 and 4 with windows, 2 the one you're
+    /// The top bar's workspaces (`TopBarView.numbers`), in the theme's own font: workspaces 1 to 5, 1 and 4 with windows, 2 the one you're
     /// on, marked as the theme marks it (`BarWorkspaces.marker`: an accent line, or an accent block for `number-block`),
     /// the others muted, and the hour on the right, over the theme's background with its edge below.
     private var topBar: some View {
