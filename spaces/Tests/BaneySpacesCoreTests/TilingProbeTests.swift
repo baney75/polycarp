@@ -50,6 +50,10 @@ final class TilingProbeTests: XCTestCase {
         XCTAssertTrue(reloaded.tiles(9))
         XCTAssertFalse(TilingOptions(Surfaces.defaults.tiling, agentWorkspace: 9).probing)
         XCTAssertFalse(options().reloaded(Surfaces.defaults.tiling, agentWorkspace: 9).probing)
+        // The agent workspace moved to 4 mid-probe: the reload never tiles 4, not even until the session sees it.
+        let moved = options(probing: true).reloaded(Surfaces.defaults.tiling, agentWorkspace: 4)
+        XCTAssertFalse(moved.probing)
+        XCTAssertFalse(moved.tiles(4))
     }
 
     func testCase45TileOnAndToggleOfTheAgentWorkspaceAreRefusedDuringAProbe() {

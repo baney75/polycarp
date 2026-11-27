@@ -123,7 +123,7 @@ so the probe tiles there, off every display, with windows of its own.
    Polycarp isn't placing windows.
 3. While a probe runs, and only then, `tiles(agent workspace)` is true (`TilingOptions.probing`). No settings key sets
    it: `TilingOptions(_:agentWorkspace:)` never does, and a settings reload during a probe keeps it
-   (`TilingOptions.reloaded`). The Settings row for the agent workspace stays disabled, and `tile on` and
+   (`TilingOptions.reloaded`) while the agent workspace stays the same number, and drops it if that number changed. The Settings row for the agent workspace stays disabled, and `tile on` and
    `tile toggle` of it still answer "the agent workspace never tiles" (`refusesTurning`).
 4. The probe's area is `TilingProbe.area(screens:usable:)`: the size of the main display's tiling area as TilingView
    takes it, its right edge 2000 pt left of the leftmost display, its top at that area's top. In the window server's

@@ -198,10 +198,11 @@ public enum TilingProbe {
 }
 
 extension TilingOptions {
-    /// R-TS12.3: settings read again keep a probe that runs. No settings key turns one on.
+    /// R-TS12.3: settings read again keep a probe that runs, on the same agent workspace only. No settings key turns
+    /// one on.
     public func reloaded(_ s: Surfaces.Tiling, agentWorkspace: Int?) -> TilingOptions {
         var o = TilingOptions(s, agentWorkspace: agentWorkspace)
-        o.probing = probing
+        o.probing = probing && agentWorkspace == self.agentWorkspace
         return o
     }
 
