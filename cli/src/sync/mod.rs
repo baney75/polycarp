@@ -5,6 +5,7 @@ pub mod auto;
 pub mod cmd;
 pub mod crypto;
 pub mod model;
+pub mod prefs;
 pub mod relay;
 pub mod settings;
 pub mod store;

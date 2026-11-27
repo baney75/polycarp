@@ -7,8 +7,9 @@ What syncs today:
 - The workspace and bar settings in `surfaces.json`.
 - `config.toml`: keys, hotkeys, appearance and the rest of it. A change keeps your comments and spacing.
 - Your themes in `themes/` and `style.css`.
+- The Settings window's preferences: the modifier, Overview and Cmd-Tab choices, the launcher and quick terminal keys, which agent answers questions, the daily update check and the apps hidden by parking. A synced preference takes effect the next time Polycarp starts. Machine-only preferences, such as the login item, update state and privacy choices like letting agents see your tabs or remote control, stay on each device; both lists are in `cli/src/sync/prefs.rs`. On Windows and Linux they are kept in the sync folder and passed back unchanged.
 
-Not yet: the Settings window's own preferences, a run every few minutes, and the browser (cookies, bookmarks, extensions and its settings). They come in later steps.
+Not yet: a run every few minutes, and the browser (cookies, bookmarks, extensions and its settings). They come in later steps.
 
 ## Set it up
 
@@ -86,6 +87,7 @@ When the relay can't be reached, nothing here changes, and the next `polycarp sy
 
 - A removed device that still has relay access can delete or replace files there. It can't forge them, so the other devices refuse what it writes, but sync stops until the files are put back. Taking away its SSH access closes this.
 - Two devices that approve or remove at the same moment can each write a list of the same version. The one written last stands, and the other device refuses it as not newer than its own. Approve or remove once more on the device whose list stands; the newer list it writes brings both back together.
+- A Mac whose preferences read as empty, as after a reset, never deletes the synced ones: the last synced values are written back to it.
 
 ## Passwords
 

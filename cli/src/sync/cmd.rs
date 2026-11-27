@@ -4,6 +4,7 @@
 use super::auto::{self, Backoff};
 use super::crypto::{self, Device, DeviceList, Me, Sealed};
 use super::model::{self, Bundle};
+use super::prefs;
 use super::relay::{self, Relay};
 use super::settings::{self, Paths};
 use super::store::Store;
@@ -40,6 +41,7 @@ struct State {
 struct Ctx {
     dir: PathBuf,
     paths: Paths,
+    prefs: prefs::Store,
     /// A background run: notes go to the sync log, never the screen.
     quiet: bool,
 }
@@ -79,6 +81,7 @@ fn ctx() -> Result<Ctx, String> {
     let config = crate::theme::config_dir()?;
     let dir = config.join("sync");
     Ok(Ctx {
+        prefs: prefs::store(&dir)?,
         dir,
         paths: Paths {
             config,
@@ -365,6 +368,20 @@ fn sync_settings(
     let last: Option<Bundle> = read_json(&last_path)?;
     let ((merged, wrote), notes) = crate::theme::locked_then_refresh(|| {
         let mut snap = settings::snapshot(&c.paths)?;
+        let last_values = last.as_ref().map(model::values).unwrap_or_default();
+        let had_prefs = last
+            .as_ref()
+            .is_some_and(|b| b.items.keys().any(|k| k.starts_with("prefs:")));
+        snap.extend(prefs::local_items(
+            prefs::snapshot(&c.prefs)?,
+            &last_values,
+            had_prefs,
+            |id| {
+                theirs
+                    .as_ref()
+                    .is_some_and(|(_, b)| b.items.contains_key(id))
+            },
+        ));
         // A device's first sync joins what the others already have. Its own values are not edits made after theirs
         // (a new install's defaults would win over months of settings), so where the relay has an item, the
         // relay's stands, and this device adds only what the relay has never had.
@@ -381,8 +398,10 @@ fn sync_settings(
             None => local,
         };
         model::prune(&mut merged, now_ms());
-        let wrote = settings::apply(&c.paths, &model::values(&merged))?;
+        let values = model::values(&merged);
+        let mut wrote = settings::apply(&c.paths, &values)?;
         let theme = wrote.iter().any(|p| p.starts_with(&c.paths.config));
+        wrote.extend(prefs::apply(&c.prefs, &values)?);
         Ok(((merged, wrote), theme))
     })?;
     for n in notes {
