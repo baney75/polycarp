@@ -332,10 +332,15 @@ pub fn apply(s: &Store, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
             Ok(vec![p.clone()])
         }
         Store::Defaults(d) => {
-            let have = read_domain(d)?.items;
+            let read = read_domain(d)?;
+            let have = read.items;
             let mut plan = Vec::new();
             for (key, _) in keys() {
                 let id = format!("prefs:{key}");
+                // A value of another kind here was set by hand or by another build; it is left as it is.
+                if read.odd.contains(&id) {
+                    continue;
+                }
                 match (values.get(&id), have.get(&id)) {
                     (Some(w), h) if want.contains_key(&id) && h != Some(w) => {
                         plan.extend(write_args(d, key, w))
@@ -628,6 +633,18 @@ mod tests {
                 .map(|v| v.as_string().unwrap())
                 .collect();
             assert_eq!(park, ["com.a", "com.b"]);
+        }
+
+        #[test]
+        fn apply_leaves_a_value_of_another_kind_as_it_is() {
+            let d = domain("odd", &[&["checkForUpdates", "-int", "1"]]);
+            let s = Store::Defaults(d.clone());
+            let theirs = items(&[("prefs:checkForUpdates", json!(false))]);
+            assert!(apply(&s, &theirs).unwrap().is_empty());
+            let out = defaults(&d, &["read".into(), d.clone(), "checkForUpdates".into()]).unwrap();
+            assert_eq!(String::from_utf8_lossy(&out).trim(), "1");
+            // Absent from the values, it is not deleted either.
+            assert!(apply(&s, &BTreeMap::new()).unwrap().is_empty());
         }
 
         #[test]

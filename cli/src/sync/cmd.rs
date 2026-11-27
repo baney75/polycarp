@@ -434,8 +434,10 @@ fn prefs_part(b: &Bundle) -> Option<Bundle> {
 }
 
 /// One preferences sync, in its own bundle. A build from before it never opens that bundle, so it can't take a
-/// preference it doesn't read for a delete. The first time, it starts from the `prefs:` items the settings bundle
-/// held, so their times and deletes carry over. Returns the domain or file written here.
+/// preference it doesn't read for a delete. Until some device has written that bundle, the relay's side is the
+/// `prefs:` values the settings bundle held, with their times. A device that has never synced this bundle is at its
+/// first sync whatever its settings state holds: a build from before #895 never read its own preferences, so what
+/// its Mac holds now was never synced, and the relay's values stand. Returns the domain or file written here.
 #[allow(clippy::too_many_arguments)]
 fn sync_prefs(
     c: &Ctx,
@@ -445,7 +447,6 @@ fn sync_prefs(
     opened: &DeviceList,
     list: &DeviceList,
     old_theirs: Option<&Bundle>,
-    old_last: Option<&Bundle>,
 ) -> Result<Vec<PathBuf>, String> {
     let fetched = fetch(me, relay, opened, PREFS, "prefs")?;
     let theirs = match &fetched {
@@ -453,10 +454,7 @@ fn sync_prefs(
         None => old_theirs.and_then(prefs_part),
     };
     let last_path = c.dir.join("prefs.last.json");
-    let last = match read_json::<Bundle>(&last_path)? {
-        Some(b) => Some(b),
-        None => old_last.and_then(prefs_part),
-    };
+    let last: Option<Bundle> = read_json(&last_path)?;
     let last_values = last.as_ref().map(model::values).unwrap_or_default();
     let snap = prefs::local_items(prefs::snapshot(&c.prefs)?, &last_values);
     let merged = join(dev, "prefs", last.as_ref(), snap, theirs.as_ref());
@@ -496,7 +494,6 @@ fn sync_settings(
         opened,
         list,
         theirs.as_ref().map(|(_, b)| b),
-        last.as_ref(),
     )?;
     let ((merged, files), notes) = crate::theme::locked_then_refresh(|| {
         let mut snap = settings::snapshot(&c.paths)?;
