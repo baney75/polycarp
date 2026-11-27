@@ -82,8 +82,7 @@ final class TilingProbeRun {
 
     private func startHelper() -> Bool {
         guard let a = spaces.probeArea(bar: Tiling.reach) else { return false }
-        let files = FileManager.default, folder = files.temporaryDirectory.appendingPathComponent("polycarp-probe-\(getpid())")
-        try? files.removeItem(at: folder)
+        let files = FileManager.default, folder = files.temporaryDirectory.appendingPathComponent("polycarp-probe-\(getpid())-\(UUID().uuidString)")
         guard (try? files.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return false }
         let inPath = folder.appendingPathComponent("in").path, outPath = folder.appendingPathComponent("out").path
         guard mkfifo(inPath, 0o600) == 0, mkfifo(outPath, 0o600) == 0 else { return false }
@@ -115,11 +114,12 @@ final class TilingProbeRun {
         ]) { $1 }
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { app, _ in
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.session?.running == true, self.pipes?.input === input, let app else {
+                // A launch that finishes after its probe ended stops only its own app, never the next probe.
+                guard let self, self.session?.running == true, self.pipes?.input === input else {
                     app?.forceTerminate()
-                    self?.end(.error)
                     return
                 }
+                guard let app else { return self.end(.error) }
                 let exit = DispatchSource.makeProcessSource(identifier: app.processIdentifier, eventMask: .exit, queue: .main)
                 exit.setEventHandler { [weak self] in self?.end(.error) }
                 exit.resume()
