@@ -38,7 +38,7 @@ pub fn fetch(
     cache: &Path,
     progress: &Progress,
 ) -> Result<PathBuf, Refused> {
-    progress.begin(Step::Download);
+    progress.begin(Step::Download)?;
     let dmg = cache.join(&release.name);
     if digest(&dmg).is_ok_and(|d| d == release.sha256) {
         progress.end(Some("kept from before"));
@@ -108,9 +108,9 @@ struct Mounted<'a> {
 
 impl Drop for Mounted<'_> {
     fn drop(&mut self) {
-        let detach = Call::new("/usr/bin/hdiutil", &[&"detach", &self.at]);
+        let detach = Call::new("/usr/bin/hdiutil", &[&"detach", &self.at]).cleanup();
         if !self.tools.run(&detach).is_ok_and(|r| r.ok()) {
-            let force = Call::new("/usr/bin/hdiutil", &[&"detach", &"-force", &self.at]);
+            let force = Call::new("/usr/bin/hdiutil", &[&"detach", &"-force", &self.at]).cleanup();
             let _ = self.tools.run(&force);
         }
     }
@@ -121,7 +121,7 @@ pub fn let_go(tools: &dyn Tools, work: &Path) {
     let at = work.join(MOUNT);
     if fs::symlink_metadata(&at).is_ok() {
         // Where it isn't attached this fails, and the folder is an ordinary one.
-        let force = Call::new("/usr/bin/hdiutil", &[&"detach", &"-force", &at]);
+        let force = Call::new("/usr/bin/hdiutil", &[&"detach", &"-force", &at]).cleanup();
         let _ = tools.run(&force);
     }
 }

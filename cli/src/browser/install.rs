@@ -161,7 +161,7 @@ pub fn install(
     let dmg = source::fetch(tools, &newest, &place.cache, progress)?;
     let work = place.work(tools)?;
     let built = build(tools, place, &dmg, &work, &newest, progress).and_then(|(app, note)| {
-        progress.begin(Step::SwapIn);
+        progress.begin(Step::SwapIn)?;
         spot.stage(tools, &app).map(|_| note)
     });
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
@@ -389,6 +389,40 @@ mod tests {
                 assert!(!t.place().cache.join("work").exists(), "{check}");
                 assert!(!t.place().data.exists(), "{check}");
             }
+        }
+    }
+
+    /// Ctrl-C before any step, or while its tool runs, stops the run and leaves the installed browser whole.
+    #[test]
+    fn ctrl_c_in_any_step_leaves_the_old_browser_whole() {
+        use super::super::progress::{Step, STOPPED};
+        let during: [(&str, &str); 4] = [
+            ("bash", "signing-identity.sh"),
+            ("curl", "--output"),
+            ("hdiutil", "attach"),
+            ("codesign", "--verify --deep --strict"),
+        ];
+        let halts = Step::ALL.map(|step| (Some(step), None));
+        let tools = during.map(|tool| (None, Some(tool)));
+        for (halt, tool) in halts.into_iter().chain(tools) {
+            let t = Fake::new();
+            let spot = t.spot();
+            t.built_app(&spot.app(), "0.1.0", 1);
+            let before = t.listing(&spot.app());
+            if let Some((name, part)) = tool {
+                t.set(|s| s.fail = Some((name, part, Failure::Stopped)));
+            }
+            let progress = match halt {
+                Some(step) => Progress::silent().halting_at(step),
+                None => Progress::silent(),
+            };
+            let e = install(&t, &t.place(), "arm64", INSTALL, &progress).unwrap_err();
+            let at = format!("{halt:?} {tool:?}");
+            assert_eq!(e.check, STOPPED, "{at}");
+            assert_eq!(t.listing(&spot.app()), before, "{at}");
+            assert_eq!(spot.waiting(), None, "{at}");
+            assert!(!t.place().cache.join("work").exists(), "{at}");
+            assert!(!t.mounted(), "{at}");
         }
     }
 

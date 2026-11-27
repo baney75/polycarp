@@ -2,11 +2,23 @@
 //! the total and the speed while the release downloads, then each step by name with a spinner and its time. A finished
 //! step leaves one line with the time it took. Anywhere else (a pipe, a log, the app's daily run) each step is a plain
 //! line and no escape code is written.
+//!
+//! Ctrl-C sets `STOP`. The tool that runs is stopped, no later step starts, and nothing is swapped in, so the installed
+//! browser stays whole. A second Ctrl-C ends the command at once.
 
 use std::io::{self, IsTerminal, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use super::Refused;
+
+/// Set by the first Ctrl-C.
+pub static STOP: AtomicBool = AtomicBool::new(false);
+
+/// The check a stop is reported as.
+pub const STOPPED: &str = "stopped";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
@@ -232,6 +244,9 @@ impl Shared {
 pub struct Progress {
     shared: Arc<Mutex<Shared>>,
     tty: bool,
+    stop: &'static AtomicBool,
+    /// A test hook: acts as if Ctrl-C came just before this step.
+    halt: Option<Step>,
 }
 
 impl Progress {
@@ -240,10 +255,15 @@ impl Progress {
         let err = io::stderr();
         let dumb = std::env::var_os("TERM").is_some_and(|t| t == "dumb");
         let tty = err.is_terminal() && !dumb;
-        Progress::to(Box::new(err), tty, columns)
+        Progress::to(Box::new(err), tty, columns, &STOP)
     }
 
-    pub fn to(out: Box<dyn Write + Send>, tty: bool, width: fn() -> usize) -> Progress {
+    pub fn to(
+        out: Box<dyn Write + Send>,
+        tty: bool,
+        width: fn() -> usize,
+        stop: &'static AtomicBool,
+    ) -> Progress {
         let shared = Shared {
             out,
             step: None,
@@ -258,19 +278,37 @@ impl Progress {
         Progress {
             shared: Arc::new(Mutex::new(shared)),
             tty,
+            stop,
+            halt: None,
         }
     }
 
     /// Says nothing: for tests and for the commands that build nothing.
     pub fn silent() -> Progress {
-        Progress::to(Box::new(io::sink()), false, || 80)
+        Progress::to(Box::new(io::sink()), false, || 80, &NEVER)
+    }
+
+    #[cfg(test)]
+    pub fn halting_at(mut self, step: Step) -> Progress {
+        self.halt = Some(step);
+        self
     }
 
     fn lock(&self) -> MutexGuard<'_, Shared> {
         self.shared.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    pub fn begin(&self, step: Step) {
+    /// A refusal when Ctrl-C came.
+    pub fn go_on(&self, at: Step) -> Result<(), Refused> {
+        if self.stop.load(Ordering::SeqCst) || self.halt == Some(at) {
+            return Err(Refused::new(STOPPED, format!("before {}", at.name())));
+        }
+        Ok(())
+    }
+
+    /// Starts a step, unless Ctrl-C came.
+    pub fn begin(&self, step: Step) -> Result<(), Refused> {
+        self.go_on(step)?;
         let generation = {
             let mut shared = self.lock();
             shared.step = Some(step);
@@ -280,7 +318,7 @@ impl Progress {
             shared.generation += 1;
             if !self.tty {
                 shared.say(&plain_begin(step));
-                return;
+                return Ok(());
             }
             shared.draw();
             shared.generation
@@ -296,6 +334,7 @@ impl Progress {
             shared.frame += 1;
             shared.draw();
         });
+        Ok(())
     }
 
     /// The bytes start to come now: what came before (checking a cached image) is not download time.
@@ -347,6 +386,24 @@ impl Drop for Progress {
     }
 }
 
+static NEVER: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn on_interrupt(_: libc::c_int) {
+    STOP.store(true, Ordering::SeqCst);
+}
+
+/// The first Ctrl-C sets `STOP`; the handler then goes back to the default, so a second one ends the command.
+pub fn catch_interrupt() {
+    // SAFETY: a zeroed sigaction with a handler that only stores to an atomic, which is async-signal-safe.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = on_interrupt as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESETHAND;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGINT, &action, std::ptr::null_mut());
+    }
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
@@ -355,10 +412,12 @@ pub mod tests {
     #[derive(Clone, Default)]
     pub struct Screen(Arc<Mutex<Vec<u8>>>);
 
+    static QUIET: AtomicBool = AtomicBool::new(false);
+
     /// Progress that writes to a screen a test reads.
     pub fn screen(tty: bool) -> (Screen, Progress) {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), tty, || 120);
+        let progress = Progress::to(Box::new(screen.clone()), tty, || 120, &QUIET);
         (screen, progress)
     }
 
@@ -485,7 +544,7 @@ pub mod tests {
 
     fn run_all(progress: &Progress) {
         for step in Step::ALL {
-            progress.begin(step);
+            progress.begin(step).unwrap();
             if step == Step::Download {
                 progress.bytes(mb(10), Some(mb(20)));
                 progress.bytes(mb(20), Some(mb(20)));
@@ -497,7 +556,7 @@ pub mod tests {
     #[test]
     fn a_terminal_gets_one_line_that_redraws_and_a_line_per_finished_step() {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), true, || 120);
+        let progress = Progress::to(Box::new(screen.clone()), true, || 120, &QUIET);
         run_all(&progress);
         drop(progress);
         let text = screen.text();
@@ -519,7 +578,7 @@ pub mod tests {
     #[test]
     fn anything_else_gets_plain_lines_and_no_escape_codes() {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), false, || 120);
+        let progress = Progress::to(Box::new(screen.clone()), false, || 120, &QUIET);
         run_all(&progress);
         drop(progress);
         let text = screen.text();
@@ -534,15 +593,23 @@ pub mod tests {
     #[test]
     fn a_step_that_did_not_finish_is_marked_in_a_terminal() {
         let screen = Screen::default();
-        let progress = Progress::to(Box::new(screen.clone()), true, || 120);
-        progress.begin(Step::Download);
+        let progress = Progress::to(Box::new(screen.clone()), true, || 120, &QUIET);
+        progress.begin(Step::Download).unwrap();
         progress.end(None);
-        progress.begin(Step::Verify);
+        progress.begin(Step::Verify).unwrap();
         drop(progress);
         let text = screen.text();
         assert!(
             text.ends_with(&format!("{CLEAR}✗ Verify   step 2 of 6\n")),
             "{text:?}"
         );
+    }
+
+    #[test]
+    fn after_ctrl_c_no_step_starts() {
+        static PRESSED: AtomicBool = AtomicBool::new(true);
+        let progress = Progress::to(Box::new(io::sink()), false, || 80, &PRESSED);
+        let e = progress.begin(Step::Build).unwrap_err();
+        assert_eq!((e.check, e.why.as_str()), (STOPPED, "before Build"));
     }
 }

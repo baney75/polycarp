@@ -31,7 +31,8 @@ is after that. Your profile is in `~/Library/Application Support/Polycarp/Browse
 
 `install` and `update` show each step as it runs: Download, Verify, Build, Sign, Check and Swap in, each as "step N of 6"
 with the time it took (a dry run stops after Check, step 5). In a terminal the download has a bar with the percent, bytes over the total and the speed. Piped
-or in a log, each step is a plain line.
+or in a log, each step is a plain line. Ctrl-C in any step stops it and leaves the installed browser as it was, whole; a
+second Ctrl-C ends the command at once.
 
 ## Updates
 
