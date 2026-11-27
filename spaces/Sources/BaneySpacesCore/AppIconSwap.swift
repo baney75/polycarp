@@ -11,6 +11,8 @@ public enum AppIconSwap {
         case changed
         /// The bundle already holds this icon.
         case unchanged
+        /// macOS does not let this app's bundle be replaced where it is (App Management): trying again changes nothing.
+        case notPermitted
         case refused(String)
     }
 
@@ -55,7 +57,13 @@ public enum AppIconSwap {
         // An update that went in meanwhile is newer than the copy: keep it.
         guard cdhash(app) == before else { return .refused("the app changed meanwhile") }
         guard renamex_np(copy.path, app.path, UInt32(RENAME_SWAP)) == 0 else {
+            if errno == EPERM || errno == EACCES { return .notPermitted }
             return .refused("the swap failed: \(String(cString: strerror(errno)))")
+        }
+        // What came out must be the app that was checked: one an update put in at the last moment goes back in.
+        guard cdhash(copy) == before else {
+            _ = renamex_np(copy.path, app.path, UInt32(RENAME_SWAP))
+            return .refused("the app changed meanwhile")
         }
         // Finder, the Dock and Spotlight look again at a bundle whose date moved.
         try? fm.setAttributes([.modificationDate: Date()], ofItemAtPath: app.path)

@@ -13,6 +13,8 @@ final class AppIconKeeper {
     private var pending: DispatchWorkItem?
     private let queue = DispatchQueue(label: "com.baney.polycarp.app-icon", qos: .utility)
     private var observer: NSObjectProtocol?
+    /// Set on `queue` once macOS refuses the swap: the file is not tried again until Polycarp starts again.
+    private nonisolated(unsafe) static var notPermitted = false
 
     /// Draws the icon for the theme in force now and again after every change of theme or Dark Mode.
     func follow() {
@@ -38,11 +40,14 @@ final class AppIconKeeper {
     }
 
     private nonisolated static func write(_ colors: ThemeIcon.Colors, into app: URL, tools: URL?) {
-        guard app.pathExtension == "app", let tools, let icns = ThemeIcon.icns(colors) else { return }
+        guard !notPermitted, app.pathExtension == "app", let tools, let icns = ThemeIcon.icns(colors) else { return }
         guard let signer = signer(tools.appendingPathComponent("signing-identity.sh")) else { return }
         switch AppIconSwap.replace(app: app, icns: icns, signer: signer) {
         case .changed: Trace.log("app icon: now \(colors.background.hex) and \(colors.mark.hex)")
         case .unchanged: break
+        case .notPermitted:
+            notPermitted = true
+            Trace.log("app icon: the Dock's only, macOS does not let Polycarp change its own app where it is")
         case .refused(let why): Trace.log("app icon: the Dock's only, \(why)")
         }
     }
