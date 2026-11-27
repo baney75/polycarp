@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::local_studio;
 use super::release::{self, Release};
 use super::spot::Spot;
 use super::tools::Tools;
@@ -42,6 +43,38 @@ pub struct Status {
     pub checked_days_ago: Option<i64>,
     /// Why it could not be looked up now.
     pub problem: Option<String>,
+    /// The extensions inside the installed app (spec/browser.md R-B20).
+    pub built_in: Vec<BuiltIn>,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+pub struct BuiltIn {
+    pub name: &'static str,
+    pub version: String,
+    /// The Local Studio commit it was built from.
+    pub commit: Option<String>,
+}
+
+/// What the app holds of Polycarp's extension and Local Studio's, as each manifest says.
+fn built_in(app: &Path) -> Vec<BuiltIn> {
+    let polycarp = fs::read(app.join("Contents/Resources/polycarp/extension/manifest.json")).ok();
+    let polycarp = polycarp.and_then(|m| serde_json::from_slice::<serde_json::Value>(&m).ok());
+    let version = polycarp.and_then(|m| {
+        let version = m["version_name"].as_str().or(m["version"].as_str());
+        version.map(String::from)
+    });
+    let polycarp = version.map(|version| BuiltIn {
+        name: "Polycarp",
+        version,
+        commit: None,
+    });
+    let local = local_studio::read(&app.join(local_studio::IN_APP)).ok();
+    let local = local.map(|a| BuiltIn {
+        name: "Local Studio",
+        version: a.version,
+        commit: a.commit,
+    });
+    polycarp.into_iter().chain(local).collect()
 }
 
 fn today() -> i64 {
@@ -72,6 +105,10 @@ fn known(cache: &Path, spot: &Spot, today: i64) -> Status {
         age_days: installed.as_ref().and_then(|b| b.published).map(ago),
         pending: spot.waiting().map(|b| b.helium),
         held: spot.held().map(|b| b.helium),
+        built_in: installed
+            .as_ref()
+            .map(|_| built_in(&spot.app()))
+            .unwrap_or_default(),
         ..Status::default()
     };
     if let Some(seen) = seen {
@@ -157,6 +194,14 @@ impl Status {
             if let Some(n) = self.age_days {
                 lines.push(format!("The installed release came out {}.", days(n)));
             }
+            let named = self.built_in.iter().map(|b| match &b.commit {
+                Some(c) => format!("{} {} (commit {})", b.name, b.version, &c[..7]),
+                None => format!("{} {}", b.name, b.version),
+            });
+            let named: Vec<String> = named.collect();
+            if !named.is_empty() {
+                lines.push(format!("Built in: {}.", named.join(", ")));
+            }
         }
         if self.pending.is_some() {
             lines.push("A new build goes in when you quit the browser.".into());
@@ -222,6 +267,40 @@ mod tests {
         assert!(at(&t, 20_020)
             .text()
             .contains("last checked for updates 10 days ago"));
+    }
+
+    #[test]
+    fn status_lists_both_built_in_extensions_with_versions() {
+        let t = Fake::new();
+        let app = t.spot().app();
+        t.built_app(&app, "1.2", 1);
+        assert!(at(&t, 0).built_in.is_empty());
+        let polycarp = app.join("Contents/Resources/polycarp/extension");
+        fs::create_dir_all(&polycarp).unwrap();
+        fs::write(
+            polycarp.join("manifest.json"),
+            "{\"version\":\"2.0.0\",\"version_name\":\"2.0.0 (abc)\"}",
+        )
+        .unwrap();
+        local_studio::put_in(&t.local_studio_extension(), &app);
+        let s = at(&t, 0);
+        let names: Vec<_> = s
+            .built_in
+            .iter()
+            .map(|b| (b.name, b.version.as_str()))
+            .collect();
+        assert_eq!(
+            names,
+            [("Polycarp", "2.0.0 (abc)"), ("Local Studio", "1.4.1")]
+        );
+        assert_eq!(s.built_in[1].commit.as_deref(), Some(PINNED));
+        let text = s.text();
+        assert!(
+            text.contains("Built in: Polycarp 2.0.0 (abc), Local Studio 1.4.1 (commit 347571d)."),
+            "{text}"
+        );
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["built_in"][1]["name"], "Local Studio");
     }
 
     #[test]

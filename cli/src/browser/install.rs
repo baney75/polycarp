@@ -13,7 +13,7 @@ use super::progress::{Progress, Step};
 use super::release::{self, Release};
 use super::spot::Spot;
 use super::tools::Tools;
-use super::{build, clear, pages, refuse, source, status, Place, Refused};
+use super::{build, clear, local_studio, pages, refuse, source, status, Place, Refused};
 
 /// Part of every build's fingerprint: raised when the way a build is made changes, so installed ones are made again.
 const RECIPE: &str = "1";
@@ -112,7 +112,17 @@ pub fn fingerprint(place: &Place) -> Result<String, Refused> {
     };
     let mut digest = Sha256::new();
     digest.update(RECIPE);
-    for root in [&place.parts, &place.extension] {
+    // Local Studio's extension, with the commit it was built from (spec/browser.md R-B20). None adds nothing, so a build
+    // from before it doesn't make the browser again.
+    let local = place
+        .local_studio
+        .exists()
+        .then_some(("\0local studio\0", &place.local_studio));
+    for (label, root) in [("", &place.parts), ("", &place.extension)]
+        .into_iter()
+        .chain(local)
+    {
+        digest.update(label);
         for (name, bytes) in read(root).map_err(refuse("parts", "reading them"))? {
             let name = name.as_os_str().to_string_lossy();
             digest.update(format!("\0{name}\0{}\0", bytes.len()));
@@ -186,8 +196,9 @@ pub fn install(
         newest.version,
         app.display()
     )];
-    lines.extend(note.map(String::from));
+    lines.extend(note);
     lines.extend(pages::set_up(&place.data, place.host.as_deref()));
+    lines.extend(local_studio::register(&place.data, &place.home, &app));
     Ok(done(lines.join("\n")))
 }
 
@@ -256,6 +267,7 @@ pub fn finish(place: &Place, mut pause: impl FnMut()) -> Result<(), Refused> {
                     Err(_) => {}
                     Ok(()) => {
                         pages::set_up(&place.data, place.host.as_deref());
+                        local_studio::register(&place.data, &place.home, &place.spot.app());
                     }
                 }
             }
@@ -315,6 +327,35 @@ mod tests {
 
     fn helium(t: &Fake) -> Option<String> {
         t.spot().installed().map(|b| b.helium)
+    }
+
+    #[test]
+    fn local_studio_goes_in_when_staged_and_its_commit_is_part_of_the_build() {
+        let t = Fake::new();
+        let place = t.place();
+        let without = fingerprint(&place).unwrap();
+        let done = go(&t, INSTALL).unwrap();
+        assert!(done.line.contains("doesn't carry it"), "{}", done.line);
+        let inside = t.spot().app().join(local_studio::IN_APP);
+        assert!(!inside.exists());
+        let staged = t.local_studio_extension();
+        let with = fingerprint(&place).unwrap();
+        assert_ne!(with, without);
+        // A new pin is an update.
+        fs::write(staged.join(local_studio::PIN), "0".repeat(40)).unwrap();
+        assert_ne!(fingerprint(&place).unwrap(), with);
+        let done = go(&t, UPDATE).unwrap();
+        assert!(!done.line.contains("left out"), "{}", done.line);
+        assert!(inside.join("manifest.json").is_file());
+        // Helium has no registration here: the browser is in, and a line says what to do.
+        assert!(
+            done.line.contains("can't reach its helper"),
+            "{}",
+            done.line
+        );
+        assert!(go(&t, UPDATE).unwrap().line.contains("up to date"));
+        fs::remove_dir_all(&staged).unwrap();
+        assert_eq!(fingerprint(&place).unwrap(), without);
     }
 
     #[test]

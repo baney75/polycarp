@@ -13,6 +13,9 @@ use super::tools::{Call, Ran, System, Tools};
 use super::Place;
 
 pub const VERSION: &str = "0.22.4.1";
+/// The public key in Local Studio's manifest, which gives it the id `local_studio::ID`.
+pub const LOCAL_STUDIO_KEY: &str = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA21eAXbfHcAxTmH4I/a0OD1ga+ZnemJrA3mw517aa5BniZvExkYcLI5/p/OFiNUZ4aU/uxoDuHS7qrjoOBKlOd7nNcJEG1WWqa+Rexb7ILygX/F6f2Qi5Jx7zcOWOlCrNlYK3vOAUvbeBy+/OWvA7L3MHRkOT3jeRxEcIoB/rkSDnNF0SI2dV7GbdPdOU/pnzNHKV5VptNWCjjPaZMxrJ/di/Ge9vekrnDZJmxTAHPbyd+bBi5gZKaHNICr5PdeCFPdmAQnpFs/79nGN3SCi70l8tzLyeX7GXkJIuSt5tPuhQX9bC4VTIq7QclFmKBvj+/6Ni0RfF7x4BTpPwk5KHDQIDAQAB";
+pub const PINNED: &str = "347571d2f1eceb625c653c8710a44cfdfb9db837";
 pub const FRAMEWORK: &str = "Contents/Frameworks/Helium Framework.framework/Versions/158.0";
 /// `{ CFBundleDisplayName = "Helium"; }` as a binary property list.
 const BINARY_STRINGS: &[u8] = b"bplist00\xd1\x01\x02_\x10\x13CFBundleDisplayNameVHelium\x08\x0b!\x00\x00\x00\x00\x00\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x03\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00(";
@@ -88,6 +91,7 @@ impl Fake {
             cache: self.root.join("cache"),
             parts: self.parts(),
             extension: self.extension(),
+            local_studio: self.root.join("local-studio"),
             spot: self.spot(),
             data: self.root.join("Support/Polycarp/Browser"),
             home: self.root.join("home"),
@@ -167,6 +171,17 @@ impl Fake {
             fs::write(extension.join(file), "{}").unwrap();
         }
         extension
+    }
+
+    /// Local Studio's extension as the build stages it, with the commit it came from.
+    pub fn local_studio_extension(&self) -> PathBuf {
+        let staged = self.root.join("local-studio");
+        fs::create_dir_all(&staged).unwrap();
+        let manifest = serde_json::json!({ "name": "Local Studio", "version": "1.4.1", "key": LOCAL_STUDIO_KEY });
+        fs::write(staged.join("manifest.json"), manifest.to_string()).unwrap();
+        fs::write(staged.join("background.js"), "").unwrap();
+        fs::write(staged.join(super::local_studio::PIN), format!("{PINNED}\n")).unwrap();
+        staged
     }
 
     pub fn work(&self) -> PathBuf {

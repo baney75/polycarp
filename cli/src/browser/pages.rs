@@ -46,7 +46,7 @@ pub fn put_in(
 }
 
 /// Plain files only: a link in the extension would lead out of the signed app.
-fn copy(from: &Path, to: &Path) -> io::Result<()> {
+pub(super) fn copy(from: &Path, to: &Path) -> io::Result<()> {
     fs::create_dir_all(to)?;
     for file in files(from)? {
         let to = to.join(file.strip_prefix(from).map_err(io::Error::other)?);

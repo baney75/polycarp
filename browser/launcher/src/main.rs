@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Polycarp Browser's main program. It becomes Helium's own program, which sits beside it, with Polycarp's extension
-//! loaded, and the Polycarp theme in force as a browser theme when there is one. It keeps no state and starts nothing else.
+//! loaded, Local Studio's when the app has it inside, and the Polycarp theme in force as a browser theme when there is one. It keeps no state and starts nothing else.
 
 use std::ffi::OsString;
 use std::os::unix::process::CommandExt;
@@ -12,6 +12,7 @@ fn main() {
             let mut ours = vec![contents
                 .join("Resources/polycarp/extension")
                 .into_os_string()];
+            ours.extend(local_studio(contents));
             ours.extend(theme(std::env::var_os("HOME")));
             let args = arguments(ours, std::env::args_os().skip(1));
             let program = contents.join("MacOS/Helium");
@@ -21,6 +22,16 @@ fn main() {
     };
     eprintln!("Polycarp Browser could not start: {error}");
     std::process::exit(126);
+}
+
+/// Local Studio's extension, which `polycarp browser install` puts inside the app when Polycarp carries it
+/// (spec/browser.md R-B20).
+fn local_studio(contents: &std::path::Path) -> Option<OsString> {
+    let folder = contents.join("Resources/polycarp/local-studio");
+    folder
+        .join("manifest.json")
+        .is_file()
+        .then(|| folder.into_os_string())
 }
 
 /// The theme extension Polycarp writes while a Polycarp theme is in force (spec/browser.md R-B16), when it is there.
@@ -117,6 +128,17 @@ mod tests {
         // The browser restarts itself with these: still each one once.
         assert_eq!(arguments(ours, once.clone().into_iter()), once);
         std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn local_studio_is_loaded_only_when_the_app_has_it_inside() {
+        let contents = std::env::temp_dir().join(format!("launcher-ls-{}", std::process::id()));
+        let folder = contents.join("Resources/polycarp/local-studio");
+        std::fs::create_dir_all(&folder).unwrap();
+        assert_eq!(local_studio(&contents), None);
+        std::fs::write(folder.join("manifest.json"), "{}").unwrap();
+        assert_eq!(local_studio(&contents), Some(folder.into_os_string()));
+        std::fs::remove_dir_all(&contents).unwrap();
     }
 
     #[test]

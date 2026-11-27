@@ -87,3 +87,26 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   fields only, whatever the app sends, and leaves tabs out of `app_items` and a tab's title out of `app_focus`.
 - **R-B19 A list in pieces.** A change that comes while a list comes in pieces holds: a row it closed or changed stays so
   when a later piece, read before it, still has the old one.
+- **R-B20 Local Studio built in.** Polycarp.app carries Local Studio's extension in `Resources/local-studio-extension`
+  when its build could make it from the pinned commit. `polycarp browser install` and `update` then put it in the app at
+  `Contents/Resources/polycarp/local-studio`, plain files only, when its manifest parses, has a `version`, and its `key`
+  gives the id `igjafcggmahiboobmnhfkndodphjdnhg`. Otherwise it is left out with a line saying why, and the browser is
+  built without it; it never stops a build. The launcher loads it after Polycarp's extension and before the theme, only
+  while its `manifest.json` is there. Its files, with `polycarp-pin.txt` (the commit), are part of the build's
+  fingerprint, so a new pin is an update; a Polycarp without it adds nothing to the fingerprint. With it inside, each build
+  that goes in, at once or after a quit, writes `NativeMessagingHosts/com.localstudio.browser.json` in the browser's data
+  folder: the helper Helium's own registration names, which is read and never written, through Local Studio's `release`
+  link when that is the same program, and only this id among its allowed origins. With no such helper nothing is written,
+  an earlier file stays, and a line says to install Local Studio and run `polycarp browser install`. `status` lists the
+  built-in extensions with their versions, and Local Studio's commit.
+
+  | Case | Result |
+  | --- | --- |
+  | Nothing staged | left out: "this Polycarp build doesn't carry it" |
+  | Manifest missing, not JSON, no key, key not base64, another id | left out, the reason named |
+  | Staged and valid | inside the app, loaded at the next start |
+  | Pin file changed, extension added or removed | the next `update` builds again |
+  | Helium names `<dir>/versions/<v>/local-studio-browser`, `<dir>/release` points there | host path is `<dir>/release/local-studio-browser` |
+  | `release` points at another version | Helium's path as written |
+  | Helium's file missing, path relative or not a program | no file written, a line |
+  | App without Local Studio inside | no file, no line |
