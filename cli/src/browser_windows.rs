@@ -290,17 +290,65 @@ mod system {
     use super::*;
     use std::process::{Command, Stdio};
 
-    /// Lists each program's signature. The folder arrives in an environment variable, never in the script's text.
-    const SCRIPT: &str = "$ErrorActionPreference = 'Stop'
+    /// Lists each program's own signature. The folder arrives in an environment variable, never in the script's text.
+    ///
+    /// `Get-AuthenticodeSignature` is not used: it asks Windows' catalogs first, and a Microsoft DLL that Helium
+    /// signed again (`d3dcompiler_47.dll`) has its hash in them, so it reported Microsoft's catalog signer instead
+    /// of imput's. `WinVerifyTrust` with a file and no catalog checks the signature inside the file, revocation off
+    /// and no download, and the signer is that signature's certificate.
+    const SCRIPT: &str = r#"$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-$root = (Get-Item -LiteralPath $env:POLYCARP_HELIUM_DIR).FullName.TrimEnd('\\')
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PolycarpTrust {
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct FileInfo { public uint cbStruct; public string pcwszFilePath; public IntPtr hFile; public IntPtr pgKnownSubject; }
+  [StructLayout(LayoutKind.Sequential)]
+  struct Data {
+    public uint cbStruct; public IntPtr pPolicyCallbackData; public IntPtr pSIPClientData; public uint dwUIChoice;
+    public uint fdwRevocationChecks; public uint dwUnionChoice; public IntPtr pFile; public uint dwStateAction;
+    public IntPtr hWVTStateData; public IntPtr pwszURLReference; public uint dwProvFlags; public uint dwUIContext;
+    public IntPtr pSignatureSettings;
+  }
+  [DllImport("wintrust.dll")]
+  static extern int WinVerifyTrust(IntPtr hwnd, ref Guid action, ref Data data);
+  public static int Check(string path) {
+    FileInfo file = new FileInfo();
+    file.cbStruct = (uint)Marshal.SizeOf(typeof(FileInfo));
+    file.pcwszFilePath = path;
+    IntPtr pfile = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(FileInfo)));
+    try {
+      Marshal.StructureToPtr(file, pfile, false);
+      Data d = new Data();
+      d.cbStruct = (uint)Marshal.SizeOf(typeof(Data));
+      d.dwUIChoice = 2; d.fdwRevocationChecks = 0; d.dwUnionChoice = 1; d.pFile = pfile;
+      d.dwStateAction = 1; d.dwProvFlags = 0x1000;
+      Guid action = new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+      int r = WinVerifyTrust(IntPtr.Zero, ref action, ref d);
+      d.dwStateAction = 2;
+      WinVerifyTrust(IntPtr.Zero, ref action, ref d);
+      return r;
+    } finally {
+      Marshal.DestroyStructure(pfile, typeof(FileInfo));
+      Marshal.FreeHGlobal(pfile);
+    }
+  }
+}
+'@
+$root = (Get-Item -LiteralPath $env:POLYCARP_HELIUM_DIR).FullName.TrimEnd('\')
 Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
   $full = $_.FullName
-  if (-not $full.StartsWith($root + '\\', [System.StringComparison]::OrdinalIgnoreCase)) { throw \"outside the release: $full\" }
-  $s = Get-AuthenticodeSignature -LiteralPath $full
-  $who = if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { '' }
-  \"{0}`t{1}`t{2}\" -f $s.Status, $who, $full.Substring($root.Length + 1)
-}";
+  if (-not $full.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) { throw "outside the release: $full" }
+  $r = [PolycarpTrust]::Check($full)
+  $status = switch ($r) { 0 { 'Valid' } -2146869232 { 'HashMismatch' } -2146762496 { 'NotSigned' } default { '0x{0:X8}' -f $r } }
+  $who = ''
+  try {
+    $c = [System.Security.Cryptography.X509Certificates.X509Certificate]::CreateFromSignedFile($full)
+    $who = (New-Object System.Security.Cryptography.X509Certificates.X509Certificate2 -ArgumentList $c).Subject
+  } catch { }
+  "{0}`t{1}`t{2}" -f $status, $who, $full.Substring($root.Length + 1)
+}"#;
 
     fn system32(program: &str) -> PathBuf {
         let root = std::env::var_os("SystemRoot").filter(|v| !v.is_empty());
