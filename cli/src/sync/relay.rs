@@ -285,6 +285,21 @@ mod tests {
         assert!(unframe(b"PCSYNC 4\nabc").is_none() && unframe(b"abc").is_none());
     }
 
+    #[test]
+    fn a_folder_relay_without_its_marker_is_unreachable_and_nothing_is_written() {
+        let d = std::env::temp_dir().join(format!("polycarp-relay-gone-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        let r = Relay::Dir(d.clone());
+        // Not there, or there without the marker, as an unmounted share is: unreachable, never "no such file".
+        assert!(r.get("devices.json").is_err() && r.put("devices.json", b"x").is_err());
+        fs::create_dir_all(&d).unwrap();
+        fs::write(d.join("other"), b"").unwrap();
+        assert!(r.get("devices.json").unwrap_err().contains("mount"));
+        assert!(r.put("devices.json", b"x").is_err() && r.remove("devices.json").is_err());
+        assert!(!d.join("devices.json").exists());
+        let _ = fs::remove_dir_all(&d);
+    }
+
     /// The remote scripts, run by a local `sh` the way the relay's would run them, in a home folder of its own.
     #[cfg(unix)]
     #[test]
@@ -328,13 +343,8 @@ mod tests {
         let d = std::env::temp_dir().join(format!("polycarp-relay-{}", std::process::id()));
         let _ = fs::remove_dir_all(&d);
         let r = Relay::Dir(d.clone());
-        // Not there, or there and empty, as an unmounted share is: unreachable, never "no such file".
-        assert!(r.get("devices.json").is_err() && r.put("devices.json", b"x").is_err());
         fs::create_dir_all(&d).unwrap();
-        fs::write(d.join("other"), b"").unwrap();
-        assert!(r.get("devices.json").unwrap_err().contains("mount"));
-        assert!(r.put("devices.json", b"x").is_err() && r.remove("devices.json").is_err());
-        fs::write(d.join("polycarp-sync"), b"").unwrap();
+        fs::write(d.join(MARKER), b"").unwrap();
         assert_eq!(r.get("devices.json").unwrap(), None);
         r.put("devices.json", b"x").unwrap();
         assert_eq!(r.get("devices.json").unwrap().unwrap(), b"x");
