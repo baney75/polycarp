@@ -36,6 +36,7 @@ impl Device {
             .env("POLYCARP_CONFIG_DIR", self.root.join("cfg"))
             .env("POLYCARP_SUPPORT_DIR", self.root.join("support"))
             .env("POLYCARP_SYNC_KEY_STORE", "file")
+            .env("POLYCARP_SYNC_SERVICE", "write")
             .env("POLYCARP_SYNC_DEFAULTS", self.prefs())
             .env("POLYCARP_NO_SYSTEM_SPOTS", "1")
             .env("TMPDIR", self.root.join("tmp"))
@@ -357,5 +358,72 @@ fn a_synced_preference_reaches_the_other_mac_and_a_local_one_stays() {
     assert_eq!(defaults(&b, &["read", "modifier"]).trim(), "control");
     let all = defaults(&b, &["export", "-"]);
     assert!(!all.contains("remoteEnabled"), "{all}");
+    let _ = fs::remove_dir_all(&world);
+}
+
+/// Where `auto on` writes its unit, under a device's temporary home.
+fn auto_unit(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/LaunchAgents/com.polycarp.sync.plist")
+    } else if cfg!(windows) {
+        home.join("Polycarp/sync-task.xml")
+    } else {
+        home.join(".config/systemd/user/polycarp-sync.timer")
+    }
+}
+
+#[test]
+fn auto_writes_the_unit_reports_failures_and_comes_off() {
+    let world = root("auto-on");
+    let relay = world.join("relay");
+    fs::create_dir_all(&relay).unwrap();
+    fs::write(relay.join("polycarp-sync"), b"").unwrap();
+    let addr = format!("dir:{}", relay.display());
+    let a = Device::new(&world, "a");
+    let unit = auto_unit(&a.root.join("home"));
+
+    // Off until asked for, and `auto on` needs a device that is set up.
+    assert!(a.ok(&["sync", "auto", "status"]).starts_with("off"));
+    assert_ne!(a.run(&["sync", "auto", "on"]).status.code(), Some(0));
+    assert!(!unit.exists());
+
+    // `--auto` at init writes the unit; the test hook keeps it from being loaded.
+    a.ok(&["sync", "init", "--relay", &addr, "--name", "mac", "--auto"]);
+    assert!(unit.exists(), "{unit:?}");
+    assert!(a
+        .ok(&["sync", "auto", "status"])
+        .starts_with("on: every 5 minutes"));
+
+    // A failed run shows in status until a sync works.
+    let away = world.join("relay-away");
+    fs::rename(&relay, &away).unwrap();
+    assert_eq!(
+        a.run(&["sync", "now", "--background"]).status.code(),
+        Some(1)
+    );
+    assert!(a
+        .ok(&["sync", "auto", "status"])
+        .contains("last 1 run(s) failed"));
+    fs::rename(&away, &relay).unwrap();
+    a.ok(&["sync", "now"]);
+    assert!(a
+        .ok(&["sync", "auto", "status"])
+        .starts_with("on: every 5 minutes"));
+
+    // On again replaces the unit; off removes it, and twice is fine.
+    a.ok(&["sync", "auto", "on"]);
+    a.ok(&["sync", "auto", "off"]);
+    assert!(!unit.exists());
+    assert!(a.ok(&["sync", "auto", "off"]).contains("already off"));
+    assert!(a.ok(&["sync", "auto", "status"]).starts_with("off"));
+
+    // `--auto` once at most, and no other new options.
+    for bad in [
+        &["sync", "init", "--auto", "--auto"][..],
+        &["sync", "init", "--name", "x", "--name", "y"],
+        &["sync", "auto", "maybe"],
+    ] {
+        assert_eq!(a.run(bad).status.code(), Some(2), "{bad:?}");
+    }
     let _ = fs::remove_dir_all(&world);
 }
