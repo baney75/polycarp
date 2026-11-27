@@ -15,6 +15,12 @@ extension Spaces {
     /// The workspaces in sight, one for each display.
     var shownWorkspaces: [Int] { model.shown.isEmpty ? [model.current] : Array(model.shown.values) }
 
+    /// R-TS12.4: the probe's area, left of every display, the size of the main display's tiling area.
+    func probeArea(_ displays: [(key: DisplayKey, frame: CGRect, visible: CGRect)] = Windows.displays(), bar: (DisplayKey) -> CGFloat) -> CGRect? {
+        guard let d = displays.first else { return nil }
+        return TilingProbe.area(screens: displays.map(\.frame), usable: TilingRead.area(frame: d.frame, visible: d.visible, bar: bar(d.key)))
+    }
+
     /// The displays' frames, for a command that goes to another one.
     static func displayFrames() -> [DisplayKey: CGRect] {
         Dictionary(Windows.displays().map { ($0.key, $0.frame) }, uniquingKeysWith: { a, _ in a })
@@ -29,7 +35,11 @@ extension Spaces {
             guard let n = model.shown.isEmpty ? (i == 0 ? model.current : nil) : model.shown[d.key] else { continue }
             shown[n] = .init(display: d.key, area: TilingRead.area(frame: d.frame, visible: d.visible, bar: bar(d.key)))
         }
-        let inSight = Set(model.home.filter { shown[$0.value] != nil }.keys)
+        // A probe's workspace is in sight off screen, with its helpers' windows alone (spec/tiling-speed.md R-TS12.5).
+        if let p = probe, let area = probeArea(displays, bar: bar) { shown[p.workspace] = .init(display: TilingProbe.display, area: area) }
+        let inSight = Set(model.home.filter { id, n in
+            shown[n] != nil && (n != probe?.workspace || window(id).map { probe?.pids.contains($0.pid) == true } == true)
+        }.keys)
         let places = WindowMoves.places(of: inSight)
         let full = Windows.fullScreenFrames()
         var mine: [WindowID: Window] = [:]

@@ -37,7 +37,7 @@ public enum TilingProbe {
     }
 
     /// R-TS12.2: `start <caller pid> <rounds> <seconds>`. A number missing or empty takes its default.
-    public static func start(_ args: [String], agentWorkspace: Int?, running: Bool, active: Bool,
+    public static func start(_ args: [String], agentWorkspace: Int?, running: Bool, active: Bool, agentInSight: Bool = false,
                              alive: (Int32) -> Bool) -> Start {
         func arg(_ i: Int) -> String? { args.count > i && !args[i].isEmpty ? args[i] : nil }
         func bad(_ why: String) -> Start { .refused(AgentAPI.refusal(.badRequest, why)) }
@@ -49,6 +49,7 @@ public enum TilingProbe {
         guard agentWorkspace != nil else { return .refused(AgentAPI.off) }
         guard !running else { return .refused(AgentAPI.refusal(.probeBusy, "a probe runs already")) }
         guard active else { return .refused(AgentAPI.refusal(.probeOff, "Polycarp isn't placing windows now")) }
+        guard !agentInSight else { return .refused(AgentAPI.refusal(.probeOff, "the agent workspace is in sight; switch away from it first")) }
         return .go(Ask(caller: pid, rounds: r, seconds: s))
     }
 
@@ -72,9 +73,10 @@ public enum TilingProbe {
         public var running: Bool { why == nil }
 
         /// What ends it now, if anything: its deadline, Polycarp leaving active, the agent workspace changing.
-        public func check(now: Double, active: Bool, agentWorkspace: Int?) -> Why? {
+        /// `agentInSight`: a display shows the agent workspace, so its windows are someone's to look at (R-TS12.9).
+        public func check(now: Double, active: Bool, agentWorkspace: Int?, agentInSight: Bool = false) -> Why? {
             guard running else { return nil }
-            if agentWorkspace != workspace { return .workspace }
+            if agentWorkspace != workspace || agentInSight { return .workspace }
             if !active { return .inactive }
             return now >= deadline ? .deadline : nil
         }
@@ -134,6 +136,12 @@ public enum TilingProbe {
     public static func homes(_ added: [(id: WindowID, pid: Int32)], probe: Set<Int32>, agent: Int?) -> [WindowID: Int] {
         guard let agent else { return [:] }
         return Dictionary(added.filter { probe.contains($0.pid) }.map { ($0.id, agent) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// R-TS12.7: the window owners a switch's `Concealment` is built from. A probe helper's windows are left out, so a
+    /// switch neither hides the helper nor parks them: they stay in the probe area.
+    public static func switchOwners(_ owner: [WindowID: Int32], probe: Set<Int32>) -> [WindowID: Int32] {
+        probe.isEmpty ? owner : owner.filter { !probe.contains($0.value) }
     }
 
     // MARK: The numbers

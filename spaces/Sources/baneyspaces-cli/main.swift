@@ -32,6 +32,9 @@ usage: \(me) <command>
   agent status|on [N]|off     the agent workspace: a workspace of its own for agent apps, out of your way
   agent windows [--json]      the windows on the agent workspace (docs/agent-workspace-api.md)
   agent move <window number>  send a window Polycarp places to the agent workspace
+  agent probe [--rounds N] [--seconds S] [--json]
+                              time tiling on the agent workspace, off screen, with windows of its own (1 to 10
+                              rounds, 3; at most S seconds, 1 to 300, 180); exit 1 on a miss, 2 on a refusal
   phone ls|ui|shot|tap|swipe|type|key|shell|mirror   phones for agents (phone help)
   contacts find <query> [--json] [--full]
                               people in Contacts: names and the kinds of handles (--full adds numbers)
@@ -343,6 +346,7 @@ case "contacts", "contact":
 case "agent":
     // The agent workspace: agents work there while you work here.
     let sub = rest.first ?? "status"
+    if sub == "probe" { probeCommand(Array(rest.dropFirst())) }
     let r = call(Wire.Request(op: .agent, text: sub, args: Array(rest.dropFirst()).filter { $0 != "--json" }))
     let info = r.info ?? [:]
     if sub == "windows" {

@@ -139,7 +139,8 @@ so the probe tiles there, off every display, with windows of its own.
    opened, the end of input quits. Without `BANEYSPACES_PROBE_AREA` the helper is the render harness's as before.
 7. A new window of a helper's pid joins the agent workspace in the scan that finds it, before any look
    (`TilingProbe.homes`): never the current workspace, never another, and no claim, rule or parked-app adoption
-   moves it, and a switch never parks it: it stays in the probe area. The helper is scanned while the probe runs,
+   moves it, and a switch neither hides the helper nor parks its windows (`TilingProbe.switchOwners`): they stay in
+   the probe area. The helper is scanned while the probe runs,
    though it is not a regular app.
 8. The probe drives tiling through the same engine and look a key uses (`Tiling.runProbe`), on the agent workspace,
    with a probe window as the one in front and `pressed` the uptime the probe asked. A focus moves the engine's
@@ -147,7 +148,8 @@ so the probe tiles there, off every display, with windows of its own.
    any other command, and an outcome that would cross a display or turn tiling on or off, does nothing.
 9. A probe ends when it is done; at its deadline (a timer in the app, at most 300 s); when the caller's process exits
    (a pid already gone at the start is `bad_request`); when Polycarp stops placing windows; when the agent workspace
-   changes or turns off. Every end closes the helper's input, stops a helper still running 1 s later, turns the
+   changes, turns off or comes into sight on a display (a start while it is in sight is `probe_off`).
+   Every end closes the helper's input, stops a helper still running 1 s later, turns the
    probe flag off, drops the agent workspace's layout from the engine and writes one trace line
    `probe end why=<done|deadline|caller|inactive|workspace|error>`. Its state is in memory only.
 10. The probe never touches the current workspace, the focus, a display or any app but its helper, so it needs no
@@ -238,4 +240,6 @@ Each row is a test; the test names it.
 | 59 | R-TS12.8 | probe asks `toggle` or `scratchpad` | refused |
 | 60 | R-TS12.12 | samples [10, 20, 30, 40, 1000] | p50 30, p90 1000, max 1000 |
 | 61 | R-TS12.12 | one miss among 5 | misses 1, exit code 1 |
+| 62 | R-TS12.7 | a switch hides window 1 (app 40) and windows 5, 6 of probe helper 77 | helper 77 not hidden, 5 and 6 not parked; app 40 hidden |
+| 63 | R-TS12.9 | start while a display shows agent workspace 9; a running probe when it comes into sight | `probe_off`; ended, why `workspace` |
 Cases 21, 22 and 24 to 30 have no safe pure test: they are wiring tests that read `Spaces.swift`, plus the probe live.

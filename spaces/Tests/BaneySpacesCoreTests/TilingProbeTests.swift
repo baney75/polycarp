@@ -214,4 +214,27 @@ final class TilingProbeTests: XCTestCase {
         XCTAssertEqual(close?.writes, 2)
         XCTAssertEqual(TilingProbe.code(TilingProbe.stats(samples)), 1)
     }
+
+    func testCase62ASwitchNeitherHidesNorParksTheProbeHelper() {
+        // Helper pid 77 owns 5 and 6 on the agent workspace; his app 40 owns 1 (hidden), app 41 owns 2 (shown).
+        let owner: [WindowID: Int32] = [1: 40, 2: 41, 5: 77, 6: 77]
+        let plan = SwitchPlan(hide: [1, 5, 6], show: [2], focus: 2)
+        let how = Concealment(plan: plan, owner: TilingProbe.switchOwners(owner, probe: [77]))
+        XCTAssertFalse(how.hideApps.contains(77))
+        XCTAssertFalse(how.park.contains(5))
+        XCTAssertFalse(how.park.contains(6))
+        XCTAssertTrue(how.hideApps.contains(40))
+        // Without the probe, the helper would be hidden like any app with nothing here.
+        XCTAssertTrue(Concealment(plan: plan, owner: owner).hideApps.contains(77))
+        XCTAssertEqual(TilingProbe.switchOwners(owner, probe: []), owner)
+    }
+
+    func testCase63TheAgentWorkspaceInSightRefusesAStartAndEndsAProbe() {
+        guard case .refused(let r) = TilingProbe.start(["start", "4242", "", ""], agentWorkspace: 9, running: false, active: true,
+                                                     agentInSight: true, alive: { $0 == 4242 }) else { return XCTFail("started") }
+        XCTAssertEqual(r.info?["code"], "probe_off")
+        let session = TilingProbe.Session(.init(caller: 4242, rounds: 1, seconds: 60), workspace: 9, now: 0)
+        XCTAssertNil(session.check(now: 1, active: true, agentWorkspace: 9, agentInSight: false))
+        XCTAssertEqual(session.check(now: 1, active: true, agentWorkspace: 9, agentInSight: true), .workspace)
+    }
 }

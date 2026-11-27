@@ -143,6 +143,8 @@ final class Spaces {
     var onChange: (() -> Void)?
     /// A scan was applied or a switch ended: the window list is as new as it gets. For tiling (`Tiling.look`).
     var onSettled: () -> Void = {}
+    /// A tiling probe that runs (spec/tiling-speed.md R-TS12): the agent workspace it tiles off screen, and its helpers.
+    var probe: (workspace: Int, pids: Set<pid_t>)?
     /// Windows tiling keeps in the corner on a workspace in sight (`scrolling`), and where each goes when Polycarp lets go.
     var stowed: [WindowID: CGRect] = [:]
     /// A window got the focus on its workspace.
@@ -286,7 +288,8 @@ final class Spaces {
     /// The apps scans ask (`ScanApps.covered`): the regular ones, and any still running that owns a window a workspace
     /// holds, so an app that turned accessory (Silas, its window closed) can still say that window is gone.
     private func scanApps() -> Set<pid_t> {
-        let regular = RunningApps.regular
+        // A probe's helpers are accessory apps: scanned while it runs.
+        let regular = RunningApps.regular.union(probe?.pids ?? [])
         let tracked = Set(model.home.keys.compactMap { windows[$0]?.pid })
         return ScanApps.covered(regular: regular, tracked: tracked) { pid in
             NSRunningApplication(processIdentifier: pid).map { !$0.isTerminated } ?? false
@@ -461,6 +464,9 @@ final class Spaces {
         let relisted = Set(fresh.filter { $0.value.answered && !$0.value.partial }.values.flatMap(\.listed))
         let held = LeftEarly.held(leftEarly, scan: plan.serial, relisted: relisted)
         let added = model.sync(seen: list.map(\.id).filter { !held.contains($0) }, alive: alive, on: appeared)
+        // A probe helper's window joins the probe's workspace before any look sees it (R-TS12.7), and nothing else moves it.
+        let probed = TilingProbe.homes(added.compactMap { id in windows[id].map { (id, $0.pid) } }, probe: probe?.pids ?? [], agent: probe?.workspace)
+        for (id, n) in probed { model.assign(id, to: n, focus: false) }
         if model.shown.count > 1, !switching || holding {
             noteMovedAcrossDisplays(list, frames: frames, act: Date() > displaysSettleUntil, bounds: bounds, minimized: minimized)
         }
@@ -524,7 +530,7 @@ final class Spaces {
         // unplaced in plain sight while Accessibility was out isn't new either.
         let now = Date()
         if !firstScan {
-            let fresh = added.filter { !fromLayout.contains($0) && unplaced.isNew($0, known: knownWindows, now: now) }
+            let fresh = added.filter { !fromLayout.contains($0) && probed[$0] == nil && unplaced.isNew($0, known: knownWindows, now: now) }
             var claimed = Set<WindowID>()
             returned = placeClaimed(fresh, claimed: &claimed) || returned
             returned = placeByRule(fresh.filter { !claimed.contains($0) }) || returned
@@ -541,7 +547,7 @@ final class Spaces {
         // An app that autosaves its window position can reopen a window at the hiding spot.
         // One that belongs on another workspace isn't moved into sight here: it's recorded as
         // parked, to come back to the middle of the screen when you go there.
-        for id in added {
+        for id in added where probed[id] == nil {
             guard let w = windows[id], !minimized(id), let f = bounds(id), Geometry.isStranded(f, screens: screens) else { continue }
             let to = Geometry.restoreFrame(saved: nil, size: f.size, screens: screens)
             if model.workspace(of: id).map(model.isShown) == true { w.setFrame(to) } else if saved.frames[id] == nil { saved.frames[id] = to }
@@ -2185,7 +2191,8 @@ final class Spaces {
         let parkedApps = parkedPids()
         // An app whose window a switch held for a workspace not shown goes out of sight with that workspace.
         let heldAway = Set(pendingLayout.values.filter { heldWindows.contains($0.window) && !model.isShown($0.workspace) }.map(\.pid))
-        let how = Concealment(plan: plan, owner: windows.mapValues(\.pid), alsoShown: waiting, neverHidden: parkedApps,
+        let how = Concealment(plan: plan, owner: TilingProbe.switchOwners(windows.mapValues(\.pid), probe: probe?.pids ?? []),
+                              alsoShown: waiting, neverHidden: parkedApps,
                               alsoHidden: heldAway)
         // One tiling keeps in the corner stays there.
         for id in plan.show where stowed[id] != nil { saved.frames[id] = nil }
