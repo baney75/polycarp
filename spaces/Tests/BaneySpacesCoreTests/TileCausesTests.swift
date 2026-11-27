@@ -1,7 +1,7 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// spec/tiling-speed.md R-TS1 and R-TS2, cases 1 to 10 and 64 to 67.
+/// spec/tiling-speed.md R-TS1, R-TS2 and R-TS13, cases 1 to 10 and 64 to 71.
 final class TileCausesTests: XCTestCase {
     private typealias C = TileCauses.Cause
     private func wrote(_ pid: Int32, _ workspace: Int, new: Bool = false) -> TileCauses.Wrote { .init(pid: pid, workspace: workspace, new: new) }
@@ -105,5 +105,38 @@ final class TileCausesTests: XCTestCase {
         c.looked(shown: [1], wrote: [])
         c.looked(shown: [3], wrote: [wrote(8, 3)])
         XCTAssertEqual(c.answer(now: 10.1, wrote: [wrote(8, 3)]), [C(.switch, at: 10, workspace: 3)])
+    }
+
+    /// R-TS13 case 68: a window not drawn yet at look 5 is still waited for while its app's `new` cause is 1 s old.
+    func testCase68AnUndrawnNewWindowIsWaitedForPastFourLooks() {
+        var c = TileCauses()
+        c.add(C(.new, at: 10, pid: 7))
+        XCTAssertTrue(c.keepsWaiting(pid: 7, looks: 5, now: 11))
+        XCTAssertTrue(c.keepsWaiting(pid: 7, looks: 25, now: 12.9))
+    }
+
+    /// R-TS13 case 69: the cause expired at 3 s, so at 3.1 s the wait ends.
+    func testCase69TheWaitEndsWhenTheCauseExpires() {
+        var c = TileCauses()
+        c.add(C(.new, at: 10, pid: 7))
+        XCTAssertFalse(c.keepsWaiting(pid: 7, looks: 5, now: 13.1))
+    }
+
+    /// R-TS13 case 70: no pending `new` cause of its app (none, another app's, a close): four looks as before.
+    func testCase70WithNoNewCauseTheWaitIsFourLooks() {
+        var c = TileCauses()
+        XCTAssertTrue(c.keepsWaiting(pid: 7, looks: 3, now: 11))
+        XCTAssertFalse(c.keepsWaiting(pid: 7, looks: 4, now: 11))
+        c.add(C(.new, at: 10, pid: 8))
+        c.add(C(.close, at: 10, workspace: 1))
+        XCTAssertFalse(c.keepsWaiting(pid: 7, looks: 4, now: 11))
+    }
+
+    /// R-TS13 case 71: an answered cause ends the wait at once.
+    func testCase71AnAnsweredCauseEndsTheWait() {
+        var c = TileCauses()
+        c.add(C(.new, at: 10, pid: 7))
+        _ = c.answer(now: 10.5, wrote: [wrote(7, 1, new: true)])
+        XCTAssertFalse(c.keepsWaiting(pid: 7, looks: 5, now: 11))
     }
 }
