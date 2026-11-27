@@ -163,6 +163,8 @@ final class Tiling {
         for (workspace, others) in engine.staying(after: ids) where others > 0 && shown.contains(workspace) {
             action(.close, how: how, at: at, workspace: workspace)
         }
+        // The space is filled now: no lookSoon, no scan, no settle first (R-TS8).
+        look()
     }
 
     /// The causes one write answers, and when its look began; the rest of each line comes as the write goes on.

@@ -39,7 +39,7 @@ extension Spaces {
             mine[id] = w
             var f = TilingFacts(id: id, pid: w.pid, bundle: "", workspace: n, frame: places[id]?.bounds)
             f.onScreen = places[id]?.onScreen ?? false
-            f.minimized = !f.onScreen && isMinimized(id)
+            f.minimized = minimizedJustNow(id) || !f.onScreen && isMinimized(id)
             f.over = model.isScratch(id) ? .scratchpad : model.pinned.contains(id) ? .pinned : nil
             f.parked = !inSight.contains(id) || isParked(id)
             if let frame = f.frame {
