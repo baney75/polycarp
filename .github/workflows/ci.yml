@@ -78,6 +78,12 @@ jobs:
         run: |
           cargo test --bin polycarp -- --ignored --exact browser::sign::tests::two_builds_have_the_same_designated_requirement | tee "$RUNNER_TEMP/sign.log"
           grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/sign.log"
+      # Downloads Helium's real Windows release and checks its signatures, then refuses a copy with one byte changed.
+      - if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          cargo test --bin polycarp -- --ignored --exact browser_windows::tests::the_real_release_passes_and_a_changed_program_is_refused | tee "$RUNNER_TEMP/helium-windows.log"
+          grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/helium-windows.log"
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
       # Polycarp Browser's launcher, a program of its own (GPL).

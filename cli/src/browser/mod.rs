@@ -289,7 +289,7 @@ pub fn doctor(home: &Path, cache: &Path, app: Option<&Path>) -> Option<String> {
 }
 
 /// The first words this command answers. Anything else is the old agent browser's command.
-const VERBS: [&str; 7] = [
+pub(crate) const VERBS: [&str; 7] = [
     "install",
     "update",
     "status",
