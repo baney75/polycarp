@@ -68,8 +68,9 @@ before. The window server's list and the retry timers stay as the backstop, not 
 
 ### R-TS7 Nothing regresses
 `swift test` passes. `BANEYSPACES_RENDER_TILE_TIMING` exits 0: every helper window on its tile, nothing written at
-rest. Each round it also times a move key on the new window and a close of another window on real windows: each plans
-at most one frame per window, every window ends on its tile, and a move key that moves nothing either way fails. No window ends off its tile: the `TilingEngine`, `TilingRequest` and `Tiling*` tests pass unchanged unless a
+rest. Each round it also times a move key on the new window, that window let go over another window's tile (a drag into a
+tile), and a close of another window on real windows (a window sent to another workspace leaves its tile the same way): each plans
+at most one frame per window, every window ends on its tile, and a move key that moves nothing either way, or a drop that moves nothing, fails. No window ends off its tile: the `TilingEngine`, `TilingRequest` and `Tiling*` tests pass unchanged unless a
 rule here changes them.
 
 ### R-TS8 A window that leaves fills its space at once
@@ -211,7 +212,7 @@ Each row is a test; the test names it.
 | 20 | R-TS5 | window 1 in flight to T, touched | a plan that wants T asks again |
 | 21 | R-TS6 | `kAXWindowCreated` from pid 7 | a scan asking pid 7 starts at once |
 | 22 | R-TS6 | `kAXUIElementDestroyed` from a window of pid 7 | a scan asking pid 7 starts at once |
-| 23 | R-TS7 | `BANEYSPACES_RENDER_TILE_TIMING=20 Polycarp --render <dir>` | exit 0; prints `a move key` and `a close` lines |
+| 23 | R-TS7 | `BANEYSPACES_RENDER_TILE_TIMING=20 Polycarp --render <dir>` | exit 0; prints `a move key`, `a drag` and `a close` lines |
 | 24 | R-TS8 | `kAXUIElementDestroyed` for a tiled window the window server still lists | the window leaves the model and the layout at once; the look that follows plans its neighbours |
 | 25 | R-TS8 | the same from ⌘W or a tab merge (the same note) | the same as 24 |
 | 26 | R-TS8 | an app that isn't in front quits | its windows leave at once; the neighbours fill |
