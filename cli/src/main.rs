@@ -12,7 +12,6 @@ mod agent;
 #[cfg(target_os = "macos")]
 mod browser;
 #[cfg(any(target_os = "linux", test))]
-#[allow(dead_code)]
 mod browser_linux;
 #[cfg(any(windows, test))]
 mod browser_windows;
@@ -94,7 +93,7 @@ Usage:
   polycarp look <command>      save, share and apply how all of Polycarp looks (polycarp look --help)
   polycarp sync <command>      Polycarp's settings, the same on each of your devices (polycarp sync --help)
   polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
-  polycarp browser <command>   Polycarp Browser, made on a Mac from Helium's release, and checked on Windows so far
+  polycarp browser <command>   Polycarp Browser, made on a Mac from Helium's release, and checked on Windows and Linux so far
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
   polycarp agent <command>     one MCP gateway for Claude, Codex, Grok Bot and web assistants (polycarp agent --help)
   polycarp install --local-studio [--uninstall]   add Polycarp's plugin to Local Studio and grant its tools
@@ -162,7 +161,7 @@ fn main() {
     std::process::exit(code);
 }
 
-/// Polycarp Browser is made on a Mac; on Windows only its release is checked so far. Anything it does not answer is the old agent browser's command: say where that went, with the exit code for a command used wrong.
+/// Polycarp Browser is made on a Mac; on Windows and Linux only its release is checked so far. Anything it does not answer is the old agent browser's command: say where that went, with the exit code for a command used wrong.
 fn browser(args: &[OsString]) -> i32 {
     #[cfg(target_os = "macos")]
     if let Some(code) = browser::run(
@@ -175,6 +174,10 @@ fn browser(args: &[OsString]) -> i32 {
     }
     #[cfg(windows)]
     if let Some(code) = browser_windows::run(args, home(), home().map(|h| update::cache_dir(&h))) {
+        return code;
+    }
+    #[cfg(target_os = "linux")]
+    if let Some(code) = browser_linux::run(args, home(), home().map(|h| update::cache_dir(&h))) {
         return code;
     }
     let _ = args;

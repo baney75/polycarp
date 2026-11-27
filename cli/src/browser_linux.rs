@@ -3,6 +3,7 @@
 //! layout and throws it away. Nothing is installed and nothing from the release is run. The rules are in
 //! `../browser/AGENTS.md`.
 
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -22,12 +23,28 @@ mod listing;
 use dry::{is_link, refuse, relative, Refused};
 use listing::Release;
 
+#[cfg(target_os = "linux")]
+const FEED: &str = "https://api.github.com/repos/imputnet/helium-linux/releases/latest";
 const DOWNLOADS: &str = "https://github.com/imputnet/helium-linux/releases/download";
 /// Helium's public signing key, byte for byte as `pubkey.asc` in imputnet/helium-linux publishes it.
 const KEY: &str = include_str!("browser/helium-linux.asc");
 /// The primary key every release must be signed under. The test `the_committed_key_is_the_pinned_one` proves
 /// `KEY` is this key.
 const FINGERPRINT: &str = "BE677C1989D35EAB2C5F26C9351601AD01D6378E";
+const ONLY: &str = "polycarp browser: only `install --dry-run` works on Linux so far.";
+
+/// None when these arguments are not a browser command.
+pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> Option<i32> {
+    dry::run(args, home, cache, ONLY, dry_run)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn dry_run(dir: &Path) -> Result<String, Refused> {
+    Err(Refused::new(
+        "system",
+        format!("{} is not Linux", dir.display()),
+    ))
+}
 
 /// Helium's name for this processor.
 fn arch_name(arch: &str) -> Result<&'static str, Refused> {
@@ -234,6 +251,168 @@ fn runnable(meta: &fs::Metadata) -> bool {
         false
     }
 }
+
+#[cfg(target_os = "linux")]
+mod system {
+    use super::*;
+    use std::os::unix::fs::DirBuilderExt;
+    use std::process::{Command, Stdio};
+
+    const CURL: &str = "/usr/bin/curl";
+    const GPGV: &str = "/usr/bin/gpgv";
+    const TAR: &str = "/usr/bin/tar";
+    const XZ: &str = "/usr/bin/xz";
+
+    fn present(check: &'static str, program: &str) -> Result<(), Refused> {
+        if Path::new(program).is_file() {
+            return Ok(());
+        }
+        Err(Refused::new(check, format!("{program} is missing")))
+    }
+
+    /// Runs a program by its absolute path, which must succeed; its output.
+    fn must(check: &'static str, mut command: Command) -> Result<String, Refused> {
+        let program = PathBuf::from(command.get_program());
+        present(check, &program.to_string_lossy())?;
+        let ran = command.stdin(Stdio::null()).output().map_err(|e| {
+            Refused::new(check, format!("{} could not run: {e}", program.display()))
+        })?;
+        if !ran.status.success() {
+            let said = String::from_utf8_lossy(&ran.stderr);
+            let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
+            let why = last.map_or(format!("exit {:?}", ran.status.code()), str::to_string);
+            return Err(Refused::new(check, why));
+        }
+        Ok(String::from_utf8_lossy(&ran.stdout).into_owned())
+    }
+
+    /// `curl`, https only, without the person's own curl settings, as on the Mac and Windows.
+    fn curl(check: &'static str, limit: u64, more: &[&std::ffi::OsStr]) -> Result<String, Refused> {
+        let mut command = Command::new(CURL);
+        let options =
+            "-q --fail --silent --show-error --location --proto =https --proto-redir =https \
+                       --tlsv1.2 --retry 2 --connect-timeout 20 --user-agent polycarp-browser \
+                       --max-filesize 734003200 --max-time";
+        command
+            .args(options.split_whitespace())
+            .arg(limit.to_string())
+            .args(more);
+        must(check, command)
+    }
+
+    fn newest(arch: &str) -> Result<(Release, Release), Refused> {
+        let accept = "Accept: application/vnd.github+json";
+        let said = curl(
+            "release",
+            60,
+            &[
+                "--header".as_ref(),
+                accept.as_ref(),
+                "--".as_ref(),
+                FEED.as_ref(),
+            ],
+        )?;
+        parse(&said, arch)
+    }
+
+    /// The release, this processor's name for it, and its tarball and signature in `dir`.
+    pub fn download(dir: &Path) -> Result<(Release, &'static str, PathBuf, PathBuf), Refused> {
+        let arch = arch_name(std::env::consts::ARCH)?;
+        fs::create_dir_all(dir).map_err(refuse("download", "making the cache folder"))?;
+        let (tarball, signature) = newest(arch)?;
+        let get = |release: &Release| {
+            let url = release.url.clone();
+            move |part: &Path| {
+                let more = [
+                    "--output".as_ref(),
+                    part.as_os_str(),
+                    "--".as_ref(),
+                    url.as_ref(),
+                ];
+                curl("download", 1800, &more).map(drop)
+            }
+        };
+        let t = fetch(&tarball, &signature, dir, &get(&tarball))?;
+        let s = fetch(&signature, &tarball, dir, &get(&signature))?;
+        Ok((tarball, arch, t, s))
+    }
+
+    /// gpgv's check of `signature` on `tarball` against Helium's key alone, written into `work` with an empty
+    /// GnuPG folder beside it, so no keyring or setting of the person's is read.
+    pub fn signed(tarball: &Path, signature: &Path, work: &Path) -> Result<(), Refused> {
+        let keyring = work.join("helium.gpg");
+        fs::write(&keyring, dearmor(KEY)?).map_err(refuse("signature", "writing Helium's key"))?;
+        let home = work.join("gnupg");
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&home)
+            .map_err(refuse("signature", "making an empty GnuPG folder"))?;
+        present("signature", GPGV)?;
+        let ran = Command::new(GPGV)
+            .env_clear()
+            .env("GNUPGHOME", &home)
+            .env("LC_ALL", "C")
+            .args(["--status-fd", "1", "--keyring"])
+            .arg(&keyring)
+            .arg(signature)
+            .arg(tarball)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|e| Refused::new("signature", format!("{GPGV} could not run: {e}")))?;
+        judge(&String::from_utf8_lossy(&ran.stdout), ran.status.code())
+    }
+
+    /// The number of files in the tarball, unpacked into `work` by GNU tar, which drops a leading `/` and skips
+    /// names with `..`; `laid_out` then refuses any link that leads out.
+    pub fn unpack(
+        tarball: &Path,
+        work: &Path,
+        release: &Release,
+        arch: &str,
+    ) -> Result<usize, Refused> {
+        let into = work.join("unpacked");
+        fs::create_dir(&into).map_err(refuse("unpack", "making its folder"))?;
+        present("unpack", XZ)?;
+        let mut tar = Command::new(TAR);
+        tar.env_clear()
+            .env("PATH", "/usr/bin:/bin")
+            .env("LC_ALL", "C")
+            .arg("--extract")
+            .arg("--file")
+            .arg(tarball)
+            .arg("--directory")
+            .arg(&into)
+            .arg(format!("--use-compress-program={XZ}"))
+            .arg("--no-same-owner");
+        must("unpack", tar)?;
+        laid_out(&into, &release.version, arch)
+    }
+
+    /// Downloads and checks the newest release in `dir`, then throws the unpacked copy away.
+    pub fn dry_run(dir: &Path) -> Result<String, Refused> {
+        let dir =
+            std::path::absolute(dir).map_err(refuse("download", "finding the cache folder"))?;
+        let (release, arch, tarball, signature) = download(&dir)?;
+        let work = dir.join("work");
+        if fs::symlink_metadata(&work).is_ok() {
+            fs::remove_dir_all(&work).map_err(refuse("work folder", "clearing it"))?;
+        }
+        fs::create_dir(&work).map_err(refuse("work folder", "making it"))?;
+        let checked = signed(&tarball, &signature, &work)
+            .and_then(|()| unpack(&tarball, &work, &release, arch));
+        let _ = fs::remove_dir_all(&work);
+        let n = checked?;
+        Ok(format!(
+            "Helium {} was downloaded and passed its checks: the sha256 GitHub lists, and the signature of \
+             Helium's key BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E on the release ({n} files). Nothing \
+             was installed.",
+            release.version
+        ))
+    }
+}
+
+#[cfg(target_os = "linux")]
+use system::dry_run;
 
 #[cfg(test)]
 mod tests {
@@ -577,5 +756,63 @@ mod tests {
         );
         fs::remove_dir_all(&real).unwrap();
         fs::remove_dir_all(&work).unwrap();
+    }
+
+    #[test]
+    fn only_install_dry_run_is_answered() {
+        #[cfg(target_os = "macos")]
+        assert_eq!(dry::VERBS, crate::browser::VERBS);
+        let run_ = |a: &[&str], home: Option<PathBuf>| {
+            run(
+                &a.iter().map(OsString::from).collect::<Vec<_>>(),
+                home.clone(),
+                home,
+            )
+        };
+        let home = Some(PathBuf::from("/nowhere"));
+        for asked in [&[][..], &["help"], &["--help"], &["-h"]] {
+            assert_eq!(run_(asked, home.clone()), Some(0), "{asked:?}");
+        }
+        assert_eq!(run_(&["serve"], home.clone()), None);
+        for asked in [
+            &["install"][..],
+            &["install", "--dry-run", "extra"],
+            &["status"],
+            &["update"],
+        ] {
+            assert_eq!(run_(asked, home.clone()), Some(2), "{asked:?}");
+        }
+        assert_eq!(run_(&["install", "--dry-run"], None), Some(1));
+    }
+
+    /// The real release, downloaded into a temp cache: it passes, and one changed byte in the tarball is refused.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn the_real_release_passes_and_a_changed_byte_is_refused() {
+        let cache = temp("live");
+        let dir = cache.join("browser");
+        let line = system::dry_run(&dir).unwrap();
+        let n = line
+            .split("on the release (")
+            .nth(1)
+            .and_then(|r| r.split(' ').next());
+        assert!(
+            n.and_then(|n| n.parse::<usize>().ok())
+                .is_some_and(|n| n >= 100),
+            "{line}"
+        );
+        assert!(!dir.join("work").exists(), "the unpacked copy was kept");
+        let (_, _, tarball, signature) = system::download(&dir).unwrap();
+        let work = cache.join("work");
+        fs::create_dir(&work).unwrap();
+        let mut bytes = fs::read(&tarball).unwrap();
+        let middle = bytes.len() / 2;
+        bytes[middle] ^= 0xff;
+        let changed = cache.join("changed.tar.xz");
+        fs::write(&changed, bytes).unwrap();
+        let e = system::signed(&changed, &signature, &work).unwrap_err();
+        assert_eq!((e.check, e.why.as_str()), ("signature", "gpgv said BADSIG"));
+        fs::remove_dir_all(&cache).unwrap();
     }
 }
