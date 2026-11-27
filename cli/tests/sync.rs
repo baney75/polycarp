@@ -31,6 +31,7 @@ impl Device {
             .env("HOME", self.root.join("home"))
             .env("USERPROFILE", self.root.join("home"))
             .env("APPDATA", self.root.join("home"))
+            .env("LOCALAPPDATA", self.root.join("home"))
             .env("POLYCARP_CONFIG_DIR", self.root.join("cfg"))
             .env("POLYCARP_SUPPORT_DIR", self.root.join("support"))
             .env("POLYCARP_SYNC_KEY_STORE", "file")
@@ -253,5 +254,67 @@ fn usage_and_refusals() {
         .fails(&["sync", "init", "--relay", "ssh:-oProxyCommand=x"])
         .contains("not a relay address"));
     assert!(a.ok(&["sync", "--help"]).contains("polycarp sync init"));
+    let _ = fs::remove_dir_all(&world);
+}
+
+/// Where a background run writes its log, under a device's temporary home.
+fn sync_log(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library/Logs/polycarp-sync.log")
+    } else if cfg!(windows) {
+        home.join("Polycarp/sync.log")
+    } else {
+        home.join(".local/state/polycarp/sync.log")
+    }
+}
+
+#[test]
+fn the_background_run_is_quiet_waits_after_a_failure_and_catches_up() {
+    let world = root("auto");
+    let relay = world.join("relay");
+    fs::create_dir_all(&relay).unwrap();
+    fs::write(relay.join("polycarp-sync"), b"").unwrap();
+    let addr = format!("dir:{}", relay.display());
+    let a = Device::new(&world, "a");
+    let log = sync_log(&a.root.join("home"));
+    a.ok(&["sync", "init", "--relay", &addr, "--name", "mac"]);
+
+    // A run that works prints nothing and logs nothing.
+    let o = a.run(&["sync", "now", "--background"]);
+    assert!(o.status.success() && o.stdout.is_empty() && o.stderr.is_empty());
+    assert!(!log.exists());
+
+    // The relay away: one quiet failure, one log line, and the next tick waits.
+    let away = world.join("relay-away");
+    fs::rename(&relay, &away).unwrap();
+    let o = a.run(&["sync", "now", "--background"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(o.stdout.is_empty() && o.stderr.is_empty());
+    let text = fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().count(), 1);
+    assert!(
+        text.contains("relay") && text.contains("next try in 10 minutes"),
+        "{text}"
+    );
+    let o = a.run(&["sync", "now", "--background"]);
+    assert!(o.status.success(), "a tick inside the wait does nothing");
+    assert_eq!(fs::read_to_string(&log).unwrap(), text);
+
+    // Back: a sync by hand ends the wait, so the next tick runs again, and a failure then starts over at 10 minutes.
+    fs::rename(&away, &relay).unwrap();
+    a.ok(&["sync", "now"]);
+    assert!(a.run(&["sync", "now", "--background"]).status.success());
+    fs::rename(&relay, &away).unwrap();
+    assert_eq!(
+        a.run(&["sync", "now", "--background"]).status.code(),
+        Some(1)
+    );
+    let text = fs::read_to_string(&log).unwrap();
+    assert_eq!(text.lines().count(), 2);
+    assert!(text
+        .lines()
+        .last()
+        .unwrap()
+        .ends_with("next try in 10 minutes"));
     let _ = fs::remove_dir_all(&world);
 }

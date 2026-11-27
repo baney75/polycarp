@@ -1,11 +1,13 @@
 //! The `polycarp sync` command. Each run reads the relay first and changes nothing here until the relay answered and
 //! every bundle checked out, so an unreachable relay or a changed bundle leaves this device as it was.
 
+use super::auto::{self, Backoff};
 use super::crypto::{self, Device, DeviceList, Me, Sealed};
 use super::model::{self, Bundle};
 use super::relay::{self, Relay};
 use super::settings::{self, Paths};
 use super::store::Store;
+use crate::files::config::Os;
 use age::secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsString;
@@ -19,6 +21,7 @@ polycarp sync: Polycarp's settings, the same on each of your own devices. Docs: 
   polycarp sync init [--relay ADDR] [--name NAME]   set up this device (the first, or one to approve)
   polycarp sync approve CODE [--fingerprint FP]     on a device already set up: let the new one in
   polycarp sync now [--approver FP]                 sync now (FP: the approving device's, the first time)
+  polycarp sync now --background                    what the 5-minute run does: quiet, waits after failures
   polycarp sync devices                             the devices that take part
   polycarp sync remove DEVICE                       drop a device; later bundles are sealed without it
 
@@ -26,6 +29,7 @@ ADDR is ssh:HOST, ssh:HOST:DIR or dir:/PATH (default ssh:parish1). The relay hol
 
 const DEVICES: &str = "devices.json";
 const SETTINGS: &str = "settings.age.json";
+const AUTO: &str = "auto.json";
 
 #[derive(Serialize, Deserialize)]
 struct State {
@@ -36,6 +40,8 @@ struct State {
 struct Ctx {
     dir: PathBuf,
     paths: Paths,
+    /// A background run: notes go to the sync log, never the screen.
+    quiet: bool,
 }
 
 fn now_ms() -> u64 {
@@ -78,6 +84,7 @@ fn ctx() -> Result<Ctx, String> {
             config,
             support: support_dir()?,
         },
+        quiet: false,
     })
 }
 
@@ -379,7 +386,11 @@ fn sync_settings(
         Ok(((merged, wrote), theme))
     })?;
     for n in notes {
-        eprintln!("theme: {n}");
+        match (c.quiet, log_path()) {
+            (true, Ok(log)) => auto::log_line(&log, &format!("theme: {n}")),
+            (true, Err(_)) => {}
+            (false, _) => eprintln!("theme: {n}"),
+        }
     }
     write_json(&last_path, &merged)?;
     let same = theirs
@@ -396,16 +407,67 @@ fn sync_settings(
     Ok(wrote)
 }
 
+/// One sync. Any that works ends a background run's wait.
+fn sync_once(c: &Ctx, approver: Option<&str>) -> Result<Vec<PathBuf>, String> {
+    let (_, me, dev, relay) = load(c)?;
+    let list = current_list(c, &dev, &relay, approver)?;
+    let wrote = sync_settings(c, &me, &dev, &relay, &list, &list)?;
+    let _ = fs::remove_file(c.dir.join(AUTO));
+    Ok(wrote)
+}
+
 fn now(approver: Option<&str>) -> Result<(), String> {
     let c = ctx()?;
-    let (_, me, dev, relay) = load(&c)?;
-    let list = current_list(&c, &dev, &relay, approver)?;
-    let wrote = sync_settings(&c, &me, &dev, &relay, &list, &list)?;
+    let wrote = sync_once(&c, approver)?;
     match wrote.len() {
         0 => println!("Settings are in sync; nothing changed here."),
         n => println!("Settings are in sync; {n} file(s) changed here."),
     }
     Ok(())
+}
+
+fn local_app_data() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+}
+
+fn log_path() -> Result<PathBuf, String> {
+    let home = crate::home().ok_or("no home folder")?;
+    Ok(auto::log_path(
+        Os::current(),
+        &home,
+        local_app_data().as_deref(),
+    ))
+}
+
+/// The 5-minute run: nothing on screen, one log line when it fails, and no try before its wait is over.
+fn background() -> i32 {
+    let fail = |e: String| {
+        if let Ok(log) = log_path() {
+            auto::log_line(&log, &e);
+        }
+        1
+    };
+    let c = match ctx() {
+        Ok(c) => Ctx { quiet: true, ..c },
+        Err(e) => return fail(e),
+    };
+    let path = c.dir.join(AUTO);
+    let b: Backoff = match read_json(&path) {
+        Ok(b) => b.unwrap_or_default(),
+        Err(e) => return fail(e),
+    };
+    let t = now_ms();
+    if !b.due(t) {
+        return 0;
+    }
+    match sync_once(&c, None) {
+        Ok(_) => 0,
+        Err(e) => {
+            let next = b.failed(t);
+            let _ = write_json(&path, &next);
+            fail(format!("{e}; next try in {} minutes", next.wait_min(t)))
+        }
+    }
 }
 
 fn devices() -> Result<(), String> {
@@ -482,6 +544,7 @@ pub fn run(args: &[OsString]) -> i32 {
         ["approve", code, "--fingerprint", fp] => approve(code, Some(fp)),
         ["now"] => now(None),
         ["now", "--approver", fp] => now(Some(fp)),
+        ["now", "--background"] => return background(),
         ["devices"] => devices(),
         ["remove", which] => remove(which),
         _ => {
