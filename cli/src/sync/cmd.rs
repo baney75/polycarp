@@ -11,6 +11,8 @@ use super::store::Store;
 use crate::files::config::Os;
 use age::secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
+use serde_json::Value as Json;
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fs;
 use std::io::{BufRead, Write};
@@ -32,6 +34,7 @@ ADDR is ssh:HOST, ssh:HOST:DIR or dir:/PATH (default ssh:parish1). The relay hol
 
 const DEVICES: &str = "devices.json";
 const SETTINGS: &str = "settings.age.json";
+const PREFS: &str = "prefs.age.json";
 const AUTO: &str = "auto.json";
 
 #[derive(Serialize, Deserialize)]
@@ -343,8 +346,137 @@ fn current_list(
     Ok(list)
 }
 
-/// One settings sync. Returns the files written here.
-/// The bundle on the relay is checked against `opened`, and the merged one sealed to `list`.
+/// A bundle of `kind` from the relay, checked against `opened`.
+fn fetch(
+    me: &Me,
+    relay: &Relay,
+    opened: &DeviceList,
+    file: &str,
+    kind: &str,
+) -> Result<Option<(Sealed, Bundle)>, String> {
+    let Some(b) = relay.get(file)? else {
+        return Ok(None);
+    };
+    let refused = |why: &str| {
+        format!("the {kind} bundle on the relay was refused: {why}; nothing of it was applied")
+    };
+    let sealed: Sealed = serde_json::from_slice(&b).map_err(|_| refused("it is not readable"))?;
+    let plain = crypto::open(me, opened, kind, &sealed)?;
+    let bundle: Bundle = serde_json::from_slice(&plain)
+        .ok()
+        .filter(|b: &Bundle| b.kind == kind)
+        .ok_or_else(|| refused("it is damaged"))?;
+    Ok(Some((sealed, bundle)))
+}
+
+/// This device's `snap` joined with `last` and the relay's bundle: the bundle to keep and send.
+fn join(
+    dev: &Device,
+    kind: &str,
+    last: Option<&Bundle>,
+    mut snap: BTreeMap<String, Json>,
+    theirs: Option<&Bundle>,
+) -> Bundle {
+    // A device's first sync joins what the others already have. Its own values are not edits made after theirs
+    // (a new install's defaults would win over months of settings), so where the relay has an item, the relay's
+    // stands, and this device adds only what the relay has never had.
+    if let (None, Some(b)) = (last, theirs) {
+        snap.retain(|id, _| !b.items.contains_key(id));
+    }
+    let empty = Bundle {
+        kind: kind.into(),
+        ..Default::default()
+    };
+    let local = model::observe(last.unwrap_or(&empty), &snap, now_ms(), &dev.id);
+    let mut merged = match theirs {
+        Some(b) => model::merge(&local, b),
+        None => local,
+    };
+    model::prune(&mut merged, now_ms());
+    merged
+}
+
+/// Seals `merged` to `list` and puts it on the relay, unless the relay already holds it sealed to this list.
+#[allow(clippy::too_many_arguments)]
+fn send(
+    me: &Me,
+    dev: &Device,
+    relay: &Relay,
+    list: &DeviceList,
+    file: &str,
+    kind: &str,
+    merged: &Bundle,
+    theirs: Option<&(Sealed, Bundle)>,
+) -> Result<(), String> {
+    if theirs.is_some_and(|(s, b)| b == merged && s.list_version == list.version) {
+        return Ok(());
+    }
+    let plain = serde_json::to_vec(merged).map_err(|e| e.to_string())?;
+    let sealed = crypto::seal(me, &dev.id, list, kind, &plain)?;
+    relay.put(
+        file,
+        &serde_json::to_vec(&sealed).map_err(|e| e.to_string())?,
+    )
+}
+
+/// The `prefs:` values of a settings bundle from before preferences had their own, as a `prefs` bundle. Its deletes
+/// are left out: a build from before preferences synced at all wrote a delete for every one it saw, so a delete
+/// there is no one's choice.
+fn prefs_part(b: &Bundle) -> Option<Bundle> {
+    let items: BTreeMap<_, _> = b
+        .items
+        .iter()
+        .filter(|(id, i)| id.starts_with("prefs:") && i.value.is_some())
+        .map(|(id, i)| (id.clone(), i.clone()))
+        .collect();
+    (!items.is_empty()).then(|| Bundle {
+        kind: "prefs".into(),
+        items,
+    })
+}
+
+/// One preferences sync, in its own bundle. A build from before it never opens that bundle, so it can't take a
+/// preference it doesn't read for a delete. Until some device has written that bundle, the relay's side is the
+/// `prefs:` values the settings bundle held, with their times. A device that has never synced this bundle is at its
+/// first sync whatever its settings state holds: a build from before #895 never read its own preferences, so what
+/// its Mac holds now was never synced, and the relay's values stand. Returns the domain or file written here.
+#[allow(clippy::too_many_arguments)]
+fn sync_prefs(
+    c: &Ctx,
+    me: &Me,
+    dev: &Device,
+    relay: &Relay,
+    opened: &DeviceList,
+    list: &DeviceList,
+    old_theirs: Option<&Bundle>,
+) -> Result<Vec<PathBuf>, String> {
+    let fetched = fetch(me, relay, opened, PREFS, "prefs")?;
+    let theirs = match &fetched {
+        Some((_, b)) => Some(b.clone()),
+        None => old_theirs.and_then(prefs_part),
+    };
+    let last_path = c.dir.join("prefs.last.json");
+    let last: Option<Bundle> = read_json(&last_path)?;
+    let last_values = last.as_ref().map(model::values).unwrap_or_default();
+    let snap = prefs::local_items(prefs::snapshot(&c.prefs)?, &last_values);
+    let merged = join(dev, "prefs", last.as_ref(), snap, theirs.as_ref());
+    let wrote = prefs::apply(&c.prefs, &model::values(&merged))?;
+    write_json(&last_path, &merged)?;
+    send(
+        me,
+        dev,
+        relay,
+        list,
+        PREFS,
+        "prefs",
+        &merged,
+        fetched.as_ref(),
+    )?;
+    Ok(wrote)
+}
+
+/// One settings sync, preferences first. Returns the files written here.
+/// The bundles on the relay are checked against `opened`, and the merged ones sealed to `list`.
 fn sync_settings(
     c: &Ctx,
     me: &Me,
@@ -353,59 +485,41 @@ fn sync_settings(
     opened: &DeviceList,
     list: &DeviceList,
 ) -> Result<Vec<PathBuf>, String> {
-    let theirs = match relay.get(SETTINGS)? {
-        None => None,
-        Some(b) => {
-            let sealed: Sealed = serde_json::from_slice(&b)
-                .map_err(|_| "the settings bundle on the relay was refused: it is not readable; nothing of it was applied")?;
-            let plain = crypto::open(me, opened, "settings", &sealed)?;
-            let bundle: Bundle = serde_json::from_slice(&plain)
-                .ok()
-                .filter(|b: &Bundle| b.kind == "settings")
-                .ok_or("the settings bundle on the relay was refused: it is damaged; nothing of it was applied")?;
-            Some((sealed, bundle))
-        }
-    };
+    let theirs = fetch(me, relay, opened, SETTINGS, "settings")?;
     let last_path = c.dir.join("settings.last.json");
     let last: Option<Bundle> = read_json(&last_path)?;
-    let ((merged, wrote), notes) = crate::theme::locked_then_refresh(|| {
+    let mut wrote = sync_prefs(
+        c,
+        me,
+        dev,
+        relay,
+        opened,
+        list,
+        theirs.as_ref().map(|(_, b)| b),
+    )?;
+    let ((merged, files), notes) = crate::theme::locked_then_refresh(|| {
         let mut snap = settings::snapshot(&c.paths)?;
-        let last_values = last.as_ref().map(model::values).unwrap_or_default();
-        let had_prefs = last
-            .as_ref()
-            .is_some_and(|b| b.items.keys().any(|k| k.starts_with("prefs:")));
-        snap.extend(prefs::local_items(
-            prefs::snapshot(&c.prefs)?,
-            &last_values,
-            had_prefs,
-            |id| {
-                theirs
-                    .as_ref()
-                    .is_some_and(|(_, b)| b.items.contains_key(id))
-            },
-        ));
-        // A device's first sync joins what the others already have. Its own values are not edits made after theirs
-        // (a new install's defaults would win over months of settings), so where the relay has an item, the
-        // relay's stands, and this device adds only what the relay has never had.
-        if let (None, Some((_, b))) = (&last, &theirs) {
-            snap.retain(|id, _| !b.items.contains_key(id));
+        // `prefs:` items from before preferences had their own bundle are passed back as they were, so a build from
+        // then still finds them and nothing here deletes them.
+        if let Some(b) = &last {
+            snap.extend(
+                model::values(b)
+                    .into_iter()
+                    .filter(|(id, _)| id.starts_with("prefs:")),
+            );
         }
-        let empty = Bundle {
-            kind: "settings".into(),
-            ..Default::default()
-        };
-        let local = model::observe(last.as_ref().unwrap_or(&empty), &snap, now_ms(), &dev.id);
-        let mut merged = match &theirs {
-            Some((_, b)) => model::merge(&local, b),
-            None => local,
-        };
-        model::prune(&mut merged, now_ms());
-        let values = model::values(&merged);
-        let mut wrote = settings::apply(&c.paths, &values)?;
-        let theme = wrote.iter().any(|p| p.starts_with(&c.paths.config));
-        wrote.extend(prefs::apply(&c.prefs, &values)?);
-        Ok(((merged, wrote), theme))
+        let merged = join(
+            dev,
+            "settings",
+            last.as_ref(),
+            snap,
+            theirs.as_ref().map(|(_, b)| b),
+        );
+        let files = settings::apply(&c.paths, &model::values(&merged))?;
+        let theme = files.iter().any(|p| p.starts_with(&c.paths.config));
+        Ok(((merged, files), theme))
     })?;
+    wrote.extend(files);
     for n in notes {
         match (c.quiet, log_path()) {
             (true, Ok(log)) => auto::log_line(&log, &format!("theme: {n}")),
@@ -414,18 +528,17 @@ fn sync_settings(
         }
     }
     write_json(&last_path, &merged)?;
-    let same = theirs
-        .as_ref()
-        .is_some_and(|(s, b)| *b == merged && s.list_version == list.version);
-    if !same {
-        let plain = serde_json::to_vec(&merged).map_err(|e| e.to_string())?;
-        let sealed = crypto::seal(me, &dev.id, list, "settings", &plain)?;
-        relay.put(
-            SETTINGS,
-            &serde_json::to_vec(&sealed).map_err(|e| e.to_string())?,
-        )?;
-    }
-    Ok(wrote)
+    send(
+        me,
+        dev,
+        relay,
+        list,
+        SETTINGS,
+        "settings",
+        &merged,
+        theirs.as_ref(),
+    )
+    .map(|_| wrote)
 }
 
 /// One sync. Any that works ends a background run's wait.
