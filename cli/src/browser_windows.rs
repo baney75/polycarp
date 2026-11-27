@@ -231,12 +231,18 @@ fn relative(root: &Path, path: &Path) -> String {
         .to_string()
 }
 
-/// PowerShell's answer, one `<Status>\t<Subject>\t<FullName>` line per program, judged against the programs Rust
-/// found. The number of programs when every one is there, `Valid` and signed by imput LLC.
+/// A path inside the release as both sides spell it: Windows ignores case, and either slash may separate.
+fn key(rel: &str) -> String {
+    rel.replace('\\', "/").to_lowercase()
+}
+
+/// PowerShell's answer, one `<Status>\t<Subject>\t<path inside the release>` line per program, judged against the
+/// programs Rust found. Paths are compared inside the release, because the two sides can spell the folder itself
+/// differently (a short 8.3 name against the long one). The number of programs when every one is there, `Valid` and
+/// signed by imput LLC.
 fn judge(said: &str, root: &Path, walked: &[PathBuf]) -> Result<usize, Refused> {
-    let key = |p: &str| p.to_lowercase();
-    let walked_keys: Vec<String> = walked.iter().map(|p| key(&p.to_string_lossy())).collect();
-    let chrome = key(&root.join("chrome.exe").to_string_lossy());
+    let walked_keys: Vec<String> = walked.iter().map(|p| key(&relative(root, p))).collect();
+    let chrome = key("chrome.exe");
     if !walked_keys.contains(&chrome) {
         return Err(Refused::new(
             "signature",
@@ -252,7 +258,7 @@ fn judge(said: &str, root: &Path, walked: &[PathBuf]) -> Result<usize, Refused> 
                 "PowerShell's answer was not understood",
             ));
         };
-        let name = relative(root, Path::new(path));
+        let name = path.replace('\\', "/");
         if !walked_keys.contains(&key(path)) || seen.contains(&key(path)) {
             let why = format!("{name} was checked but is not one of the programs found");
             return Err(Refused::new("signature", why));
@@ -271,7 +277,7 @@ fn judge(said: &str, root: &Path, walked: &[PathBuf]) -> Result<usize, Refused> 
     }
     if let Some(missed) = walked
         .iter()
-        .find(|p| !seen.contains(&key(&p.to_string_lossy())))
+        .find(|p| !seen.contains(&key(&relative(root, p))))
     {
         let why = format!("{}: a program was not checked", relative(root, missed));
         return Err(Refused::new("signature", why));
@@ -287,10 +293,13 @@ mod system {
     /// Lists each program's signature. The folder arrives in an environment variable, never in the script's text.
     const SCRIPT: &str = "$ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-Get-ChildItem -LiteralPath $env:POLYCARP_HELIUM_DIR -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
-  $s = Get-AuthenticodeSignature -LiteralPath $_.FullName
+$root = (Get-Item -LiteralPath $env:POLYCARP_HELIUM_DIR).FullName.TrimEnd('\\')
+Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -in '.exe', '.dll' } | ForEach-Object {
+  $full = $_.FullName
+  if (-not $full.StartsWith($root + '\\', [System.StringComparison]::OrdinalIgnoreCase)) { throw \"outside the release: $full\" }
+  $s = Get-AuthenticodeSignature -LiteralPath $full
   $who = if ($s.SignerCertificate) { $s.SignerCertificate.Subject } else { '' }
-  \"{0}`t{1}`t{2}\" -f $s.Status, $who, $_.FullName
+  \"{0}`t{1}`t{2}\" -f $s.Status, $who, $full.Substring($root.Length + 1)
 }";
 
     fn system32(program: &str) -> PathBuf {
@@ -595,7 +604,7 @@ mod tests {
         let good: Vec<_> = files.iter().map(|f| ("Valid", SIGNER, *f)).collect();
         let judged = |lines: &[(&str, &str, &str)]| {
             let line = |(s, who, f): &(&str, &str, &str)| {
-                format!("{s}\t{who}\t{}\r\n", root.join(f).display())
+                format!("{s}\t{who}\t{}\r\n", f.replace('/', "\\"))
             };
             judge(&lines.iter().map(line).collect::<String>(), root, &walked).map_err(|e| e.why)
         };
