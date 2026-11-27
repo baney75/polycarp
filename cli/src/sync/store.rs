@@ -31,7 +31,11 @@ impl Store {
             "This system has no secret store, so this device's sync key is in {}, readable only by you.",
             dir.join("identity").display()
         ));
-        if std::env::var_os("POLYCARP_SYNC_KEY_STORE").is_some_and(|v| v == "file") {
+        // A key already in the file stays there, so a store that appears later (secret-tool installed after init)
+        // never hides it and leads to a new key.
+        if dir.join("identity").exists()
+            || std::env::var_os("POLYCARP_SYNC_KEY_STORE").is_some_and(|v| v == "file")
+        {
             return Ok((file, note));
         }
         let real = fs::canonicalize(dir)
@@ -144,6 +148,23 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_in_the_file_is_used_whatever_store_the_system_has() {
+        let dir =
+            std::env::temp_dir().join(format!("polycarp-sync-store-kept-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("identity"), "AGE-SECRET-KEY-1KEPT").unwrap();
+        // Not the test hook: with the file there, open picks it before any system store.
+        let (s, _) = Store::open(&dir).unwrap();
+        assert!(matches!(s, Store::File(_)));
+        assert_eq!(
+            s.load().unwrap().unwrap().expose_secret(),
+            "AGE-SECRET-KEY-1KEPT"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[cfg(unix)]
     #[test]
