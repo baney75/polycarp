@@ -53,7 +53,9 @@ pub fn log_path(os: Os, home: &Path, local_app_data: Option<&Path>) -> PathBuf {
 }
 
 /// Each unit's text, in the order of `unit_paths`. `exe` is the polycarp command it runs.
-pub fn render(os: Os, exe: &Path, log: &Path, user: &str) -> Vec<String> {
+/// `start` is when the Windows task's own 5-minute repeat begins (UTC, `YYYY-MM-DDTHH:MM:SSZ`), so it runs from now and
+/// not only from the next logon.
+pub fn render(os: Os, exe: &Path, log: &Path, user: &str, start: &str) -> Vec<String> {
     let e = exe.to_string_lossy();
     match os {
         Os::Mac => vec![format!(
@@ -95,7 +97,10 @@ pub fn render(os: Os, exe: &Path, log: &Path, user: &str) -> Vec<String> {
             r#"<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><Description>Polycarp settings sync every {TICK_MIN} minutes</Description></RegistrationInfo>
-  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId><Repetition><Interval>PT{TICK_MIN}M</Interval></Repetition></LogonTrigger></Triggers>
+  <Triggers>
+    <TimeTrigger><StartBoundary>{start}</StartBoundary><Enabled>true</Enabled><Repetition><Interval>PT{TICK_MIN}M</Interval></Repetition></TimeTrigger>
+    <LogonTrigger><Enabled>true</Enabled><UserId>{user}</UserId><Repetition><Interval>PT{TICK_MIN}M</Interval></Repetition></LogonTrigger>
+  </Triggers>
   <Principals><Principal id="Author"><UserId>{user}</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
@@ -104,11 +109,15 @@ pub fn render(os: Os, exe: &Path, log: &Path, user: &str) -> Vec<String> {
     <ExecutionTimeLimit>PT10M</ExecutionTimeLimit>
     <Hidden>true</Hidden>
   </Settings>
-  <Actions Context="Author"><Exec><Command>{exe}</Command><Arguments>sync now --background</Arguments></Exec></Actions>
+  <Actions Context="Author"><Exec><Command>{conhost}</Command><Arguments>--headless "{exe}" sync now --background</Arguments></Exec></Actions>
 </Task>
 "#,
+            // polycarp.exe is a console program; started bare, each run would open a console window. A headless
+            // console host runs it with none.
+            conhost = xml_escape(&system32("conhost.exe").to_string_lossy()),
             exe = xml_escape(&e),
             user = xml_escape(user),
+            start = xml_escape(start),
         )],
     }
 }
@@ -179,12 +188,36 @@ fn systemctl() -> PathBuf {
     PathBuf::from("/usr/bin/systemctl")
 }
 
-fn schtasks() -> PathBuf {
+fn system32(name: &str) -> PathBuf {
     std::env::var_os("SystemRoot")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
         .join("System32")
-        .join("schtasks.exe")
+        .join(name)
+}
+
+fn schtasks() -> PathBuf {
+    system32("schtasks.exe")
+}
+
+/// The program that exits 0 only while the unit is loaded.
+pub fn loaded_argv(os: Os, uid: Option<u32>) -> (PathBuf, Vec<String>) {
+    match os {
+        Os::Mac => (
+            PathBuf::from("/bin/launchctl"),
+            vec!["print".into(), format!("gui/{}/{LABEL}", uid.unwrap_or(0))],
+        ),
+        Os::Linux => (
+            systemctl(),
+            vec![
+                "--user".into(),
+                "is-active".into(),
+                "--quiet".into(),
+                format!("{SYSTEMD}.timer"),
+            ],
+        ),
+        Os::Windows => (schtasks(), vec!["/Query".into(), "/TN".into(), TASK.into()]),
+    }
 }
 
 /// How long a background run waits after failures. Kept in the sync folder as `auto.json`.
@@ -261,26 +294,39 @@ mod tests {
         assert!(!b.due(ahead + 60_000));
     }
 
+    const START: &str = "2026-11-27T05:00:00Z";
+
     #[test]
     fn units_run_a_quiet_sync_every_five_minutes_without_admin() {
         let exe = Path::new("/Users/d/.local/bin/polycarp");
         let log = Path::new("/Users/d/Library/Logs/polycarp-sync.log");
-        let mac = &render(Os::Mac, exe, log, "d")[0];
+        let mac = &render(Os::Mac, exe, log, "d", START)[0];
         assert!(
             mac.contains("<string>--background</string>") && mac.contains("<integer>300</integer>")
         );
         assert!(!mac.contains("KeepAlive") && mac.contains(LABEL));
-        let linux = render(Os::Linux, exe, log, "d");
+        let linux = render(Os::Linux, exe, log, "d", START);
         assert!(linux[0].contains("sync now --background") && linux[0].contains("Type=oneshot"));
         assert!(linux[1].contains("OnUnitActiveSec=5min"));
-        let win = &render(Os::Windows, Path::new(r"C:\p\polycarp.exe"), log, "d & e")[0];
+        let win = &render(
+            Os::Windows,
+            Path::new(r"C:\p\polycarp.exe"),
+            log,
+            "d & e",
+            START,
+        )[0];
         assert!(
             win.contains("PT5M") && win.contains("LeastPrivilege") && win.contains("d &amp; e")
         );
-        assert!(win.contains("<Arguments>sync now --background</Arguments>"));
+        assert!(win.contains(
+            r#"<Arguments>--headless "C:\p\polycarp.exe" sync now --background</Arguments>"#
+        ));
+        assert!(win.contains("conhost.exe</Command>"));
+        // It starts from now, not only at the next logon.
+        assert!(win.contains(&format!("<StartBoundary>{START}</StartBoundary>")));
         for os in [Os::Mac, Os::Linux, Os::Windows] {
             let paths = unit_paths(os, Path::new("/h"), None);
-            assert_eq!(paths.len(), render(os, exe, log, "d").len());
+            assert_eq!(paths.len(), render(os, exe, log, "d", START).len());
             for (prog, _) in load_argv(os, Some(501), &paths)
                 .into_iter()
                 .chain(unload_argv(os, Some(501)))

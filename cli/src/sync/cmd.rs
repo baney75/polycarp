@@ -529,7 +529,12 @@ fn auto_on() -> Result<(), String> {
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_default();
     let log = log_path()?;
-    for (p, text) in paths.iter().zip(auto::render(os, &exe, &log, &user)) {
+    let (_, iso) = crate::theme::stamps();
+    let start = format!("{}Z", &iso[..19]);
+    for (p, text) in paths
+        .iter()
+        .zip(auto::render(os, &exe, &log, &user, &start))
+    {
         crate::files::service::write_unit(os, p, &text)?;
     }
     let shown: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
@@ -545,7 +550,25 @@ fn auto_on() -> Result<(), String> {
         // A unit loaded before is taken out first, so this one replaces it.
         let _ = run_all(auto::unload_argv(os, uid));
     }
-    run_all(auto::load_argv(os, uid, &paths))?;
+    // launchd can still be tearing the old job down, so a Mac tries a few times.
+    let tries = if os == Os::Mac { 5 } else { 1 };
+    let mut loaded = Err(String::new());
+    for n in 0..tries {
+        if n > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        loaded = run_all(auto::load_argv(os, uid, &paths));
+        if loaded.is_ok() {
+            break;
+        }
+    }
+    if let Err(e) = loaded {
+        // A unit left behind would load at the next login while `auto on` said it failed.
+        for p in &paths {
+            let _ = fs::remove_file(p);
+        }
+        return Err(format!("{e}; sync on its own is still off"));
+    }
     println!(
         "This device syncs on its own every 5 minutes. Failures go to {}. Turn it off with `polycarp sync auto off`.",
         log.display()
@@ -559,9 +582,12 @@ fn auto_off() -> Result<(), String> {
         println!("Sync on its own is already off here.");
         return Ok(());
     }
-    if !write_only() {
-        run_all(auto::unload_argv(os, crate::files::service::uid()))?;
-    }
+    // A unit that is written but not loaded fails to unload; its files go all the same.
+    let unloaded = if write_only() {
+        Ok(())
+    } else {
+        run_all(auto::unload_argv(os, crate::files::service::uid()))
+    };
     for p in &paths {
         match fs::remove_file(p) {
             Ok(()) => {}
@@ -569,14 +595,38 @@ fn auto_off() -> Result<(), String> {
             Err(e) => return Err(format!("could not remove {}: {e}", p.display())),
         }
     }
+    if let (Err(e), true) = (unloaded, is_loaded(os)) {
+        return Err(format!(
+            "removed the unit, but it is still loaded until you log out: {e}"
+        ));
+    }
     println!("Sync on its own is off; `polycarp sync now` still works by hand.");
     Ok(())
 }
 
+/// Whether the unit is loaded now. Under the test hook, written counts as loaded.
+fn is_loaded(os: Os) -> bool {
+    if write_only() {
+        return true;
+    }
+    let (prog, args) = auto::loaded_argv(os, crate::files::service::uid());
+    std::process::Command::new(prog)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
 fn auto_status() -> Result<(), String> {
-    let (_, paths) = auto_units()?;
+    let (os, paths) = auto_units()?;
     if !paths.iter().all(|p| p.exists()) {
         println!("off: turn it on with `polycarp sync auto on`");
+        return Ok(());
+    }
+    if !is_loaded(os) {
+        println!("off: the unit is written but not loaded; `polycarp sync auto on` loads it");
         return Ok(());
     }
     let c = ctx()?;
