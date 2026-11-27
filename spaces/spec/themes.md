@@ -214,7 +214,8 @@ branch of `brand/mark.svg` (`brand/mark-small.svg` below 48 px) on the rounded s
    file keeps the icon the app came with and only the Dock changes; `trace.log` says why (`app icon:`). When macOS refuses
    the swap itself (App Management, `EPERM`), the file is not tried again until Polycarp starts again.
 
-9. Polycarp Browser's icon is the same drawing. While a theme is in force Polycarp keeps it in `browser-theme/icon.icns`
+9. Polycarp Browser's icon is the same drawing, in the theme's colors outside Dark Mode: the browser carries one icon,
+   so a Dark Mode flip alone does not build it again. While a theme is in force Polycarp keeps it in `browser-theme/icon.icns`
    (gone with the theme), and when it changes starts the run the daily update makes, `polycarp browser update --when-quit`,
    which builds it in and signs it with the rest; the build goes in when the browser quits. Only while updates are
    automatic, one run at a time. A change during a run, or while Polycarp installs its own update, is kept (across a

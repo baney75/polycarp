@@ -12,6 +12,7 @@ final class AppIconKeeper {
     static let shared = AppIconKeeper()
 
     private var shown: ThemeIcon.Colors?
+    private var browserShown: Data?
     private var pending: DispatchWorkItem?
     private let queue = DispatchQueue(label: "com.baney.polycarp.app-icon", qos: .utility)
     private var observer: NSObjectProtocol?
@@ -37,20 +38,23 @@ final class AppIconKeeper {
     }
 
     private func apply() {
-        let colors = ThemeIcon.colors(Appearance.shared.polycarp, systemDark: Appearance.systemDark)
-        guard colors != shown else { return }
+        let theme = Appearance.shared.polycarp
+        let colors = ThemeIcon.colors(theme, systemDark: Appearance.systemDark)
+        // The browser carries one icon, built in: the theme's look outside Dark Mode, so a Dark Mode flip alone doesn't
+        // build it again. No theme: no file, and the browser goes back to the icon it ships with.
+        let browser = theme.flatMap { ThemeIcon.icns(ThemeIcon.colors($0, systemDark: false)) }
+        guard colors != shown || browser != browserShown else { return }
         shown = colors
+        browserShown = browser
         if let image = ThemeIcon.image(colors, pixels: 1024) {
             NSApp.applicationIconImage = NSImage(cgImage: image, size: NSSize(width: 512, height: 512))
         }
         // The Settings picker can pass through several themes in a second; only the last one is written.
         pending?.cancel()
         let app = Bundle.main.bundleURL, tools = Bundle.main.resourceURL?.appendingPathComponent("make-browser")
-        let themed = Appearance.shared.polycarp != nil, rebuild = rebuildBrowser
+        let rebuild = rebuildBrowser
         let work = DispatchWorkItem {
             Self.write(colors, into: app, tools: tools)
-            // No theme: no file, and the browser goes back to the icon it ships with.
-            let browser = themed ? ThemeIcon.icns(colors) : nil
             _ = ThemeIcon.syncFile(browser, at: Self.browserIconFile)
             if browser != Self.browserIconNow {
                 Self.browserIconNow = browser
