@@ -158,7 +158,12 @@ enum MoveTiming {
         // Inside the area with room to spare, whatever height Polycarp's bar takes from its top.
         let frame = Geometry.toAX(CGRect(x: n[0] + 20, y: n[1] + 60, width: min(400, n[2] - 40), height: min(300, n[3] - 120)), primaryHeight: primary)
         var windows: [LateWindow?] = []
-        func say(_ line: String) { FileHandle.standardOutput.write(Data((line + "\n").utf8)) }
+        // Started by LaunchServices, the probe's helper talks over the two named pipes it is given; started as a child, over
+        // its standard input and output.
+        let env = ProcessInfo.processInfo.environment
+        let input = env["BANEYSPACES_PROBE_IN"].flatMap { FileHandle(forReadingAtPath: $0) } ?? .standardInput
+        let output = env["BANEYSPACES_PROBE_OUT"].flatMap { FileHandle(forWritingAtPath: $0) } ?? .standardOutput
+        func say(_ line: String) { output.write(Data((line + "\n").utf8)) }
         func heard(_ line: Substring) {
             let words = line.split(separator: " ")
             if words == ["open"] {
@@ -174,13 +179,16 @@ enum MoveTiming {
                 w.orderFrontRegardless()
                 windows.append(w)
                 say("open \(w.windowNumber)")
+            } else if words == ["quit"] {
+                CrashLoop.renderEnded()
+                exit(0)
             } else if words.count == 2, words[0] == "close", let i = Int(words[1]), windows.indices.contains(i) {
                 windows[i]?.close()
                 windows[i] = nil
             }
         }
         var pending = Data()
-        FileHandle.standardInput.readabilityHandler = { h in
+        input.readabilityHandler = { h in
             let data = h.availableData
             DispatchQueue.main.async {
                 guard !data.isEmpty else { CrashLoop.renderEnded(); exit(0) }
@@ -191,8 +199,16 @@ enum MoveTiming {
                 }
             }
         }
+        // The app that started it gone (a crash), the helper goes too.
+        let owner = env["BANEYSPACES_PROBE_OWNER"].flatMap { pid_t($0) }.map { pid -> DispatchSourceProcess in
+            let source = DispatchSource.makeProcessSource(identifier: pid, eventMask: .exit, queue: .main)
+            source.setEventHandler { CrashLoop.renderEnded(); exit(0) }
+            source.resume()
+            return source
+        }
+        if let pid = env["BANEYSPACES_PROBE_OWNER"].flatMap({ pid_t($0) }), kill(pid, 0) != 0, errno == ESRCH { exit(0) }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { say("ready") }
-        NSApp.run()
+        withExtendedLifetime(owner) { NSApp.run() }
         return 0
     }
 

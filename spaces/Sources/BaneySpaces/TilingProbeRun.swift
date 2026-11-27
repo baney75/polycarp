@@ -8,7 +8,13 @@ final class TilingProbeRun {
     unowned let tiling: Tiling
     private var spaces: Spaces { tiling.spaces }
     private var session: TilingProbe.Session?
-    private var helper: (process: Process, input: Pipe)?
+    /// The helper, started by LaunchServices as its own app: started as this app's child, macOS answers this app's
+    /// Accessibility asks of it with "API disabled" (measured 2026-11-26). It talks over two named pipes.
+    private var helper: (app: NSRunningApplication, exit: DispatchSourceProcess)?
+    private var pipes: (input: FileHandle, output: FileHandle, folder: URL)?
+    /// The helper said `ready` before LaunchServices handed its pid over, or the other way round: the first step waits for both.
+    private var ready = false
+    private var going = false
     private var tick: Timer?
     private var caller: DispatchSourceProcess?
     private enum Step { case open, key(TilingCommand), close(Int, timed: Bool) }
@@ -76,24 +82,60 @@ final class TilingProbeRun {
 
     private func startHelper() -> Bool {
         guard let a = spaces.probeArea(bar: Tiling.reach) else { return false }
-        let p = Process(), input = Pipe(), output = Pipe()
-        p.executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
-        p.arguments = ["--render", NSTemporaryDirectory()]
-        p.environment = ProcessInfo.processInfo.environment.merging([
-            "BANEYSPACES_RENDER_MOVE_HELPER": "0 0", "BANEYSPACES_RENDER_MOVE_FREE": "1",
-            "BANEYSPACES_PROBE_AREA": "\(a.minX) \(a.minY) \(a.width) \(a.height)",
-        ]) { $1 }
-        p.standardInput = input
-        p.standardOutput = output
-        output.fileHandleForReading.readabilityHandler = { [weak self] h in
+        let files = FileManager.default, folder = files.temporaryDirectory.appendingPathComponent("polycarp-probe-\(getpid())")
+        try? files.removeItem(at: folder)
+        guard (try? files.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return false }
+        let inPath = folder.appendingPathComponent("in").path, outPath = folder.appendingPathComponent("out").path
+        guard mkfifo(inPath, 0o600) == 0, mkfifo(outPath, 0o600) == 0 else { return false }
+        // Held read and write here, so neither open waits for the helper and neither reads an end of file before it
+        // starts. Closing `in` is the helper's end of input; a crash here closes it too.
+        let inFD = open(inPath, O_RDWR), outFD = open(outPath, O_RDWR)
+        guard inFD >= 0, outFD >= 0 else {
+            if inFD >= 0 { close(inFD) }
+            if outFD >= 0 { close(outFD) }
+            return false
+        }
+        let input = FileHandle(fileDescriptor: inFD, closeOnDealloc: true), output = FileHandle(fileDescriptor: outFD, closeOnDealloc: true)
+        output.readabilityHandler = { [weak self] h in
             let data = h.availableData
-            if data.isEmpty { h.readabilityHandler = nil }
             DispatchQueue.main.async { self?.said(data) }
         }
-        do { try p.run() } catch { return false }
-        helper = (p, input)
-        spaces.probe?.pids.insert(p.processIdentifier)
+        pipes = (input, output, folder)
+        (ready, going) = (false, false)
+        let config = NSWorkspace.OpenConfiguration()
+        config.createsNewApplicationInstance = true
+        config.activates = false
+        config.addsToRecentItems = false
+        config.promptsUserIfNeeded = false
+        config.arguments = ["--render", NSTemporaryDirectory()]
+        config.environment = ProcessInfo.processInfo.environment.merging([
+            "BANEYSPACES_RENDER_MOVE_HELPER": "0 0", "BANEYSPACES_RENDER_MOVE_FREE": "1",
+            "BANEYSPACES_PROBE_AREA": "\(a.minX) \(a.minY) \(a.width) \(a.height)",
+            "BANEYSPACES_PROBE_IN": inPath, "BANEYSPACES_PROBE_OUT": outPath, "BANEYSPACES_PROBE_OWNER": "\(getpid())",
+        ]) { $1 }
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: config) { app, _ in
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.session?.running == true, self.pipes?.input === input, let app else {
+                    app?.forceTerminate()
+                    self?.end(.error)
+                    return
+                }
+                let exit = DispatchSource.makeProcessSource(identifier: app.processIdentifier, eventMask: .exit, queue: .main)
+                exit.setEventHandler { [weak self] in self?.end(.error) }
+                exit.resume()
+                self.helper = (app, exit)
+                self.spaces.probe?.pids.insert(app.processIdentifier)
+                self.started()
+            }
+        }
         return true
+    }
+
+    /// The first step goes once the helper is ready and its pid is known, so its first window is the probe's.
+    private func started() {
+        guard helper != nil, ready, !going else { return }
+        going = true
+        next()
     }
 
     /// The helper's lines: `ready`, then `open <window number>` for each window it opened. Its end ends the probe.
@@ -104,17 +146,17 @@ final class TilingProbeRun {
         while let end = lines.firstIndex(of: 10) {
             let words = String(decoding: lines[..<end], as: UTF8.self).split(separator: " ")
             lines.removeSubrange(...end)
-            if words == ["ready"] { next() }
+            if words == ["ready"] { ready = true; started() }
             if words.count == 2, words[0] == "open", let id = WindowID(words[1]) {
                 opened.append(id)
                 focus = id
                 // Its app is asked at once: the helper's first window comes with no notification to say so.
-                if let pid = helper?.process.processIdentifier { spaces.whenFresh(asking: [pid]) { [weak tiling] in tiling?.look() } }
+                if let pid = helper?.app.processIdentifier { spaces.whenFresh(asking: [pid]) { [weak tiling] in tiling?.look() } }
             }
         }
     }
 
-    private func send(_ line: String) { helper?.input.fileHandleForWriting.write(Data((line + "\n").utf8)) }
+    private func send(_ line: String) { pipes?.input.write(Data((line + "\n").utf8)) }
 
     /// The next step, a moment after the last (R-TS12.11).
     private func next(after seconds: Double = 0) {
@@ -128,7 +170,7 @@ final class TilingProbeRun {
             switch step {
             case .open:
                 self.wait(for: .new, at: at)
-                if let pid = self.helper?.process.processIdentifier { self.tiling.cause(TileCauses.Cause(.new, at: at, pid: pid)) }
+                if let pid = self.helper?.app.processIdentifier { self.tiling.cause(TileCauses.Cause(.new, at: at, pid: pid)) }
                 self.send("open")
             case .key(let c):
                 guard let kind = TilingProbe.Kind(c) else { return self.next() }
@@ -202,11 +244,18 @@ final class TilingProbeRun {
         caller = nil
         Tiling.probeHook = nil
         (steps, waiting) = ([], nil)
-        if let h = helper {
-            try? h.input.fileHandleForWriting.close()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if h.process.isRunning { h.process.terminate() } }
+        if let p = pipes {
+            p.input.write(Data("quit\n".utf8))
+            p.output.readabilityHandler = nil
+            try? p.input.close()
+            try? p.output.close()
+            try? FileManager.default.removeItem(at: p.folder)
         }
-        helper = nil
+        if let h = helper {
+            h.exit.cancel()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { if !h.app.isTerminated { h.app.forceTerminate() } }
+        }
+        (helper, pipes) = (nil, nil)
         spaces.probe = nil
         probing(false)
         tiling.engine.dropLayout(of: s.workspace)
