@@ -43,8 +43,15 @@ final class TilingProbeRun {
     private func begin(_ ask: TilingProbe.Ask, on n: Int) {
         session = TilingProbe.Session(ask, workspace: n, now: Tiling.uptime)
         (samples, opened, focus, waiting, lines, ours) = ([], [], nil, nil, Data(), [])
-        let round: [Step] = [.open, .open, .open] + TilingProbe.keys.map { .key($0) }
-        steps = (0..<ask.rounds).flatMap { r in round + [.close(3 * r, timed: true), .close(3 * r + 1, timed: true), .close(3 * r + 2, timed: false)] }
+        let keys: [Step] = TilingProbe.keys.map { Step.key($0) }
+        var all: [Step] = []
+        for r in 0..<ask.rounds {
+            let first: Int = 3 * r
+            all += [Step.open, Step.open, Step.open]
+            all += keys
+            all += [Step.close(first, timed: true), Step.close(first + 1, timed: true), Step.close(first + 2, timed: false)]
+        }
+        steps = all
         spaces.probe = (n, [])
         probing(true)
         Tiling.probeHook = { [weak self] in self?.heard($0) ?? false }
