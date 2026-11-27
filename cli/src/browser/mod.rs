@@ -9,6 +9,7 @@ mod gone;
 mod import;
 mod install;
 mod keys;
+mod listing;
 mod local_studio;
 mod pages;
 mod pak;
