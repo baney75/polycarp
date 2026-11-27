@@ -226,9 +226,10 @@ fn read_file(p: &Path) -> Result<BTreeMap<String, Json>, String> {
 pub fn snapshot(s: &Store) -> Result<BTreeMap<String, Json>, String> {
     match s {
         Store::Defaults(d) => read_domain(d),
+        // Every `prefs:` item, known to this build or not, so another OS passes them all back as they came.
         Store::File(p) => Ok(read_file(p)?
             .into_iter()
-            .filter(|(id, v)| synced(id, v).is_some())
+            .filter(|(id, _)| id.starts_with("prefs:"))
             .collect()),
     }
 }
@@ -249,6 +250,31 @@ pub fn or_last(
         .collect()
 }
 
+/// This device's `prefs:` items as `observe` should see them:
+///
+/// - an empty read stands for the last synced values ([`or_last`]);
+/// - an item this build can't use, a key it doesn't know or a value of another kind from a newer build, is the last
+///   synced value, so it is passed back as it came and never taken for a delete or a local edit;
+/// - when this device has never synced a preference (`had_prefs` false), the relay's items stand, as at a first sync,
+///   so the Mac that upgrades last doesn't replace the other's choices.
+pub fn local_items(
+    now: BTreeMap<String, Json>,
+    last: &BTreeMap<String, Json>,
+    had_prefs: bool,
+    relay_has: impl Fn(&str) -> bool,
+) -> BTreeMap<String, Json> {
+    let mut out = or_last(now, last);
+    for (id, v) in last {
+        if id.starts_with("prefs:") && synced(id, v).is_none() {
+            out.insert(id.clone(), v.clone());
+        }
+    }
+    if !had_prefs {
+        out.retain(|id, _| !relay_has(id));
+    }
+    out
+}
+
 /// Makes this machine's synced preferences what `values` holds. A key whose synced value is of the wrong kind, and
 /// every key not in [`SYNCED`], is left as it is. Reads happen before the first write. Returns the domain or file
 /// when something changed.
@@ -260,6 +286,11 @@ pub fn apply(s: &Store, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
         .collect();
     match s {
         Store::File(p) => {
+            let want: BTreeMap<String, Json> = values
+                .iter()
+                .filter(|(id, _)| id.starts_with("prefs:"))
+                .map(|(id, v)| (id.clone(), v.clone()))
+                .collect();
             if read_file(p)? == want {
                 return Ok(Vec::new());
             }
@@ -303,6 +334,42 @@ pub fn apply(s: &Store, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_this_build_cant_use_passes_back_and_the_relay_stands_the_first_time() {
+        let j = |pairs: &[(&str, Json)]| -> BTreeMap<String, Json> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect()
+        };
+        // A newer build's key, and a known key of another kind, come back as they were synced.
+        let last = j(&[
+            ("prefs:modifier", Json::from("control")),
+            ("prefs:newKey", Json::from(3)),
+            ("prefs:terminalQuickKey", Json::from("sometimes")),
+        ]);
+        let now = j(&[
+            ("prefs:modifier", Json::from("option")),
+            ("prefs:terminalQuickKey", Json::Bool(true)),
+        ]);
+        let got = local_items(now, &last, true, |_| false);
+        assert_eq!(
+            got,
+            j(&[
+                ("prefs:modifier", Json::from("option")),
+                ("prefs:newKey", Json::from(3)),
+                ("prefs:terminalQuickKey", Json::from("sometimes")),
+            ])
+        );
+        // Never synced a preference before: what the relay has stands; what it lacks is added.
+        let now = j(&[
+            ("prefs:modifier", Json::from("option")),
+            ("prefs:launcherAgent", Json::from("claude")),
+        ]);
+        let got = local_items(now, &BTreeMap::new(), false, |id| id == "prefs:modifier");
+        assert_eq!(got, j(&[("prefs:launcherAgent", Json::from("claude"))]));
+    }
 
     #[test]
     fn an_empty_read_keeps_the_last_synced_values_instead_of_deleting_them() {
@@ -437,8 +504,9 @@ mod tests {
             ("prefs:checkForUpdates", json!("no")),
         ]);
         assert_eq!(apply(&s, &theirs).unwrap().len(), 1);
+        // Every item comes back as it came; only a Mac decides which it writes.
         let back = snapshot(&s).unwrap();
-        assert_eq!(back, items(&[("prefs:modifier", json!("control"))]));
+        assert_eq!(back, theirs);
         assert!(
             apply(&s, &theirs).unwrap().is_empty(),
             "nothing changes the second time"
