@@ -11,6 +11,9 @@ use std::process::Command;
 mod agent;
 #[cfg(target_os = "macos")]
 mod browser;
+#[cfg(any(target_os = "linux", test))]
+#[allow(dead_code)]
+mod browser_linux;
 #[cfg(any(windows, test))]
 mod browser_windows;
 mod features;
