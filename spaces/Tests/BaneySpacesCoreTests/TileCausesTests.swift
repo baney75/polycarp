@@ -1,7 +1,7 @@
 import XCTest
 @testable import BaneySpacesCore
 
-/// spec/tiling-speed.md R-TS1 and R-TS2, cases 1 to 10.
+/// spec/tiling-speed.md R-TS1 and R-TS2, cases 1 to 10 and 64 to 67.
 final class TileCausesTests: XCTestCase {
     private typealias C = TileCauses.Cause
     private func wrote(_ pid: Int32, _ workspace: Int, new: Bool = false) -> TileCauses.Wrote { .init(pid: pid, workspace: workspace, new: new) }
@@ -71,5 +71,39 @@ final class TileCausesTests: XCTestCase {
         var c = TileCauses()
         for i in 0..<100 { c.add(C(.switch, at: Double(i) * 2)) }
         XCTAssertEqual(c.pending.count, 1)
+    }
+
+    /// Donovan's timing.log, 2026-11-26: a switch whose look had nothing to write was answered by a close's write 0.6 s
+    /// later, and by the next switch's write, so slow switch lines were someone else's.
+    func testCase64ASwitchIsAnsweredOnlyOnItsWorkspace() {
+        var c = TileCauses()
+        c.add(C(.switch, at: 10, workspace: 3))
+        XCTAssertEqual(c.answer(now: 10.1, wrote: [wrote(8, 2)]), [])
+        XCTAssertEqual(c.answer(now: 10.2, wrote: [wrote(8, 3)]), [C(.switch, at: 10, workspace: 3)])
+    }
+
+    func testCase65ANewerSwitchReplacesAnEarlierOne() {
+        var c = TileCauses()
+        c.add(C(.switch, at: 10, workspace: 2))
+        c.add(C(.switch, at: 10.4, workspace: 3))
+        XCTAssertEqual(c.answer(now: 10.5, wrote: [wrote(8, 3)]), [C(.switch, at: 10.4, workspace: 3)])
+        XCTAssertTrue(c.pending.isEmpty)
+    }
+
+    func testCase66ASwitchWhoseLookWroteNothingThereLeaves() {
+        var c = TileCauses()
+        c.add(C(.switch, at: 10, workspace: 3))
+        c.add(C(.close, at: 10.05, workspace: 3))
+        c.looked(shown: [3], wrote: [])
+        XCTAssertEqual(c.pending, [C(.close, at: 10.05, workspace: 3)], "the close still waits for its look")
+        XCTAssertEqual(c.answer(now: 10.6, wrote: [wrote(8, 3)]), [C(.close, at: 10.05, workspace: 3)])
+    }
+
+    func testCase67ALookWithTheWorkspaceOutOfSightKeepsTheSwitch() {
+        var c = TileCauses()
+        c.add(C(.switch, at: 10, workspace: 3))
+        c.looked(shown: [1], wrote: [])
+        c.looked(shown: [3], wrote: [wrote(8, 3)])
+        XCTAssertEqual(c.answer(now: 10.1, wrote: [wrote(8, 3)]), [C(.switch, at: 10, workspace: 3)])
     }
 }

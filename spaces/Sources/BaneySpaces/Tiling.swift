@@ -126,6 +126,7 @@ final class Tiling {
         drawStrips()
         let (later, go) = (moves.filter { silent[$0.id].map { $0 > now } ?? false }, moves.filter { silent[$0.id].map { $0 <= now } ?? true })
         for m in later { engine.touched(m.id) }
+        causes.looked(shown: Set(view.shown.keys), wrote: go.map { TileCauses.Wrote(pid: $0.pid, workspace: at[$0.id] ?? 0, new: false) })
         guard !go.isEmpty else { return }
         let answered = causes.answer(now: looked, wrote: go.map { TileCauses.Wrote(pid: $0.pid, workspace: at[$0.id] ?? 0, new: !placed.contains($0.id)) })
         placed.formUnion(go.map(\.id))

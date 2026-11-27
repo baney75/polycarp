@@ -38,7 +38,9 @@ focus). Nothing else is written: no window id, title or app name.
   `kAXWindowCreated` in the 3 s before. The window server alone (no notification) writes no `new` line.
 - `close`: the first look after an app sent `kAXUIElementDestroyed` for a window, in the 3 s before, that writes a
   frame on the workspace the window left.
-- `switch`: the first look after a switch ended, within 1 s of it being asked for, that writes a frame.
+- `switch`: the first look after a switch ended, within 1 s of it being asked for, that writes a frame on the workspace
+  it went to. A newer switch replaces a pending one. A look with that workspace in sight that writes nothing on it drops
+  the switch with no line, so a later write (a close, the next switch) never answers it.
 - A cause no look answered within 3 s is dropped with no line. When one look answers several causes, each gets its line.
 
 ### R-TS3 Budgets
@@ -250,4 +252,8 @@ Each row is a test; the test names it.
 | 61 | R-TS12.12 | one miss among 5 | misses 1, exit code 1 |
 | 62 | R-TS12.7 | a switch hides window 1 (app 40) and windows 5, 6 of probe helper 77 | helper 77 not hidden, 5 and 6 not parked; app 40 hidden |
 | 63 | R-TS12.9 | start while a display shows agent workspace 9; a running probe when it comes into sight | `probe_off`; ended, why `workspace` |
+| 64 | R-TS2 | a `switch` to 3 at 10.0; a look writes on 2, then one on 3 | the first answers nothing; the second answers it |
+| 65 | R-TS2 | a `switch` to 2 at 10.0, then one to 3 at 10.4; a look writes on 3 | only the switch to 3 answered; none pending |
+| 66 | R-TS2 | a `switch` to 3 and a `close` on 3; a look with 3 in sight writes nothing; a later look writes on 3 | the switch leaves with no line; the later look answers the close alone |
+| 67 | R-TS2 | a `switch` to 3; a look with only 1 in sight writes nothing | the switch stays; the next look writing on 3 answers it |
 Cases 21, 22 and 24 to 30 have no safe pure test: they are wiring tests that read `Spaces.swift`, plus the probe live.
