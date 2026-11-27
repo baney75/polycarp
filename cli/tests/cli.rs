@@ -255,10 +255,15 @@ fn browser_says_it_was_removed_runs_nothing_and_exits_2() {
     let help = s.run(&["--help"]);
     assert!(out(&help).contains(BROWSER_LINE), "{}", out(&help));
     assert!(!out(&help).contains("polycarp browser ["), "{}", out(&help));
-    // Off a Mac there is nothing else it could be.
+    // On Linux only the release check answers; elsewhere off a Mac there is nothing else it could be.
     let bare = s.run(&["browser"]);
+    let linux = "polycarp browser: only `install --dry-run` works on Linux so far.\n";
     if cfg!(target_os = "macos") {
         assert!(out(&bare).starts_with("polycarp browser: Polycarp Browser"));
+    } else if cfg!(target_os = "linux") {
+        assert_eq!((code(&bare), out(&bare).as_str()), (0, linux));
+        let status = s.run(&["browser", "status"]);
+        assert_eq!((code(&status), err(&status).as_str()), (2, linux));
     } else {
         assert_eq!((code(&bare), err(&bare).as_str()), (2, BROWSER_LINE));
     }

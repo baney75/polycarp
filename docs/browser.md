@@ -92,6 +92,17 @@ carries a valid Authenticode signature from imput LLC, Helium's maker. Then it d
 installed and nothing from the release is run. Every other `polycarp browser` command on Windows says that only
 `install --dry-run` works there so far. Making and installing the browser on Windows comes later.
 
+## On Linux
+
+`polycarp browser install --dry-run` downloads the newest full release of
+[helium-linux](https://github.com/imputnet/helium-linux) for your processor (x86_64 or arm64) into Polycarp's cache: the
+`.tar.xz` and its `.asc` signature. It checks that both have the SHA-256 GitHub lists and that `gpgv` accepts the signature
+from Helium's key, fingerprint `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`, which Polycarp carries; no keyring of
+yours is read. Only then does it unpack the tarball into a private folder, check that it holds Helium's one folder with
+`helium` and `helium.desktop` and no link that leads out of its folder, and delete the unpacked copy. Nothing is
+installed and nothing from the release is run. `gpgv` checks the signature against that key alone, not whether Helium has
+since revoked it. Every other `polycarp browser` command on Linux says that only `install --dry-run` works there so far.
+
 ## What is different from Helium
 
 - Its name, identifier (`com.baney.polycarp.browser`), icon and data folder. It can be open beside Helium and shares no

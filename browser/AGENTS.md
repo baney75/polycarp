@@ -4,7 +4,10 @@
   nothing from it is changed, run or installed until the `.app` inside passes a strict code signature check, carries the pinned
   Team ID and Gatekeeper accepts it. A check that can't run is a refusal. On Windows the source is a published
   `imputnet/helium-windows` release zip with the sha256 GitHub's listing gives, and every `.exe` and `.dll` in it must be
-  Authenticode-valid from the pinned signer imput LLC; nothing from it is run or installed before that.
+  Authenticode-valid from the pinned signer imput LLC; nothing from it is run or installed before that. On Linux the source
+  is a published `imputnet/helium-linux` release tarball with the sha256 GitHub's listing gives, and gpgv must accept its
+  `.asc` signature from Helium's pinned OpenPGP key `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E` (the public key is
+  committed as `cli/src/browser/helium-linux.asc`); nothing from it is unpacked before that, nor run or installed.
 - The result is built on the person's machine, from scratch, beside the old one, and swapped in only after it starts headless on a
   fresh throwaway profile, deleted afterwards. The running browser is never replaced under the person. Nothing here needs admin rights.
 - No Helium binary, logo or non-free asset is committed or published, and Helium's name is never the product's name or brand.
