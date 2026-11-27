@@ -92,13 +92,15 @@ public struct TilingOptions: Equatable, Sendable {
     /// Window rules (`tiling.rules`).
     public var rules: [TileRule] = []
     public var ruled: TileRules { TileRules(rules, float: floatApps) }
-    /// The workspace agents work on never tiles.
+    /// The workspace agents work on never tiles, except while a probe runs (spec/tiling-speed.md R-TS12).
     public var agentWorkspace: Int?
+    /// A probe runs. No settings key sets it: only `TilingProbeRun`.
+    public var probing = false
 
     public init() {}
 
     public func tiles(_ workspace: Int) -> Bool {
-        guard workspace != agentWorkspace else { return false }
+        if workspace == agentWorkspace { return probing }
         return on.contains(workspace) || everywhere && !off.contains(workspace)
     }
 }
