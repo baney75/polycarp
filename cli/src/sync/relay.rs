@@ -258,9 +258,11 @@ mod tests {
                 dir: "sync/polycarp".into()
             }
         );
+        // An absolute path on this platform: /srv/r here, C:\\srv\\r on Windows.
+        let abs = std::env::temp_dir().join("r");
         assert_eq!(
-            Relay::parse("dir:/srv/r").unwrap(),
-            Relay::Dir("/srv/r".into())
+            Relay::parse(&format!("dir:{}", abs.display())).unwrap(),
+            Relay::Dir(abs)
         );
         for bad in [
             "parish1",
