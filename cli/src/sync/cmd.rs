@@ -263,6 +263,12 @@ fn approve(code: &str, fingerprint: Option<&str>) -> Result<(), String> {
     let new: Device =
         serde_json::from_slice(&b).map_err(|_| "the waiting device's record is not readable")?;
     new.check()?;
+    // The record came from the relay: a name that could move the cursor or forge a line is refused before it is shown.
+    if new.name.is_empty() || new.name.len() > 40 || new.name.chars().any(char::is_control) {
+        return Err(
+            "the waiting device's name is not 1 to 40 plain characters, so it was refused".into(),
+        );
+    }
     println!(
         "{} wants to join, with fingerprint {}",
         new.name,

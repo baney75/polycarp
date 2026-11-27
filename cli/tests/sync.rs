@@ -128,6 +128,19 @@ fn two_devices_sync_settings_through_a_folder_relay() {
             "0000-0000-0000-0000-0000-0000"
         ])
         .contains("don't match"));
+    // A waiting record whose name holds a terminal escape is refused before it is shown.
+    let pending = relay.join(format!(
+        "pending-{}.json",
+        code.to_ascii_lowercase().replace('-', "")
+    ));
+    let good = fs::read(&pending).unwrap();
+    let mut rec: Value = serde_json::from_slice(&good).unwrap();
+    rec["name"] = json!("win\u{1b}[2K");
+    fs::write(&pending, rec.to_string()).unwrap();
+    assert!(a
+        .fails(&["sync", "approve", &code, "--fingerprint", &bfp])
+        .contains("plain characters"));
+    fs::write(&pending, &good).unwrap();
     let out = a.ok(&["sync", "approve", &code, "--fingerprint", &bfp]);
     let afp = after(&out, "--approver ");
     assert!(
