@@ -48,6 +48,13 @@ final class ThemeIconTests: XCTestCase {
         XCTAssertEqual(ThemeIcon.colors(roles: polycarp, onAccent: polycarp["on_accent"]), ThemeIcon.brand)
     }
 
+    /// A theme as `polycarp theme set` writes it: its accent and the text on it, in the mode in force.
+    func testAThemeFileGivesItsAccentAndTheTextOnIt() throws {
+        let theme = try PolycarpTheme.parse(Data(PolycarpFixtures.still_water.utf8)).get()
+        XCTAssertEqual(ThemeIcon.colors(theme, systemDark: false), .init(background: hex("#3F6B6A"), mark: hex("#F1F5F5")))
+        XCTAssertEqual(ThemeIcon.colors(theme, systemDark: true), .init(background: hex("#A5CFCB"), mark: hex("#12201F")))
+    }
+
     /// The pixel at (x, y), counted from the top left, as hex.
     private func pixel(_ image: CGImage, _ x: Int, _ y: Int) -> String {
         var bytes = [UInt8](repeating: 0, count: 4)

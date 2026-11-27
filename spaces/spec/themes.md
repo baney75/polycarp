@@ -200,7 +200,22 @@ branch of `brand/mark.svg` (`brand/mark-small.svg` below 48 px) on the rounded s
 4. `scripts/render-icons.sh <folder>` draws the icon for every theme in `themes/`, light and dark, and prints each pair's
    contrast; `BANEYSPACES_RENDER_ICONS=<folder of theme.json> Polycarp --render <out>` is what it runs.
 
-Pinned by `ThemeIconTests`, which reads every file in `themes/`.
+5. Polycarp shows the icon for the theme in force at launch and after every change of theme or Dark Mode
+   (`AppIconKeeper`): the Dock at once, as the app's icon image.
+6. Three seconds after the last change, the bundle's own icon file (what Finder, Spotlight and the launcher show) is
+   replaced the only way that keeps its signature whole (`AppIconSwap`). The icon goes into a copy on the same disk, which
+   is signed again with the key the app is signed with, keeping its identifier, entitlements and requirement. The copy must
+   pass `codesign --verify --deep --strict` and keep the app's designated requirement, and the app must not have changed
+   meanwhile (an update); then the copy is swapped in at once and the app's date moved so Finder looks again. If what the
+   swap took out is not the app that was checked, an update went in at the last moment: it is swapped back in. The key comes
+   from `signing-identity.sh --keep`, which never makes, restores or replaces one.
+7. Finder's custom icon (`NSWorkspace.setIcon`) is never used: its resource fork and Finder info fail `codesign --strict`.
+8. On a Mac without the key (a release installed from the website), on an app signed ad hoc, or when any check fails, the
+   file keeps the icon the app came with and only the Dock changes; `trace.log` says why (`app icon:`). When macOS refuses
+   the swap itself (App Management, `EPERM`), the file is not tried again until Polycarp starts again.
+
+Pinned by `ThemeIconTests`, which reads every file in `themes/`, and `AppIconSwapTests`, which swaps the icon of a signed
+temp bundle and checks it with `codesign --strict`.
 
 ## Window borders
 
