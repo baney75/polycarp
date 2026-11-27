@@ -199,7 +199,8 @@ fn same_origin(client_data: &[u8]) -> Result<(), Refused> {
 /// The page a passkey was used on, as the browser told it.
 pub fn origin(client_data: &[u8]) -> Option<String> {
     let data: Value = serde_json::from_slice(client_data).ok()?;
-    Some(data.get("origin")?.as_str()?.to_string())
+    let page = Url::parse(data.get("origin")?.as_str()?).ok()?;
+    Some(page.origin().ascii_serialization())
 }
 
 /// What the page hands `navigator.credentials.get`. `prf` asks for a key made from this salt.
