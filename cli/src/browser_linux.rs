@@ -6,6 +6,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use base64::Engine;
+
 // What Windows and Linux share, loaded the way browser_windows.rs loads it.
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/dry.rs"]
@@ -21,6 +23,11 @@ use dry::{is_link, refuse, relative, Refused};
 use listing::Release;
 
 const DOWNLOADS: &str = "https://github.com/imputnet/helium-linux/releases/download";
+/// Helium's public signing key, byte for byte as `pubkey.asc` in imputnet/helium-linux publishes it.
+const KEY: &str = include_str!("browser/helium-linux.asc");
+/// The primary key every release must be signed under. The test `the_committed_key_is_the_pinned_one` proves
+/// `KEY` is this key.
+const FINGERPRINT: &str = "BE677C1989D35EAB2C5F26C9351601AD01D6378E";
 
 /// Helium's name for this processor.
 fn arch_name(arch: &str) -> Result<&'static str, Refused> {
@@ -55,6 +62,112 @@ fn fetch(
         name.starts_with("helium-") && name.contains("_linux.tar.xz") && name != other.name
     };
     dry::fetch(release, dir, download, &old)
+}
+
+/// The binary key inside an armored OpenPGP key block, when its CRC24 checksum matches.
+fn dearmor(armored: &str) -> Result<Vec<u8>, Refused> {
+    let bad = |why: &str| Refused::new("signature", format!("Helium's key {why}"));
+    let mut lines = armored.lines().map(|l| l.trim_end_matches('\r'));
+    if lines.next() != Some("-----BEGIN PGP PUBLIC KEY BLOCK-----") {
+        return Err(bad("does not begin as a public key block"));
+    }
+    // Header lines such as `Comment: ...`, up to the blank line.
+    for line in lines.by_ref() {
+        if line.trim().is_empty() {
+            break;
+        }
+        if !line.contains(": ") {
+            return Err(bad("has a header line that is not one"));
+        }
+    }
+    let (mut body, mut sum, mut ended) = (String::new(), None, false);
+    for line in lines.by_ref() {
+        if line == "-----END PGP PUBLIC KEY BLOCK-----" {
+            ended = true;
+            break;
+        }
+        match (line.strip_prefix('='), sum) {
+            (Some(crc), None) => sum = Some(crc),
+            (None, None) => body.push_str(line.trim()),
+            _ => return Err(bad("has text after its checksum")),
+        }
+    }
+    let (true, Some(sum)) = (ended, sum) else {
+        return Err(bad("has no checksum or no END line"));
+    };
+    if lines.any(|l| !l.trim().is_empty()) {
+        return Err(bad("has text after its END line"));
+    }
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let key = b64.decode(&body).map_err(|_| bad("is not base64"))?;
+    let sum = b64.decode(sum).map_err(|_| bad("checksum is not base64"))?;
+    let [a, b, c] = sum[..] else {
+        return Err(bad("checksum is not three bytes"));
+    };
+    if crc24(&key) != u32::from_be_bytes([0, a, b, c]) {
+        return Err(bad("does not match its checksum"));
+    }
+    Ok(key)
+}
+
+/// The armor's checksum, as RFC 4880 section 6.1 spells it.
+fn crc24(bytes: &[u8]) -> u32 {
+    let mut crc: u32 = 0xB7_04CE;
+    for &byte in bytes {
+        crc ^= u32::from(byte) << 16;
+        for _ in 0..8 {
+            crc <<= 1;
+            if crc & 0x100_0000 != 0 {
+                crc ^= 0x186_4CFB;
+            }
+        }
+    }
+    crc & 0xFF_FFFF
+}
+
+/// What `gpgv --status-fd 1` printed, with its exit code, judged. It passes only for one good signature whose
+/// primary key is `FINGERPRINT`. gpgv checks the signature against the one key it is given and nothing more: it does
+/// not check whether that key expired or was revoked since, as Windows checks no revocation either.
+fn judge(status: &str, exit: Option<i32>) -> Result<(), Refused> {
+    let bad = |why: String| Refused::new("signature", why);
+    let lines: Vec<Vec<&str>> = status
+        .lines()
+        .map(|l| l.split_whitespace().collect::<Vec<_>>())
+        .filter(|t| t.first() == Some(&"[GNUPG:]") && t.len() > 1)
+        .collect();
+    let said = |word: &str| lines.iter().filter(|t| t[1] == word).collect::<Vec<_>>();
+    for word in [
+        "BADSIG",
+        "ERRSIG",
+        "EXPSIG",
+        "EXPKEYSIG",
+        "REVKEYSIG",
+        "NO_PUBKEY",
+    ] {
+        if !said(word).is_empty() {
+            return Err(bad(format!("gpgv said {word}")));
+        }
+    }
+    if exit != Some(0) {
+        return Err(bad(format!("gpgv refused it (exit {exit:?})")));
+    }
+    let signatures = said("NEWSIG").len();
+    if signatures != 1 {
+        return Err(bad(format!(
+            "the release has {signatures} signatures, not one"
+        )));
+    }
+    if said("GOODSIG").len() != 1 {
+        return Err(bad("gpgv did not call the signature good".into()));
+    }
+    let primary = match said("VALIDSIG")[..] {
+        [tokens] if tokens.len() == 12 => tokens[11].to_ascii_uppercase(),
+        _ => return Err(bad("gpgv's VALIDSIG line was not understood".into())),
+    };
+    if primary != FINGERPRINT {
+        return Err(bad(format!("it is signed by another key, {primary}")));
+    }
+    Ok(())
 }
 
 /// The number of plain files in the unpacked release, when `unpacked` holds exactly Helium's one folder with its
@@ -274,6 +387,96 @@ mod tests {
             "a refused download was kept"
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What gpgv 2.4.9 printed for the real 0.22.5.1 tarball and Helium's key.
+    const GOOD: &str = "[GNUPG:] NEWSIG
+[GNUPG:] KEY_CONSIDERED BE677C1989D35EAB2C5F26C9351601AD01D6378E 0
+[GNUPG:] SIG_ID +N4wQuCxxSBzYu1VLs0+OlIoEB0 2026-11-25 1795640525
+[GNUPG:] GOODSIG 351601AD01D6378E Helium signing key (https://helium.computer/) <helium@imput.net>
+[GNUPG:] VALIDSIG BE677C1989D35EAB2C5F26C9351601AD01D6378E 2026-11-25 1795640525 0 4 0 22 10 00 BE677C1989D35EAB2C5F26C9351601AD01D6378E
+";
+
+    #[test]
+    fn only_one_good_signature_from_helium_s_key_passes() {
+        assert_eq!(judge(GOOD, Some(0)), Ok(()));
+        let refused = |status: &str, exit: Option<i32>| {
+            let e = judge(status, exit).unwrap_err();
+            assert_eq!(e.check, "signature");
+            e.why
+        };
+        assert!(refused(GOOD, Some(2)).contains("exit"));
+        assert!(refused(GOOD, None).contains("exit"));
+        let other = "0123456789ABCDEF0123456789ABCDEF01234567";
+        let at_end = format!("00 {FINGERPRINT}\n");
+        let lower = GOOD.replace(&at_end, &format!("00 {}\n", FINGERPRINT.to_lowercase()));
+        assert_eq!(judge(&lower, Some(0)), Ok(()), "hex in lowercase");
+        let moved = GOOD.replace(&at_end, &format!("00 {other}\n"));
+        assert!(refused(&moved, Some(0)).contains("another key"));
+        let short = GOOD.replace(&at_end, "00\n");
+        assert!(refused(&short, Some(0)).contains("VALIDSIG"), "11 tokens");
+        let long = GOOD.replace(&at_end, &format!("00 {FINGERPRINT} x\n"));
+        assert!(refused(&long, Some(0)).contains("VALIDSIG"), "13 tokens");
+        let twice = format!("{GOOD}{GOOD}");
+        assert!(refused(&twice, Some(0)).contains("2 signatures"));
+        let unsaid = GOOD.replace("GOODSIG", "SAIDSIG");
+        assert!(refused(&unsaid, Some(0)).contains("good"));
+        assert!(refused("", Some(0)).contains("0 signatures"));
+        for word in [
+            "BADSIG",
+            "ERRSIG",
+            "EXPSIG",
+            "EXPKEYSIG",
+            "REVKEYSIG",
+            "NO_PUBKEY",
+        ] {
+            let added = format!("{GOOD}[GNUPG:] {word} 351601AD01D6378E\n");
+            assert_eq!(refused(&added, Some(0)), format!("gpgv said {word}"));
+        }
+        // gpgv 2.4.9 given the armored key instead of the binary one.
+        let armored = "[GNUPG:] NEWSIG
+[GNUPG:] ERRSIG 351601AD01D6378E 22 10 00 1795640525 9 BE677C1989D35EAB2C5F26C9351601AD01D6378E
+[GNUPG:] NO_PUBKEY 351601AD01D6378E
+";
+        assert!(refused(armored, Some(2)).contains("ERRSIG"));
+    }
+
+    #[test]
+    fn the_committed_key_is_the_pinned_one() {
+        use sha1::Sha1;
+        let key = dearmor(KEY).unwrap();
+        // The first packet is the primary public key: new format, tag 6, with a one-byte length.
+        let (tag, len) = (key[0], usize::from(key[1]));
+        assert_eq!(tag, 0xC6, "a public key packet in the new format");
+        assert!(len < 192);
+        let body = &key[2..2 + len];
+        assert_eq!(body[0], 4, "a version 4 key");
+        let mut sha = Sha1::new();
+        sha.update([0x99]);
+        sha.update(u16::try_from(len).unwrap().to_be_bytes());
+        sha.update(body);
+        let fingerprint: String = sha.finalize().iter().map(|b| format!("{b:02X}")).collect();
+        assert_eq!(fingerprint, FINGERPRINT);
+    }
+
+    #[test]
+    fn an_armored_key_must_match_its_checksum() {
+        assert_eq!(crc24(b""), 0xB7_04CE);
+        let changed = KEY.replacen("xjMEaOqh", "xjMEaOqi", 1);
+        assert_ne!(changed, KEY);
+        assert_eq!(
+            dearmor(&changed).unwrap_err().why,
+            "Helium's key does not match its checksum"
+        );
+        let no_crc: String = KEY
+            .lines()
+            .filter(|l| !l.starts_with('='))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert!(dearmor(&no_crc).is_err());
+        assert!(dearmor("not a key").is_err());
+        let after = format!("{KEY}more\n");
+        assert!(dearmor(&after).unwrap_err().why.contains("after its END"));
     }
 
     /// Helium's layout in small: the program, its desktop file, a link beside it and a folder of data.
