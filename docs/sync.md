@@ -7,8 +7,9 @@ What syncs today:
 - The workspace and bar settings in `surfaces.json`.
 - `config.toml`: keys, hotkeys, appearance and the rest of it. A change keeps your comments and spacing.
 - Your themes in `themes/` and `style.css`.
+- The Settings window's preferences: the modifier, Overview and Cmd-Tab choices, the launcher and quick terminal keys, which agent answers questions, the daily update check and the apps hidden by parking. A synced preference takes effect the next time Polycarp starts. Machine-only preferences, such as the login item, update state and privacy choices like letting agents see your tabs or remote control, stay on each device; both lists are in `cli/src/sync/prefs.rs`. On Windows and Linux they are kept in the sync folder and passed back unchanged.
 
-Not yet: the Settings window's own preferences, a run every few minutes, and the browser (cookies, bookmarks, extensions and its settings). They come in later steps.
+Not yet: a run every few minutes, and the browser (cookies, bookmarks, extensions and its settings). They come in later steps.
 
 ## Set it up
 

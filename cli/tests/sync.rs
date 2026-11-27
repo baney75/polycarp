@@ -1,5 +1,6 @@
 //! End to end: two devices, each with its own temporary home, and a relay that is a temporary folder. Keys go in the
-//! file store (`POLYCARP_SYNC_KEY_STORE=file`), so nothing reaches a real Keychain, relay or settings.
+//! file store (`POLYCARP_SYNC_KEY_STORE=file`) and preferences in a plist of each device's own
+//! (`POLYCARP_SYNC_DEFAULTS`), so nothing reaches a real Keychain, relay, settings or defaults domain.
 
 use serde_json::{json, Value};
 use std::fs;
@@ -35,6 +36,7 @@ impl Device {
             .env("POLYCARP_CONFIG_DIR", self.root.join("cfg"))
             .env("POLYCARP_SUPPORT_DIR", self.root.join("support"))
             .env("POLYCARP_SYNC_KEY_STORE", "file")
+            .env("POLYCARP_SYNC_DEFAULTS", self.prefs())
             .env("POLYCARP_NO_SYSTEM_SPOTS", "1")
             .env("TMPDIR", self.root.join("tmp"))
             .env("PATH", self.root.join("tmp"))
@@ -65,6 +67,9 @@ impl Device {
     }
     fn set_surfaces(&self, v: Value) {
         fs::write(self.root.join("support/surfaces.json"), v.to_string()).unwrap();
+    }
+    fn prefs(&self) -> PathBuf {
+        self.root.join("prefs.plist")
     }
     fn files(&self) -> Vec<(PathBuf, Vec<u8>)> {
         let mut out = Vec::new();
@@ -316,5 +321,41 @@ fn the_background_run_is_quiet_waits_after_a_failure_and_catches_up() {
         .last()
         .unwrap()
         .ends_with("next try in 10 minutes"));
+    let _ = fs::remove_dir_all(&world);
+}
+
+/// Runs `/usr/bin/defaults` on a device's own plist and returns what it printed.
+#[cfg(target_os = "macos")]
+fn defaults(d: &Device, args: &[&str]) -> String {
+    let o = Command::new("/usr/bin/defaults")
+        .arg(args[0])
+        .arg(d.prefs())
+        .args(&args[1..])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "defaults {args:?}");
+    String::from_utf8_lossy(&o.stdout).to_string()
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_synced_preference_reaches_the_other_mac_and_a_local_one_stays() {
+    let world = root("prefs");
+    let relay = world.join("relay");
+    fs::create_dir_all(&relay).unwrap();
+    fs::write(relay.join("polycarp-sync"), b"").unwrap();
+    let addr = format!("dir:{}", relay.display());
+    let (a, b) = (Device::new(&world, "a"), Device::new(&world, "b"));
+    defaults(&a, &["write", "modifier", "-string", "control"]);
+    defaults(&a, &["write", "remoteEnabled", "-bool", "true"]);
+    a.ok(&["sync", "init", "--relay", &addr, "--name", "a"]);
+    let out = b.ok(&["sync", "init", "--relay", &addr, "--name", "b"]);
+    let (code, bfp) = (after(&out, "Pairing code: "), after(&out, "fingerprint "));
+    let out = a.ok(&["sync", "approve", &code, "--fingerprint", &bfp]);
+    a.ok(&["sync", "now"]);
+    b.ok(&["sync", "now", "--approver", &after(&out, "--approver ")]);
+    assert_eq!(defaults(&b, &["read", "modifier"]).trim(), "control");
+    let all = defaults(&b, &["export", "-"]);
+    assert!(!all.contains("remoteEnabled"), "{all}");
     let _ = fs::remove_dir_all(&world);
 }

@@ -4,6 +4,7 @@
 //! - `config:<pointer>`: each leaf of the config folder's `config.toml` (the theme, its mode and accents).
 //! - `theme-file:<name>`: the text of `themes/<name>.toml`.
 //! - `style:style.css`: the text of the style sheet.
+//! - `prefs:<key>`: the Settings window's preferences, read and written by [`super::prefs`].
 //!
 //! A pointer is the keys joined with `/` (`/bar/height`); an array is one leaf. Machine-only fields stay on this
 //! machine and are never sent: they are listed in [`MACHINE_ONLY`], and every string that is a local file path is one
