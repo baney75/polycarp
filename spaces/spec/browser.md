@@ -64,9 +64,11 @@ show it. Any Chromium browser works; macOS ships first. The matcher lives in `So
   none, so the browser draws its own look. The frame is `sunken`, the toolbar and the tab in front `surface`, the address bar
   and new tab `background`, text `foreground`, the tabs behind `muted`, links `accent`. Text under 4.5 to 1 on its color takes
   `foreground`, then `strong`, then black or white, whichever reads better; Chromium draws any color the theme leaves out in
-  its own way, so every one is written. Polycarp Browser loads the folder beside its built-in pages when it starts, and takes
-  a change at its next start: Chromium has no way to change a theme while it runs that Polycarp may use. The new tab and the
-  extension's pages change at once.
+  its own way, so every one is written. Polycarp Browser's launcher loads the folder right after its built-in pages when it
+  starts, whenever it holds a `manifest.json`, and takes a change at its next start: Chromium has no way to change a theme
+  while it runs that Polycarp may use. The new tab and the extension's pages change at once. Chromium says "Installed theme"
+  once, the first time a profile gets it. Pinned by the launcher's
+  `the_theme_folder_is_loaded_after_ours_only_while_it_holds_a_theme`.
 - **R-B17 Sharing a page.** The launcher sends the page in front on this workspace to its browser's Reader or library, which
   the extension does as its own page menu does, or adds a line for it, `- [title](address) date`, at the end of a Markdown
   file the person chose; Polycarp writes nothing else there and never rewrites what is in it. Only a tab with a web page is
