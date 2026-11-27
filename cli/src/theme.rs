@@ -741,6 +741,23 @@ pub fn config_dir() -> Result<PathBuf, String> {
     Ok(Cfg::from_env()?.dir)
 }
 
+/// For `polycarp sync`, which writes `config.toml` and the theme files whole: runs `f` under the theme lock, then, when
+/// it says it changed them, writes `current/` again from what they say now. A problem writing `current/` is a note.
+pub(crate) fn locked_then_refresh<T>(
+    f: impl FnOnce() -> Result<(T, bool), String>,
+) -> Result<(T, Vec<String>), String> {
+    let cfg = Cfg::from_env()?;
+    let _lock = Lock::acquire(&cfg).map_err(|e| e.message)?;
+    let (t, changed) = f()?;
+    if !changed {
+        return Ok((t, Vec::new()));
+    }
+    match finish_with(&cfg, true) {
+        Ok(out) => Ok((t, out.notes)),
+        Err(e) => Ok((t, vec![e.message])),
+    }
+}
+
 impl Cfg {
     fn from_env() -> Result<Cfg, String> {
         let nonempty = |k: &str| env::var_os(k).filter(|v| !v.is_empty()).map(PathBuf::from);
