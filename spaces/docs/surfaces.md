@@ -151,6 +151,7 @@ for none, `from` `paper` or the place's own path). Error codes, beyond the surfa
 | `bar.clockFormat` | `"day-12h"` | `day-12h` (Saturday 10:04 PM), `day-24h` (Saturday 22:04), `12h` (3:05) or `24h` (15:05). |
 | `bar.hourNames` | `true` | The hour module names the hour of prayer (Vigils, Lauds, Terce, Sext, None, Vespers, Compline); off, the part of the day (morning). |
 | `bar.tray` | `"drawer"` | `drawer` (your apps' status items fold behind a chevron) or `row` (they stay in the row with macOS's). |
+| `bar.batteryPercent` | `false` | The charge in digits beside the battery in the status row (`82%`), as macOS's Show Percentage. |
 
 Module ids: `mark`, `workspaces`, `app-menus`, `status`, `hour`, `clock`, `date`, `verse`,
 `battery`, `network`, `agents`, `page`, `notifications`, and `custom:<name>` (lowercase letters, digits and hyphens, up to 32) for a module of your own.
@@ -477,7 +478,7 @@ NotificationCenter.default.addObserver(forName: SurfacesStore.didChange, object:
 ```
 
 The model is `Surfaces` in BaneySpacesCore: `bar` (`Bar`: `enabled`, `height`, `style`, `left`, `center`, `right` as
-`[BarModule]`, `clockFormat`, `hourNames`), `desktop` (`scene`, `followDaylight`, `verse`,
+`[BarModule]`, `clockFormat`, `hourNames`, `tray`, `batteryPercent`), `desktop` (`scene`, `followDaylight`, `verse`,
 `versePosition`, `verseRotation`, `paper`), `menu` (`order`, `hidden`, and
 `rows`, the rows to show in order), `search` (`engine`; `OneSearch.engine` resolves it against the bangs), `newtab`
 (`question`, `verse`, `searchURL`, `paper`, and `searchURL(for:)`), `idle`

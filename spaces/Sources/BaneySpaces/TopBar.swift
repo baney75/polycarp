@@ -876,9 +876,9 @@ struct TopBarView: View {
         case .battery:
             if let b = model.battery {
                 HStack(spacing: 5) {
-                    if let c = model.charge {
-                        BatteryGlyph(look: BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower,
-                                                                 lowPower: c.lowPower), ink: quiet)
+                    if let c = model.charge,
+                       let look = BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower, lowPower: c.lowPower) {
+                        BatteryGlyph(look: look, ink: quiet, outline: BatteryGlyph.outline(s, wash: 0.85))
                     }
                     words(b, s).monospacedDigit().foregroundStyle(quiet)
                 }
@@ -964,19 +964,40 @@ private struct IslandShadow: ViewModifier {
     }
 }
 
-/// macOS's battery, drawn: an outline filled to the charge in the bar's ink, the theme's `working` color in Low Power
-/// Mode and `urgent` nearly empty, with a bolt while charging or a plug on power in ink, set in a gap cut out of the glyph.
-/// Corners are the launcher key's, so the theme decides them (square in Omarchy).
+/// macOS's battery, drawn to `BatteryGlyphSpec`: a hairline body with a nub, filled to the charge
+/// (`BarStatus.batteryLook` picks the color), with a bolt while charging or a plug on power: cut out of the fill where
+/// it lies on it and in ink on the empty body, so it reads on both, whatever is behind the bar.
 struct BatteryGlyph: View {
+    typealias Spec = BatteryGlyphSpec
     let look: BarStatus.BatteryLook
     let ink: Color
+    /// The outline's opacity of `ink`, from `outline(_:wash:)`.
+    let outline: Double
+    @Environment(\.displayScale) private var scale
 
-    private var badgeSymbol: String? {
+    /// The outline's opacity for a bar drawn in `style`, whose ink is `foreground` at `wash` unless the sheet sets it:
+    /// the least that reads at 3:1 on the theme's island and solid fills (`BatteryGlyphSpec.outlineOpacity`).
+    static func outline(_ style: ComputedStyle, wash: Double) -> Double {
+        let look = Chrome.look
+        let backs = [look.color("background"), look.color("surface")]
+        if let c = style.color {
+            return Spec.outlineOpacity(ink: RGB(r: c.red, g: c.green, b: c.blue), inkAlpha: c.alpha, over: backs)
+        }
+        return Spec.outlineOpacity(ink: look.color("foreground"), inkAlpha: wash, over: backs)
+    }
+
+    private var badge: String? {
         switch look.badge {
         case .none: nil
         case .bolt: "bolt.fill"
         case .plug: "powerplug.fill"
         }
+    }
+
+    /// The badge's symbol at `BatteryGlyphSpec.badgeSize`, bold.
+    private static func badgeImage(_ name: String) -> NSImage? {
+        NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: CGFloat(Spec.badgeSize), weight: .bold))
     }
 
     private var fillColor: Color {
@@ -988,32 +1009,54 @@ struct BatteryGlyph: View {
     }
 
     var body: some View {
-        let outer = Chrome.shape(.launcherKey)
-        HStack(spacing: 1) {
-            ZStack(alignment: .leading) {
-                outer.strokeBorder(ink.opacity(0.45), lineWidth: Chrome.width(.launcherKey))
-                GeometryReader { g in
-                    RoundedRectangle(cornerRadius: max(0, Chrome.radius(.launcherKey) - 2), style: .continuous).fill(fillColor)
-                        .frame(width: max(2, (g.size.width - 4) * look.fill), height: g.size.height - 4)
-                        .offset(x: 2, y: 2)
-                }
-                if let symbol = badgeSymbol {
-                    // A larger copy cuts a gap out of the outline and the fill, so the badge reads on whatever is behind
-                    // the bar, filled or empty, with no color assumed.
-                    Image(systemName: symbol).font(.system(size: 10, weight: .black))
-                        .frame(maxWidth: .infinity).blendMode(.destinationOut)
-                }
-            }
-            .compositingGroup()
-            .overlay {
-                if let symbol = badgeSymbol {
-                    Image(systemName: symbol).font(.system(size: 7, weight: .black)).foregroundStyle(ink)
-                }
-            }
-            .frame(width: 22, height: 11)
-            .clipped()
-            Capsule().fill(ink.opacity(0.45)).frame(width: 1.5, height: 4)
+        let width = CGFloat(Spec.width), height = CGFloat(Spec.bodyHeight)
+        // One canvas, so the badge's gap is cut out of the glyph's own layer and nothing behind it. It is moved onto
+        // whole pixels wherever layout puts it: the body is 23 by 11 in a face of any height, and a hairline half a
+        // pixel off is drawn two pixels wide at 1x.
+        GeometryReader { g in
+            let o = g.frame(in: .global).origin, k = max(1, scale)
+            let snap = CGSize(width: (o.x * k).rounded() / k - o.x, height: (o.y * k).rounded() / k - o.y)
+        Canvas { ctx, _ in
+            ctx.translateBy(x: snap.width, y: snap.height)
+            let line = CGFloat(Spec.line), inset = CGFloat(Spec.inset), w = CGFloat(look.fillWidth)
+            let body = CGRect(x: 0, y: 0, width: CGFloat(Spec.bodyWidth), height: height)
+            ctx.stroke(Path(roundedRect: body.insetBy(dx: line / 2, dy: line / 2), cornerRadius: CGFloat(Spec.radius) - line / 2,
+                            style: .continuous),
+                       with: .color(ink.opacity(outline)), lineWidth: line)
+            let fill = Path(roundedRect: CGRect(x: inset, y: inset, width: w, height: height - 2 * inset),
+                            cornerRadius: min(CGFloat(Spec.fillRadius), w / 2), style: .continuous)
+            if w > 0 { ctx.fill(fill, with: .color(fillColor)) }
+            let r = CGFloat(Spec.capWidth)
+            ctx.fill(Path(roundedRect: CGRect(x: body.maxX + CGFloat(Spec.capGap), y: (height - CGFloat(Spec.capHeight)) / 2,
+                                              width: r, height: CGFloat(Spec.capHeight)),
+                          cornerRadii: RectangleCornerRadii(bottomTrailing: r, topTrailing: r), style: .continuous),
+                     with: .color(ink.opacity(outline)))
+            guard let badge else { return }
+            // A template image, not text: it rasterizes the same way under every blend mode, so the cut and the ink
+            // land on the same pixels.
+            guard let image = Self.badgeImage(badge) else { return }
+            var symbol = ctx.resolve(Image(nsImage: image).renderingMode(.template))
+            symbol.shading = .color(ink)
+            // Centered on the body with its corner on a whole pixel, or a 1x screen smears it across two.
+            let k = max(1, scale)
+            // Whole pixels across and down too, so the symbol is drawn at its own size and never resampled.
+            let size = CGSize(width: (image.size.width * k).rounded() / k, height: (image.size.height * k).rounded() / k)
+            let place = CGRect(origin: CGPoint(x: ((body.midX - size.width / 2) * k).rounded() / k,
+                                               y: ((body.midY - size.height / 2) * k).rounded() / k), size: size)
+            // Cut out of the fill where it lies on the fill, in ink on the empty body: it reads either way with no ring
+            // round it, so nothing smears at 1x.
+            var cut = ctx
+            cut.clip(to: fill)
+            cut.blendMode = .destinationOut
+            cut.draw(symbol, in: place)
+            var empty = ctx
+            var outside = Path(body)
+            outside.addPath(fill)
+            empty.clip(to: outside, style: FillStyle(eoFill: true))
+            empty.draw(symbol, in: place)
         }
+        }
+        .frame(width: width, height: height)
         .accessibilityElement(children: .ignore)
     }
 }

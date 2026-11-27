@@ -77,6 +77,24 @@ next frame shows a change. One look a second covers the registry and locale sett
 
 Type is monospace: Cascadia Mono, else Consolas, 13 px at 100%.
 
+## The battery (macOS)
+
+Measures and rules are `BatteryGlyphSpec` and `BarStatus.batteryLook`; `BatteryGlyphTests` holds the case table. Windows
+has no battery yet.
+
+- **R-BB1 Shape.** macOS's own menu bar battery: a 23 by 11 pt body with a 1 pt outline and continuous 3 pt corners, a
+  1.5 by 4 pt nub centered on its right, and the fill inset 1.5 pt with corners that follow the outline. A charge above
+  zero fills at least 1.5 pt.
+- **R-BB2 Fill.** The bar's ink at full opacity. While charging it stays ink, Low Power Mode included. Otherwise Low
+  Power Mode fills in the theme's `working`, and 10% or below on battery in `urgent`. No battery (a desktop Mac): it
+  isn't drawn.
+- **R-BB3 Badge.** A bolt while charging, a plug on power when not charging: SF Symbols at 7 pt centered on the body
+  on whole pixels, cut out of the fill where they lie on it and in ink on the empty body, with no ring round them.
+- **R-BB4 Contrast.** The outline's opacity of the ink is 38%, or the least above that which reaches 3:1 against the
+  theme's `background` and `surface` in that mode. The badge and both fill tints reach 3:1 in every theme in `themes/`.
+- **R-BB5 Percent.** `bar.batteryPercent` (off by default) puts the charge in digits before the glyph, in the bar's
+  type with monospaced digits.
+
 ## Moving modules (macOS)
 
 The person moves the bar's modules with the mouse; Windows draws a fixed set and has none of this yet. The rules are
