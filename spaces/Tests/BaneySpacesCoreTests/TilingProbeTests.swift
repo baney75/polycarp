@@ -228,4 +228,13 @@ final class TilingProbeTests: XCTestCase {
         XCTAssertTrue(Concealment(plan: plan, owner: owner).hideApps.contains(77))
         XCTAssertEqual(TilingProbe.switchOwners(owner, probe: []), owner)
     }
+
+    func testCase63TheAgentWorkspaceInSightRefusesAStartAndEndsAProbe() {
+        guard case .refused(let r) = TilingProbe.start(["start", "4242", "", ""], agentWorkspace: 9, running: false, active: true,
+                                                     agentInSight: true, alive: { $0 == 4242 }) else { return XCTFail("started") }
+        XCTAssertEqual(r.info?["code"], "probe_off")
+        let session = TilingProbe.Session(.init(caller: 4242, rounds: 1, seconds: 60), workspace: 9, now: 0)
+        XCTAssertNil(session.check(now: 1, active: true, agentWorkspace: 9, agentInSight: false))
+        XCTAssertEqual(session.check(now: 1, active: true, agentWorkspace: 9, agentInSight: true), .workspace)
+    }
 }

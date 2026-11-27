@@ -30,7 +30,8 @@ final class TilingProbeRun {
     func answer(_ args: [String]) -> Wire.Reply {
         if args.first == "status" { return session?.reply ?? TilingProbe.none }
         let start = TilingProbe.start(args, agentWorkspace: Spaces.agentWorkspace, running: session?.running == true,
-                                      active: spaces.active, alive: { kill($0, 0) == 0 || errno == EPERM })
+                                      active: spaces.active, agentInSight: Spaces.agentWorkspace.map(spaces.model.isShown) == true,
+                                      alive: { kill($0, 0) == 0 || errno == EPERM })
         switch start {
         case .refused(let reply): return reply
         case .go(let ask):
@@ -53,7 +54,9 @@ final class TilingProbeRun {
         caller = source
         tick = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self, let s = self.session else { return }
-            if let why = s.check(now: Tiling.uptime, active: self.spaces.active, agentWorkspace: Spaces.agentWorkspace) { self.end(why) }
+            let inSight = self.spaces.model.isShown(s.workspace)
+            if let why = s.check(now: Tiling.uptime, active: self.spaces.active, agentWorkspace: Spaces.agentWorkspace,
+                                 agentInSight: inSight) { self.end(why) }
         }
         guard startHelper() else { return end(.error) }
     }
@@ -153,7 +156,9 @@ final class TilingProbeRun {
         case .wrote(let ids):
             for id in ids where opened.contains(id) { writes[id, default: 0] += 1 }
             return false
-        case .timed(let c, _, _): mine = ours.contains(c.at) || c.pid.map { spaces.probe?.pids.contains($0) == true } == true
+        case .timed(let c, _, _):
+            mine = ours.contains(c.at) || c.pid.map { spaces.probe?.pids.contains($0) == true } == true
+                || (c.workspace != nil && c.workspace == session?.workspace)
         case .action(let a): mine = a.workspace == session?.workspace
         }
         guard let w = waiting else { return mine }
