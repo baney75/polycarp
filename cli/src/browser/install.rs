@@ -112,21 +112,26 @@ pub fn fingerprint(place: &Place) -> Result<String, Refused> {
     };
     let mut digest = Sha256::new();
     digest.update(RECIPE);
-    // Local Studio's extension, with the commit it was built from (spec/browser.md R-B20). None adds nothing, so a build
-    // from before it doesn't make the browser again.
-    let local = place
-        .local_studio
-        .exists()
-        .then_some(("\0local studio\0", &place.local_studio));
-    for (label, root) in [("", &place.parts), ("", &place.extension)]
-        .into_iter()
-        .chain(local)
-    {
-        digest.update(label);
+    for root in [&place.parts, &place.extension] {
         for (name, bytes) in read(root).map_err(refuse("parts", "reading them"))? {
             let name = name.as_os_str().to_string_lossy();
             digest.update(format!("\0{name}\0{}\0", bytes.len()));
             digest.update(bytes);
+        }
+    }
+    // Local Studio's extension, with the commit it was built from (spec/browser.md R-B20). None adds nothing, so a build
+    // from before it doesn't make the browser again; one that can't be read is left out of the build, never a refusal.
+    if place.local_studio.exists() {
+        match read(&place.local_studio) {
+            Ok(all) => {
+                digest.update("\0local studio\0");
+                for (name, bytes) in all {
+                    let name = name.as_os_str().to_string_lossy();
+                    digest.update(format!("\0{name}\0{}\0", bytes.len()));
+                    digest.update(bytes);
+                }
+            }
+            Err(_) => digest.update("\0local studio unreadable\0"),
         }
     }
     // The theme's icon is built in too (change::put_theme_icon): a new, changed or removed one is an update.
@@ -162,7 +167,13 @@ pub fn install(
     }
     let newest = release::newest(tools, arch)?;
     status::remember(&place.cache, &newest);
-    if let Some(told) = nothing_to_do(place, &newest, ask)? {
+    if let Some(mut told) = nothing_to_do(place, &newest, ask)? {
+        // Local Studio installed or moved since the build: its helper follows without building again.
+        let helper =
+            (!told.waiting).then(|| local_studio::register(&place.data, &place.home, &spot.app()));
+        if let Some(line) = helper.flatten() {
+            told.line = format!("{}\n{line}", told.line);
+        }
         return Ok(told);
     }
     if !ask.when_quit {
@@ -331,11 +342,12 @@ mod tests {
 
     #[test]
     fn local_studio_goes_in_when_staged_and_its_commit_is_part_of_the_build() {
+        use std::os::unix::fs::PermissionsExt;
         let t = Fake::new();
         let place = t.place();
         let without = fingerprint(&place).unwrap();
         let done = go(&t, INSTALL).unwrap();
-        assert!(done.line.contains("doesn't carry it"), "{}", done.line);
+        assert!(!done.line.contains("Local Studio"), "{}", done.line);
         let inside = t.spot().app().join(local_studio::IN_APP);
         assert!(!inside.exists());
         let staged = t.local_studio_extension();
@@ -353,7 +365,26 @@ mod tests {
             "{}",
             done.line
         );
-        assert!(go(&t, UPDATE).unwrap().line.contains("up to date"));
+        // Up to date still answers for the helper.
+        let told = go(&t, UPDATE).unwrap().line;
+        assert!(
+            told.contains("up to date") && told.contains("can't reach its helper"),
+            "{told}"
+        );
+        fs::create_dir_all(staged.join("locked")).unwrap();
+        fs::write(staged.join("locked/file"), "x").unwrap();
+        fs::set_permissions(
+            staged.join("locked/file"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        let unreadable = fingerprint(&place).unwrap();
+        assert_ne!(unreadable, without);
+        fs::set_permissions(
+            staged.join("locked/file"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
         fs::remove_dir_all(&staged).unwrap();
         assert_eq!(fingerprint(&place).unwrap(), without);
     }

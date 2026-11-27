@@ -66,8 +66,9 @@ pub fn put_in(staged: &Path, app: &Path) -> Option<String> {
             "Local Studio's extension was left out of the browser: {why}."
         ))
     };
+    // A Polycarp build without it says nothing: there is nothing to fix.
     if !staged.exists() {
-        return left_out("this Polycarp build doesn't carry it");
+        return None;
     }
     if let Err(why) = read(staged) {
         return left_out(&why);
@@ -121,15 +122,20 @@ fn helper(home: &Path) -> Result<PathBuf, String> {
     Ok(release.filter(|r| same(r)).unwrap_or(path))
 }
 
-/// Lets the built-in Local Studio extension reach its helper from Polycarp Browser's data folder. Nothing to do when the
-/// app has no Local Studio inside; the line says why it can't, and an earlier registration is left as it was.
+/// Lets the built-in Local Studio extension reach its helper from Polycarp Browser's data folder. When the app has no
+/// Local Studio inside, a registration of ours from before goes; the line says why it can't, and an earlier registration
+/// is left as it was.
 pub fn register(data: &Path, home: &Path, app: &Path) -> Option<String> {
+    let ours = data
+        .join("NativeMessagingHosts")
+        .join(format!("{HOST}.json"));
     if !app.join(IN_APP).join("manifest.json").is_file() {
+        let _ = fs::remove_file(&ours);
         return None;
     }
     let cant = |why: String| {
         Some(format!(
-            "Local Studio's extension can't reach its helper yet: {why}. Install Local Studio for Helium, then run `polycarp browser install`."
+            "Local Studio's extension can't reach its helper yet: {why}. Install Local Studio for Helium, then run `polycarp browser update`."
         ))
     };
     let path = match helper(home) {
@@ -186,8 +192,7 @@ mod tests {
             fs::write(other.join("manifest.json"), manifest).unwrap();
             assert!(put_in(&other, &app).unwrap().contains(why), "{manifest}");
         }
-        let line = put_in(&t.work().join("absent"), &app).unwrap();
-        assert!(line.contains("doesn't carry it"), "{line}");
+        assert_eq!(put_in(&t.work().join("absent"), &app), None);
         // A pin that isn't a whole commit is no commit.
         fs::write(staged.join(PIN), "347571d\n").unwrap();
         assert_eq!(read(&staged).unwrap().commit, None);
