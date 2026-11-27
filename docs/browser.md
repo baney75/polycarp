@@ -92,6 +92,9 @@ is signed ad hoc and the command says so: macOS then asks for permissions and sa
   the rest. A new, changed or removed theme icon makes the next `update` build again. The small 32 px picture inside the
   browser's own pages stays the shipped one.
 - Polycarp's extension is inside the app and loads at every start. It needs no developer mode and can't be lost in an update.
+- Local Studio's extension is inside it too, when Polycarp's build carries it, built from a pinned Local Studio commit, and
+  loads after Polycarp's. It talks to the Local Studio helper you installed for Helium; install Local Studio first, then
+  `polycarp browser install`. `polycarp browser status` shows both extensions' versions and the Local Studio commit.
 - Helium's own updater does nothing: it has no key, no address and no schedule left.
 - A new profile starts at Polycarp's new tab, without the welcome tour. Helium's online services stay off until you choose
   them at `helium://settings/privacy/services`. Vertical tabs and other looks are yours to choose.

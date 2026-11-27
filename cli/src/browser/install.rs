@@ -13,7 +13,7 @@ use super::progress::{Progress, Step};
 use super::release::{self, Release};
 use super::spot::Spot;
 use super::tools::Tools;
-use super::{build, clear, pages, refuse, source, status, Place, Refused};
+use super::{build, clear, local_studio, pages, refuse, source, status, Place, Refused};
 
 /// Part of every build's fingerprint: raised when the way a build is made changes, so installed ones are made again.
 const RECIPE: &str = "1";
@@ -119,6 +119,21 @@ pub fn fingerprint(place: &Place) -> Result<String, Refused> {
             digest.update(bytes);
         }
     }
+    // Local Studio's extension, with the commit it was built from (spec/browser.md R-B20). None adds nothing, so a build
+    // from before it doesn't make the browser again; one that can't be read is left out of the build, never a refusal.
+    if place.local_studio.exists() {
+        match read(&place.local_studio) {
+            Ok(all) => {
+                digest.update("\0local studio\0");
+                for (name, bytes) in all {
+                    let name = name.as_os_str().to_string_lossy();
+                    digest.update(format!("\0{name}\0{}\0", bytes.len()));
+                    digest.update(bytes);
+                }
+            }
+            Err(_) => digest.update("\0local studio unreadable\0"),
+        }
+    }
     // The theme's icon is built in too (change::put_theme_icon): a new, changed or removed one is an update.
     match super::change::theme_icon(&place.home) {
         Some(icon) => {
@@ -152,7 +167,13 @@ pub fn install(
     }
     let newest = release::newest(tools, arch)?;
     status::remember(&place.cache, &newest);
-    if let Some(told) = nothing_to_do(place, &newest, ask)? {
+    if let Some(mut told) = nothing_to_do(place, &newest, ask)? {
+        // Local Studio installed or moved since the build: its helper follows without building again.
+        let helper =
+            (!told.waiting).then(|| local_studio::register(&place.data, &place.home, &spot.app()));
+        if let Some(line) = helper.flatten() {
+            told.line = format!("{}\n{line}", told.line);
+        }
         return Ok(told);
     }
     if !ask.when_quit {
@@ -186,8 +207,9 @@ pub fn install(
         newest.version,
         app.display()
     )];
-    lines.extend(note.map(String::from));
+    lines.extend(note);
     lines.extend(pages::set_up(&place.data, place.host.as_deref()));
+    lines.extend(local_studio::register(&place.data, &place.home, &app));
     Ok(done(lines.join("\n")))
 }
 
@@ -256,6 +278,7 @@ pub fn finish(place: &Place, mut pause: impl FnMut()) -> Result<(), Refused> {
                     Err(_) => {}
                     Ok(()) => {
                         pages::set_up(&place.data, place.host.as_deref());
+                        local_studio::register(&place.data, &place.home, &place.spot.app());
                     }
                 }
             }
@@ -315,6 +338,55 @@ mod tests {
 
     fn helium(t: &Fake) -> Option<String> {
         t.spot().installed().map(|b| b.helium)
+    }
+
+    #[test]
+    fn local_studio_goes_in_when_staged_and_its_commit_is_part_of_the_build() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = Fake::new();
+        let place = t.place();
+        let without = fingerprint(&place).unwrap();
+        let done = go(&t, INSTALL).unwrap();
+        assert!(!done.line.contains("Local Studio"), "{}", done.line);
+        let inside = t.spot().app().join(local_studio::IN_APP);
+        assert!(!inside.exists());
+        let staged = t.local_studio_extension();
+        let with = fingerprint(&place).unwrap();
+        assert_ne!(with, without);
+        // A new pin is an update.
+        fs::write(staged.join(local_studio::PIN), "0".repeat(40)).unwrap();
+        assert_ne!(fingerprint(&place).unwrap(), with);
+        let done = go(&t, UPDATE).unwrap();
+        assert!(!done.line.contains("left out"), "{}", done.line);
+        assert!(inside.join("manifest.json").is_file());
+        // Helium has no registration here: the browser is in, and a line says what to do.
+        assert!(
+            done.line.contains("can't reach its helper"),
+            "{}",
+            done.line
+        );
+        // Up to date still answers for the helper.
+        let told = go(&t, UPDATE).unwrap().line;
+        assert!(
+            told.contains("up to date") && told.contains("can't reach its helper"),
+            "{told}"
+        );
+        fs::create_dir_all(staged.join("locked")).unwrap();
+        fs::write(staged.join("locked/file"), "x").unwrap();
+        fs::set_permissions(
+            staged.join("locked/file"),
+            fs::Permissions::from_mode(0o000),
+        )
+        .unwrap();
+        let unreadable = fingerprint(&place).unwrap();
+        assert_ne!(unreadable, without);
+        fs::set_permissions(
+            staged.join("locked/file"),
+            fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        fs::remove_dir_all(&staged).unwrap();
+        assert_eq!(fingerprint(&place).unwrap(), without);
     }
 
     #[test]

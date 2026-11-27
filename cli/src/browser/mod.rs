@@ -9,6 +9,7 @@ mod gone;
 mod import;
 mod install;
 mod keys;
+mod local_studio;
 mod pages;
 mod pak;
 mod progress;
@@ -72,6 +73,8 @@ pub struct Place {
     pub parts: PathBuf,
     /// Polycarp's extension, as staged into Polycarp.app.
     pub extension: PathBuf,
+    /// Local Studio's extension, as staged into Polycarp.app when the build could make it (spec/browser.md R-B20).
+    pub local_studio: PathBuf,
     /// Where the app goes.
     pub spot: spot::Spot,
     /// The browser's own data folder.
@@ -151,14 +154,15 @@ fn dry_run(
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
     let (_, note) = built?;
     cleared?;
-    let note = note.map(|n| format!("{n}\n")).unwrap_or_default();
+    let note: String = note.iter().map(|n| format!("{n}\n")).collect();
     Ok(format!(
         "{note}Helium {} was downloaded, passed its checks and was made into Polycarp Browser, which starts. Nothing was installed.",
         release.version
     ))
 }
 
-/// The finished app, in `work`: checked first, then changed and signed. With it, a line to print about the signature.
+/// The finished app, in `work`: checked first, then changed and signed. With it, lines to print: about the signature,
+/// and about Local Studio's extension when it was left out.
 fn build(
     tools: &dyn Tools,
     place: &Place,
@@ -166,7 +170,7 @@ fn build(
     work: &Path,
     release: &release::Release,
     progress: &Progress,
-) -> Result<(PathBuf, Option<&'static str>), Refused> {
+) -> Result<(PathBuf, Vec<String>), Refused> {
     progress.begin(Step::Verify)?;
     let changes = change::Changes::read(&place.parts)?;
     let (identity, note) = sign::Identity::find(tools, &place.parts)?;
@@ -182,6 +186,10 @@ fn build(
     change::apply(tools, &app, &place.parts, &changes)?;
     change::put_theme_icon(&app, &place.home, &changes)?;
     pages::put_in(tools, &app, place, &changes)?;
+    let notes = note.map(String::from).into_iter();
+    let notes: Vec<String> = notes
+        .chain(local_studio::put_in(&place.local_studio, &app))
+        .collect();
     let built = spot::Built {
         helium: release.version.clone(),
         published: release.published,
@@ -200,7 +208,7 @@ fn build(
     progress.begin(Step::Check)?;
     start::check(tools, &app, work, &changes)?;
     progress.end(None);
-    Ok((app, note))
+    Ok((app, notes))
 }
 
 fn now_millis() -> u64 {
@@ -356,6 +364,7 @@ pub fn run(
                 cache: own_cache(&cache),
                 parts: resources.join("make-browser"),
                 extension: resources.join("extension"),
+                local_studio: resources.join("local-studio-extension"),
                 spot,
                 data: gone::profile(&home)[0].clone(),
                 home: home.clone(),

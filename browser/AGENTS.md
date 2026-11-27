@@ -12,7 +12,8 @@
   the person turned on a scope for it, an agent. Fixtures hold made-up values. No MCP tool or CLI output ever carries a cookie, token, key or password.
 - Sync sends ciphertext between the person's own devices. No Polycarp server holds data or keys. A new device joins only
   after a passkey or security key says so on one that is already in.
-- No agent tool drives pages (Tychicus does that). The remote debugging port is never opened in a person's browser.
+- No Polycarp agent tool drives pages. Local Studio's extension, built in from a pinned commit (Donovan, 2026-11-26;
+  `spaces/spec/browser.md` R-B20), does that under Local Studio's own rules: it reaches only the helper the person installed for Helium, with that helper's own approvals, and Polycarp grants it no scope. The remote debugging port is never opened in a person's browser.
 - The label `com.polycarp.browser` and `~/.config/polycarp/browser/` belong to the retired helper and are never used. This browser is
   `com.baney.polycarp.browser`, its data folder `Polycarp/Browser` in Application Support.
 - Tests use throwaway profiles and homes, never a real browser's.
