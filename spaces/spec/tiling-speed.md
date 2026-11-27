@@ -156,7 +156,9 @@ so the probe tiles there, off every display, with windows of its own.
    changes, turns off or comes into sight on a display (a start while it is in sight is `probe_off`).
    Every end sends the helper `quit`, closes the pipes, stops a helper still running 1 s later, turns the
    probe flag off, drops the agent workspace's layout from the engine and writes one trace line
-   `probe end why=<done|deadline|caller|inactive|workspace|error>`. Its state is in memory only.
+   `probe end why=<done|deadline|caller|inactive|workspace|error>`. Its state is in memory only. On its first window a probe also writes
+   `probe ax pid=<helper> trusted=<bool> main=<error/windows> background=<error/windows>`: how the helper answers
+   Polycarp's Accessibility ask on the main thread and on a background queue.
 10. The probe never touches the current workspace, the focus, a display or any app but its helper, so it needs no
     idle wait.
 11. Each round opens 3 windows one at a time (3 `new` samples, each waiting for its window to land), presses 4 move,

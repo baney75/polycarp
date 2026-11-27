@@ -138,6 +138,23 @@ final class TilingProbeRun {
         next()
     }
 
+    /// One trace line on the probe's first window: whether Polycarp may use Accessibility, and how the helper answers it
+    /// here on the main thread and on a background queue, as the scan asks. A probe that misses every sample says why.
+    static func checkAX(_ pid: pid_t) {
+        func ask() -> String {
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.25)
+            var v: CFTypeRef?
+            let e = AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &v)
+            return "\(e.rawValue)/\((v as? [AXUIElement])?.count ?? -1)"
+        }
+        let main = ask(), trusted = AXIsProcessTrusted()
+        DispatchQueue.global().async {
+            let background = ask()
+            Trace.log("probe ax pid=\(pid) trusted=\(trusted) main=\(main) background=\(background)")
+        }
+    }
+
     /// The helper's lines: `ready`, then `open <window number>` for each window it opened. Its end ends the probe.
     private func said(_ data: Data) {
         guard session?.running == true else { return }
@@ -150,6 +167,7 @@ final class TilingProbeRun {
             if words.count == 2, words[0] == "open", let id = WindowID(words[1]) {
                 opened.append(id)
                 focus = id
+                if opened.count == 1, let pid = helper?.app.processIdentifier { Self.checkAX(pid) }
                 // Its app is asked at once: the helper's first window comes with no notification to say so.
                 if let pid = helper?.app.processIdentifier { spaces.whenFresh(asking: [pid]) { [weak tiling] in tiling?.look() } }
             }
