@@ -217,9 +217,11 @@ branch of `brand/mark.svg` (`brand/mark-small.svg` below 48 px) on the rounded s
 9. Polycarp Browser's icon is the same drawing. While a theme is in force Polycarp keeps it in `browser-theme/icon.icns`
    (gone with the theme), and when it changes starts the run the daily update makes, `polycarp browser update --when-quit`,
    which builds it in and signs it with the rest; the build goes in when the browser quits. Only while updates are
-   automatic, one run at a time; with them off the browser takes the icon at the person's next `polycarp browser update`.
+   automatic, one run at a time. A change during a run, or while Polycarp installs its own update, is kept (across a
+   relaunch too) and gets one more run as soon as it can, so the icon built in is the last one asked for
+   (`BrowserUpdate.Rebuild`). With updates off the browser takes the icon at the person's next `polycarp browser update`.
 
-Pinned by `ThemeIconTests`, which reads every file in `themes/`, and `AppIconSwapTests`, which swaps the icon of a signed
+Pinned by `ThemeIconTests`, which reads every file in `themes/`, `BrowserUpdateTests` (rule 9), and `AppIconSwapTests`, which swaps the icon of a signed
 temp bundle and checks it with `codesign --strict`.
 
 ## Window borders
