@@ -40,6 +40,8 @@ struct State {
 struct Ctx {
     dir: PathBuf,
     paths: Paths,
+    /// A background run: notes go to the sync log, never the screen.
+    quiet: bool,
 }
 
 fn now_ms() -> u64 {
@@ -82,6 +84,7 @@ fn ctx() -> Result<Ctx, String> {
             config,
             support: support_dir()?,
         },
+        quiet: false,
     })
 }
 
@@ -383,7 +386,11 @@ fn sync_settings(
         Ok(((merged, wrote), theme))
     })?;
     for n in notes {
-        eprintln!("theme: {n}");
+        match (c.quiet, log_path()) {
+            (true, Ok(log)) => auto::log_line(&log, &format!("theme: {n}")),
+            (true, Err(_)) => {}
+            (false, _) => eprintln!("theme: {n}"),
+        }
     }
     write_json(&last_path, &merged)?;
     let same = theirs
@@ -441,7 +448,7 @@ fn background() -> i32 {
         1
     };
     let c = match ctx() {
-        Ok(c) => c,
+        Ok(c) => Ctx { quiet: true, ..c },
         Err(e) => return fail(e),
     };
     let path = c.dir.join(AUTO);

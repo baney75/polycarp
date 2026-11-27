@@ -37,8 +37,9 @@ pub struct Backoff {
 }
 
 impl Backoff {
+    /// Due once the wait is over, or when it ends further off than the longest wait, as after the clock was set back.
     pub fn due(&self, now_ms: u64) -> bool {
-        now_ms >= self.next_ms
+        now_ms >= self.next_ms || self.next_ms - now_ms > MAX_WAIT_MIN * 60_000
     }
     /// After one more failure: the wait doubles from 10 minutes up to 60.
     pub fn failed(&self, now_ms: u64) -> Backoff {
@@ -91,6 +92,15 @@ mod tests {
             b = b.failed(0);
         }
         assert_eq!(b.wait_min(0), 60);
+    }
+
+    #[test]
+    fn a_wait_set_while_the_clock_ran_ahead_ends_when_it_comes_back() {
+        // A failure at a clock two days ahead; the clock is then set right.
+        let ahead = 2 * 24 * 60 * 60_000;
+        let b = Backoff::default().failed(ahead);
+        assert!(b.due(0));
+        assert!(!b.due(ahead + 60_000));
     }
 
     #[test]
