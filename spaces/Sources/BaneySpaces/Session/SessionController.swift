@@ -15,6 +15,8 @@ struct AgentHost {
     var window: (UInt32) -> AgentAPI.Candidate? = { _ in nil }
     /// Whether a workspace holds any window.
     var occupied: (Int) -> Bool = { _ in false }
+    /// `agent probe start|status` (spec/tiling-speed.md R-TS12).
+    var probe: ([String]) -> Wire.Reply = { _ in AgentAPI.refusal(.probeOff, "Polycarp isn't placing windows now") }
 }
 
 /// The session engine: the engine behind every terminal split, browser tab and coding agent BaneySpaces
@@ -534,8 +536,10 @@ final class SessionController {
                 h.move(id, n)
                 return AgentAPI.moved(id, to: n)
             }
+        case "probe":
+            return h.probe(args)
         default:
-            return AgentAPI.refusal(.badRequest, "usage: polycarp-spaces agent status|on [N]|off|windows|move <window number>")
+            return AgentAPI.refusal(.badRequest, "usage: polycarp-spaces agent status|on [N]|off|windows|move <window number>|probe [--rounds N] [--seconds S] [--json]")
         }
     }
 

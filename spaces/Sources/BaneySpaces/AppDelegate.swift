@@ -1127,6 +1127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         h.windows = { [weak self] in self?.spaces.agentWindows() ?? [] }
         h.window = { [weak self] id in self?.spaces.moveCandidate(id) }
         h.occupied = { [weak self] n in self?.spaces.isOccupied(n) ?? false }
+        h.probe = { [weak self] args in self?.tiling.probe.answer(args) ?? AgentAPI.refusal(.probeOff, "Polycarp isn't placing windows now") }
         session.agentHost = h
         session.server.later = { [weak self] r, done in
             guard let self, r.op == .tile, self.started else { return false }

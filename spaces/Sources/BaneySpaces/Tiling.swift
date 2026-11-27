@@ -42,6 +42,7 @@ final class Tiling {
     var dragTimer: Timer?
     var escape: Any?
     lazy var outline = TilingOutline()
+    lazy var probe = TilingProbeRun(tiling: self)
     var strips: TilingStrips?
 
     init(spaces: Spaces) { self.spaces = spaces }
@@ -63,7 +64,7 @@ final class Tiling {
 
     @discardableResult
     private func readSettings() -> Bool {
-        let next = TilingOptions(SurfacesStore.shared.current.tiling, agentWorkspace: Spaces.agentWorkspace)
+        let next = engine.options.reloaded(SurfacesStore.shared.current.tiling, agentWorkspace: Spaces.agentWorkspace)
         guard next != engine.options else { return false }
         engine.apply(next)
         return true
@@ -71,7 +72,7 @@ final class Tiling {
 
     /// A window got the focus: the next one opened goes beside it.
     func focused(_ id: WindowID) {
-        if engine.wanted(on: spaces.shownWorkspaces), engine.focused(id) { lookSoon(0) }
+        if engine.wanted(on: inSight), engine.focused(id) { lookSoon(0) }
     }
 
     /// A look a moment from now, the earliest asked for.
@@ -89,7 +90,7 @@ final class Tiling {
 
     /// Brings the workspaces in sight in line with their windows. Called whenever any of that may have changed.
     func look() {
-        guard engine.wanted(on: spaces.shownWorkspaces) else { return }
+        guard engine.wanted(on: inSight) else { return }
         guard !busy else { again = true; return }
         // Mid-drag the window is the person's; the release looks again, and this in case it doesn't.
         guard NSEvent.pressedMouseButtons & 1 == 0, drag?.phase ?? .still == .still else { return lookSoon(0.1) }
@@ -145,12 +146,14 @@ final class Tiling {
         flush = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
             guard let self else { return timer.invalidate() }
             // A close whose workspace left sight before any write wasn't missed: nothing writes there out of sight.
-            let shown = self.spaces.shownWorkspaces
+            let shown = self.inSight
             let done = self.actions.due(now: Self.uptime).filter { $0.last != nil || shown.contains($0.workspace) }
             if self.actions.open.isEmpty { timer.invalidate(); self.flush = nil }
             guard !done.isEmpty else { return }
             let epoch = Int(Date().timeIntervalSince1970)
-            let lines = done.map { TileActions.line(epoch: epoch, $0) }
+            // A probe's own actions are its numbers, not real use: they stay out of timing.log (R-TS12.12).
+            let lines = done.filter { Self.probeHook?(.action($0)) != true }.map { TileActions.line(epoch: epoch, $0) }
+            guard !lines.isEmpty else { return }
             let url = Spaces.folder.appendingPathComponent("timing.log")
             DispatchQueue.global(qos: .utility).async { TimingLog.append(lines.joined(separator: "\n"), to: url) }
         }
@@ -159,13 +162,25 @@ final class Tiling {
     /// Windows leaving their workspaces together (a quit, a move of several): timed on each workspace in sight where
     /// one was tiled and another tiled window stays (R-TS10). Out of sight, no look writes there until it is shown.
     func left(_ ids: Set<WindowID>, how: String, at: Double) {
-        let shown = spaces.shownWorkspaces
+        let shown = inSight
         for (workspace, others) in engine.staying(after: ids) where others > 0 && shown.contains(workspace) {
             action(.close, how: how, at: at, workspace: workspace)
         }
         // The space is filled now: no lookSoon, no scan, no settle first (R-TS8).
         look()
     }
+
+    /// The workspaces in sight, and the agent workspace while a probe runs (spec/tiling-speed.md R-TS12).
+    var inSight: [Int] { spaces.shownWorkspaces + (spaces.probe.map { [$0.workspace] } ?? []) }
+
+    /// What the probe hears of the timing results, on the main thread: the same ones timing.log gets. It answers true for
+    /// its own, which timing.log doesn't get.
+    enum ProbeHeard {
+        case timed(TileCauses.Cause, asked: Double, landed: Double?)
+        case action(TileActions.Action)
+        case wrote([WindowID])
+    }
+    static var probeHook: ((ProbeHeard) -> Bool)?
 
     /// The causes one write answers, and when its look began; the rest of each line comes as the write goes on.
     struct Timed {
@@ -176,6 +191,7 @@ final class Tiling {
 
         /// Off the main thread, as `OpenClock` does.
         func log(landed: Double?) {
+            let causes = causes.filter { Tiling.probeHook?(.timed($0, asked: asked, landed: landed)) != true }
             guard !causes.isEmpty else { return }
             let epoch = Int(Date().timeIntervalSince1970)
             let lines = causes.map { TileCauses.line(epoch: epoch, $0, looked: looked, asked: asked, landed: landed, moves: moves) }
@@ -211,7 +227,7 @@ final class Tiling {
 
     /// How far Polycarp's bar reaches into a display, from its top. It is read off the bar's own windows, which alone
     /// are at their level, so a bar of any shape is kept clear of.
-    private static func reach(into display: DisplayKey) -> CGFloat {
+    static func reach(into display: DisplayKey) -> CGFloat {
         guard let screen = NSScreen.screens.first(where: { Windows.key(of: $0) == display }) else { return 0 }
         return TilingRead.reach(of: NSApp.windows.filter { $0.isVisible && isBar($0) }.map(\.frame), into: screen.frame)
     }
@@ -292,6 +308,7 @@ final class Tiling {
                 }
                 if wrote.contains(where: { !$0.1 }) { self.lookSoon(2.1) }
                 let ids = Set(wrote.filter(\.1).map(\.0))
+                _ = Self.probeHook?(.wrote(Array(ids)))
                 self.actions.wrote(wrote.filter(\.1).compactMap { w in spots[w.0].map { (id: w.0, workspace: $0) } }, looked: timed.looked, at: Self.uptime)
                 self.writes.done(Set(wrote.filter { !$0.1 }.map(\.0)), serial)
                 self.engine.flying(ids)

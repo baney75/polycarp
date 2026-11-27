@@ -1,10 +1,11 @@
 # Agent workspace API
 
 Polycarp keeps one workspace for agent apps, the agent workspace (`polycarp-spaces agent on [N]`). This API has two
-operations on it and nothing else:
+operations on it, and a probe for tiling's speed:
 
 - `windows`: list the windows on the agent workspace.
 - `move`: move one window to the agent workspace.
+- `probe`: time tiling on the agent workspace, off screen, with windows of its own.
 
 Polycarp does not read, click or type into apps. A computer-use client starts its apps and then uses this API to keep their windows on the agent workspace.
 
@@ -50,6 +51,15 @@ kernel's start time for a process launchd started. On success `info` holds `vers
 The move is the same one Polycarp makes when you send a window with its keys: the window is parked out of sight if
 you aren't looking at the agent workspace.
 
+## probe
+
+`polycarp-spaces agent probe [--rounds N] [--seconds S] [--json]` times tiling in the running app with nothing on
+screen (spec/tiling-speed.md R-TS12). Only while it runs, the agent workspace tiles, in an area left of every display,
+with windows of a helper copy of Polycarp. On the socket: args `["start", "<caller pid>", "<rounds>", "<seconds>"]`
+answer `info.state` `running`; args `["status"]` answer `running`, `done` with `info.result` (JSON: n, p50, p90, max,
+misses and writes for each kind) or `ended` with `info.why`. It ends when it is done, at its deadline, when the caller
+exits, when Polycarp stops placing windows or when the agent workspace changes. Callers on another machine can't run it.
+
 ## Errors
 
 A refusal is `ok: false` with `error` for people and `info.code` for programs:
@@ -59,7 +69,9 @@ A refusal is `ok: false` with `error` for people and `info.code` for programs:
 | `agent_workspace_off` | no agent workspace is set; `polycarp-spaces agent on [N]` sets one |
 | `no_such_window` | `move` named a window Polycarp doesn't place (closed, its process gone, never seen, or on no workspace) |
 | `refused` | `move` named a window on another workspace whose process has run for over 60 seconds |
-| `bad_request` | `move` got no window number, more than one, or something that isn't one; or an unknown operation |
+| `bad_request` | `move` got no window number, more than one, or something that isn't one; `probe` got rounds or seconds out of range or a caller pid that isn't running; or an unknown operation |
+| `probe_busy` | `probe start` while a probe runs |
+| `probe_off` | `probe start` while Polycarp isn't placing windows |
 
 `ok: false` with no `code` means the app can't answer yet: it is still starting or waits for Accessibility. No reply
 at all means Polycarp isn't running.

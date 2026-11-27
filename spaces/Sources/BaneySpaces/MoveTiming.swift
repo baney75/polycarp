@@ -125,6 +125,7 @@ enum MoveTiming {
         NSApp.setActivationPolicy(.accessory)
         LateWindow.delay = UInt32(numbers[1]) * 1000
         LateWindow.free = ProcessInfo.processInfo.environment["BANEYSPACES_RENDER_MOVE_FREE"] == "1"
+        if let area = ProcessInfo.processInfo.environment["BANEYSPACES_PROBE_AREA"] { return probe(area) }
         let windows = (0..<numbers[0]).map { i in
             let w = LateWindow(contentRect: NSRect(x: 100 + 40 * i, y: 200, width: 400, height: 272),
                                styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -143,6 +144,55 @@ enum MoveTiming {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { FileHandle.standardOutput.write(Data("ready\n".utf8)) }
         withExtendedLifetime(windows) { NSApp.run() }
+        return 0
+    }
+
+    /// A tiling probe's helper (spec/tiling-speed.md R-TS12.6): `area` is "x y w h" in Accessibility's coordinates. Each
+    /// `open` line on standard input opens a window there and answers `open <window number>`; `close <i>` closes the
+    /// i-th opened; the end of input quits. Its windows are standard ones, at the normal level, nearly clear, take no
+    /// click, never take the focus and never have a frame on a screen.
+    static func probe(_ area: String) -> Int32 {
+        let n = area.split(separator: " ").compactMap { Double($0) }
+        guard n.count == 4 else { return 64 }
+        let primary = NSScreen.screens.first?.frame.height ?? 0
+        // Inside the area with room to spare, whatever height Polycarp's bar takes from its top.
+        let frame = Geometry.toAX(CGRect(x: n[0] + 20, y: n[1] + 60, width: min(400, n[2] - 40), height: min(300, n[3] - 120)), primaryHeight: primary)
+        var windows: [LateWindow?] = []
+        func say(_ line: String) { FileHandle.standardOutput.write(Data((line + "\n").utf8)) }
+        func heard(_ line: Substring) {
+            let words = line.split(separator: " ")
+            if words == ["open"] {
+                let w = LateWindow(contentRect: LateWindow.contentRect(forFrameRect: frame, styleMask: [.titled, .closable, .resizable]),
+                                   styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: true)
+                w.isReleasedWhenClosed = false
+                w.title = "Polycarp tiling probe \(windows.count)"
+                w.alphaValue = 0.01
+                w.hasShadow = false
+                w.ignoresMouseEvents = true
+                w.level = .normal
+                w.setFrame(frame, display: false)
+                w.orderFrontRegardless()
+                windows.append(w)
+                say("open \(w.windowNumber)")
+            } else if words.count == 2, words[0] == "close", let i = Int(words[1]), windows.indices.contains(i) {
+                windows[i]?.close()
+                windows[i] = nil
+            }
+        }
+        var pending = Data()
+        FileHandle.standardInput.readabilityHandler = { h in
+            let data = h.availableData
+            DispatchQueue.main.async {
+                guard !data.isEmpty else { CrashLoop.renderEnded(); exit(0) }
+                pending.append(data)
+                while let end = pending.firstIndex(of: 10) {
+                    heard(Substring(String(decoding: pending[..<end], as: UTF8.self)))
+                    pending.removeSubrange(...end)
+                }
+            }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { say("ready") }
+        NSApp.run()
         return 0
     }
 

@@ -46,6 +46,30 @@ extension Tiling {
         }
     }
 
+    /// A probe's command (spec/tiling-speed.md R-TS12.8): on workspace `n` with `focused` as the window in front, timed
+    /// from `pressed`. A focus moves in the engine alone: no app is focused or activated. `done` gets the window focused.
+    func runProbe(_ command: TilingCommand, on n: Int, focused: WindowID?, pressed: Double,
+                  done: @escaping (_ focused: WindowID?, _ why: String?) -> Void) {
+        guard TilingProbe.allows(command) else { return done(nil, "the probe takes only focus, move and resize") }
+        spaces.whenFresh { [self] in
+            guard spaces.active else { return done(nil, "Polycarp isn't placing windows now") }
+            look()
+            switch TilingProbe.step(engine.run(command, on: n, focused: focused)) {
+            case .nothing(let why): done(nil, why)
+            case .look:
+                cause(TileCauses.Cause(.key, at: pressed))
+                if case .move = command { action(.move, how: "key", at: pressed, workspace: n) }
+                look()
+                done(nil, nil)
+            case .focus(let id):
+                engine.focused(id)
+                let now = Self.uptime
+                Timed(causes: [TileCauses.Cause(.key, at: pressed)], looked: now, asked: now).log(landed: nil)
+                done(id, nil)
+            }
+        }
+    }
+
     /// The same from `polycarp-spaces tile`, answered with how tiling stands once it is done.
     func answer(_ words: [String], done: @escaping (Wire.Reply) -> Void) {
         let end: (String?) -> Void = { [self] why in done(why.map { Wire.Reply(ok: false, error: $0) } ?? status.reply) }
@@ -55,7 +79,7 @@ extension Tiling {
         case .turn(let on, let n)?:
             let n = n ?? spaces.model.current
             guard spaces.active else { return end("Polycarp isn't placing windows now") }
-            if n == engine.options.agentWorkspace { return end("the agent workspace never tiles") }
+            if let why = engine.options.refusesTurning(n) { return end(why) }
             engine.options.tiles(n) == on ? end(nil) : toggle(n, done: end)
         case .run(let command)?: run(command, done: end)
         }
@@ -76,7 +100,7 @@ extension Tiling {
 
     /// Turns a workspace on or off: at once here, and in surfaces.json.
     func toggle(_ n: Int, done: @escaping (String?) -> Void = { _ in }) {
-        guard n != engine.options.agentWorkspace else { return done("the agent workspace never tiles") }
+        if let why = engine.options.refusesTurning(n) { return done(why) }
         let was = engine.options
         let next = was.toggled(n)
         engine.apply(next)
