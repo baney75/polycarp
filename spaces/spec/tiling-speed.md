@@ -131,12 +131,17 @@ so the probe tiles there, off every display, with windows of its own.
 5. During a probe TilingView shows the agent workspace on the display key `probe` with that area. Only the helper's
    windows there count as in sight; every other window of the agent workspace stays parked. Nothing changes for the
    other workspaces.
-6. Probe windows come from one helper: a copy of the app binary, started as `MoveTiming.Helpers` starts them, with
-   `BANEYSPACES_RENDER_MOVE_FREE=1` and `BANEYSPACES_PROBE_AREA="x y w h"`. Its windows are titled, closable and
-   resizable, at level 0, alpha 0.01, with no shadow, taking no click, in an accessory app that never activates
-   (`orderFrontRegardless`, never `makeKey`). Each frame is inside the probe area from the window's creation. Its
-   input is a line at a time: `open` opens a window and answers `open <window number>`, `close <i>` closes the i-th
-   opened, the end of input quits. Without `BANEYSPACES_PROBE_AREA` the helper is the render harness's as before.
+6. Probe windows come from one helper: a new instance of the app, started by LaunchServices
+   (`NSWorkspace.openApplication`, a new instance, not activated) with `--render`, `BANEYSPACES_RENDER_MOVE_FREE=1`
+   and `BANEYSPACES_PROBE_AREA="x y w h"`. Not as the app's own child: macOS answers the app's Accessibility asks of
+   a process it started itself with "API disabled" (`-25211`, measured 2026-11-26), so a child's windows never reach
+   tiling. Its windows are titled, closable and resizable, at level 0, alpha 0.01, with no shadow, taking no click,
+   in an accessory app that never activates (`orderFrontRegardless`, never `makeKey`). Each frame is inside the probe
+   area from the window's creation. It talks a line at a time over two named pipes, `BANEYSPACES_PROBE_IN` and
+   `BANEYSPACES_PROBE_OUT`, that the app opens before starting it: `ready` first, then `open` opens a window and
+   answers `open <window number>`, `close <i>` closes the i-th opened, `quit` quits. It quits too when the process
+   in `BANEYSPACES_PROBE_OWNER` exits. The first step waits until the helper said `ready` and LaunchServices gave its
+   pid. Without `BANEYSPACES_PROBE_AREA` the helper is the render harness's as before, on its standard input and output.
 7. A new window of a helper's pid joins the agent workspace in the scan that finds it, before any look
    (`TilingProbe.homes`): never the current workspace, never another, and no claim, rule or parked-app adoption
    moves it, and a switch neither hides the helper nor parks its windows (`TilingProbe.switchOwners`): they stay in
@@ -149,7 +154,7 @@ so the probe tiles there, off every display, with windows of its own.
 9. A probe ends when it is done; at its deadline (a timer in the app, at most 300 s); when the caller's process exits
    (a pid already gone at the start is `bad_request`); when Polycarp stops placing windows; when the agent workspace
    changes, turns off or comes into sight on a display (a start while it is in sight is `probe_off`).
-   Every end closes the helper's input, stops a helper still running 1 s later, turns the
+   Every end sends the helper `quit`, closes the pipes, stops a helper still running 1 s later, turns the
    probe flag off, drops the agent workspace's layout from the engine and writes one trace line
    `probe end why=<done|deadline|caller|inactive|workspace|error>`. Its state is in memory only.
 10. The probe never touches the current workspace, the focus, a display or any app but its helper, so it needs no
