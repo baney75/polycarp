@@ -412,6 +412,7 @@ One file for all of them, with undo and a recovery key, is on the plan. Its cont
 | --- | --- | --- | --- | --- | --- |
 | Workspaces | In the app | In progress | Retired | Planned: control your computer's | Planned: control your computer's |
 | Themes | In the app | Command works | Retired | Planned | Planned |
+| Settings sync | `polycarp sync` | `polycarp sync` | `polycarp sync` | Planned | Planned |
 
 ### The top bar
 

@@ -19,7 +19,7 @@ The rest of this plan is Spaces and themes, on Mac and Windows first. Old apps k
 - Moved to Silas (baney75/silas), 2026-11-18: dictation on every device, the Mac's included, is the Silas app, not part of Polycarp
 - [ ] Windows: workspaces in one app. Check: run on a Windows VM
 - [ ] iPhone, iPad, Android: control of your computer's workspaces. Check: Simulator, emulator and a real device
-- [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path
+- [ ] Dictionary and settings sync directly between your own devices, with no Polycarp cloud. Check: an edit on one device appears on another with no third-party server in the path. Settings: `polycarp sync` (docs/sync.md), pinned by `cli/tests/sync.rs` with two temporary homes and a folder relay; untested live. Not yet: the Settings window's preferences, a background run, the browser
 - [ ] Each app follows its platform's conventions. Check: screenshots from the real target, plus keyboard, touch, focus, reduced motion and text size
 
 ## Spaces: replace the top bar
