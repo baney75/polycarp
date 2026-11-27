@@ -12,9 +12,6 @@ use std::collections::BTreeMap;
 /// How long a tombstone is kept, in milliseconds: 90 days.
 pub const TOMBSTONE_MS: u64 = 90 * 24 * 60 * 60 * 1000;
 
-/// The kinds of bundle. Each is its own encrypted file on the relay.
-pub const KINDS: [&str; 5] = ["settings", "bookmarks", "cookies", "prefs", "extensions"];
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     /// The value, or None for a tombstone. On the wire a tombstone has no `value` key, so a JSON null is a value.

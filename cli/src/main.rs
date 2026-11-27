@@ -87,6 +87,7 @@ Usage:
   polycarp spaces [args...]    run the Spaces command
   polycarp theme <command>     choose and check the theme (polycarp theme --help)
   polycarp look <command>      save, share and apply how all of Polycarp looks (polycarp look --help)
+  polycarp sync <command>      Polycarp's settings, the same on each of your devices (polycarp sync --help)
   polycarp mcp                 serve the theme and surfaces commands to an agent over MCP (stdio)
   polycarp browser <command>   Polycarp Browser, made on a Mac from Helium's release (polycarp browser --help)
   polycarp files <command>     search, open and send your files across your devices (polycarp files --help)
@@ -120,6 +121,7 @@ fn main() {
         Some("voice") => voice(),
         Some("theme") => theme::run(&rest),
         Some("look") => look::run(&rest),
+        Some("sync") => sync::cmd::run(&rest),
         Some("features") => features::run(&rest),
         Some("mcp") => mcp::run(&rest),
         Some("files") => files::run(&rest),
