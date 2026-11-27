@@ -4,20 +4,33 @@ import BaneySpacesCore
 /// Keeps Polycarp's icon in the theme's colors (spec/themes.md, "The icons"). The Dock takes it at once. The app's own icon
 /// file, which Finder, Spotlight and the launcher show, follows a few seconds after the last change, when this Mac has the
 /// key Polycarp is signed with: the bundle is signed again with it (`AppIconSwap`), so its signature and permissions stay.
-/// Without the key only the Dock changes, and the file keeps the icon the app came with. Main thread, except the file.
+/// Without the key only the Dock changes, and the file keeps the icon the app came with. Polycarp Browser's icon is the same
+/// drawing, kept in `browser-theme/icon.icns` while a theme is in force; when it changes, `rebuildBrowser` builds the browser
+/// again with it (`polycarp browser update --when-quit`, signed as every build is). Main thread, except the files.
 @MainActor
 final class AppIconKeeper {
     static let shared = AppIconKeeper()
 
     private var shown: ThemeIcon.Colors?
+    private var browserShown: Data?
     private var pending: DispatchWorkItem?
     private let queue = DispatchQueue(label: "com.baney.polycarp.app-icon", qos: .utility)
     private var observer: NSObjectProtocol?
     /// Set on `queue` once macOS refuses the swap: the file is not tried again until Polycarp starts again.
     private nonisolated(unsafe) static var notPermitted = false
+    /// Builds Polycarp Browser again with the icon now in `browser-theme/`.
+    var rebuildBrowser: () -> Void = {}
 
-    /// Draws the icon for the theme in force now and again after every change of theme or Dark Mode.
+    /// The browser's icon as it was last built in: what `browser-theme/icon.icns` held at launch, then each one written.
+    /// Remembered rather than read, because the folder goes when the theme does. Only on `queue`.
+    private nonisolated(unsafe) static var browserIconNow: Data?
+    private nonisolated static var browserIconFile: URL { BrowserThemeFolder.folder.appendingPathComponent("icon.icns") }
+
+    /// Draws the icon for the theme in force now and again after every change of theme or Dark Mode. Called before
+    /// `BrowserThemeFolder` first syncs, so the browser's icon at launch is still there to be read.
     func follow() {
+        let before = try? Data(contentsOf: Self.browserIconFile)
+        queue.async { Self.browserIconNow = before }
         apply()
         observer = NotificationCenter.default.addObserver(forName: Appearance.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.apply() }
@@ -25,16 +38,29 @@ final class AppIconKeeper {
     }
 
     private func apply() {
-        let colors = ThemeIcon.colors(Appearance.shared.polycarp, systemDark: Appearance.systemDark)
-        guard colors != shown else { return }
+        let theme = Appearance.shared.polycarp
+        let colors = ThemeIcon.colors(theme, systemDark: Appearance.systemDark)
+        // The browser carries one icon, built in: the theme's look outside Dark Mode, so a Dark Mode flip alone doesn't
+        // build it again. No theme: no file, and the browser goes back to the icon it ships with.
+        let browser = theme.flatMap { ThemeIcon.icns(ThemeIcon.colors($0, systemDark: false)) }
+        guard colors != shown || browser != browserShown else { return }
         shown = colors
+        browserShown = browser
         if let image = ThemeIcon.image(colors, pixels: 1024) {
             NSApp.applicationIconImage = NSImage(cgImage: image, size: NSSize(width: 512, height: 512))
         }
         // The Settings picker can pass through several themes in a second; only the last one is written.
         pending?.cancel()
         let app = Bundle.main.bundleURL, tools = Bundle.main.resourceURL?.appendingPathComponent("make-browser")
-        let work = DispatchWorkItem { Self.write(colors, into: app, tools: tools) }
+        let rebuild = rebuildBrowser
+        let work = DispatchWorkItem {
+            Self.write(colors, into: app, tools: tools)
+            _ = ThemeIcon.syncFile(browser, at: Self.browserIconFile)
+            if browser != Self.browserIconNow {
+                Self.browserIconNow = browser
+                DispatchQueue.main.async { rebuild() }
+            }
+        }
         pending = work
         queue.asyncAfter(deadline: .now() + 3, execute: work)
     }

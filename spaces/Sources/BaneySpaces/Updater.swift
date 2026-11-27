@@ -71,6 +71,7 @@ final class Updater: NSObject {
 
     private func checkIfDue() {
         updateBrowserIfDue()
+        if rebuild.look(free: rebuildFree) { runBrowserUpdate() }
         guard checksAutomatically, installing == nil else { return }
         if let last = lastCheck, Date().timeIntervalSince(last) < 23 * 3600, available == nil { return }
         check(manual: false)
@@ -79,9 +80,26 @@ final class Updater: NSObject {
     /// In the background and quietly: `polycarp browser status` and `polycarp doctor` say where it stands.
     private func updateBrowserIfDue() {
         let last = UserDefaults.standard.object(forKey: "lastBrowserUpdate") as? Date
-        guard installing == nil, BrowserUpdate.due(last: last, now: Date(), automatic: checksAutomatically),
-              let resources = Bundle.main.resourceURL else { return }
+        guard installing == nil, !rebuild.running,
+              BrowserUpdate.due(last: last, now: Date(), automatic: checksAutomatically) else { return }
         UserDefaults.standard.set(Date(), forKey: "lastBrowserUpdate")
+        runBrowserUpdate()
+    }
+
+    /// The same run now, for a new icon in the theme's colors: quiet, and only while updates are automatic. An ask while
+    /// a run or the app's own update is under way is kept until it can start (`BrowserUpdate.Rebuild`).
+    func rebuildBrowser() {
+        if rebuild.ask(free: rebuildFree) { runBrowserUpdate() }
+    }
+
+    private var rebuild = BrowserUpdate.Rebuild(wanted: UserDefaults.standard.bool(forKey: "browserRebuildWanted")) {
+        didSet { UserDefaults.standard.set(rebuild.wanted, forKey: "browserRebuildWanted") }
+    }
+    private var rebuildFree: Bool { checksAutomatically && installing == nil }
+    private var browserUpdate: Process?
+
+    private func runBrowserUpdate() {
+        guard !rebuild.running, let resources = Bundle.main.resourceURL else { return }
         let update = Process()
         update.executableURL = BrowserUpdate.command(resources: resources)
         update.arguments = BrowserUpdate.arguments
@@ -89,7 +107,16 @@ final class Updater: NSObject {
         update.standardInput = FileHandle.nullDevice
         update.standardOutput = FileHandle.nullDevice
         update.standardError = FileHandle.nullDevice
-        try? update.run()
+        update.terminationHandler = { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.browserUpdate = nil
+                if self.rebuild.ended(free: self.rebuildFree) { self.runBrowserUpdate() }
+            }
+        }
+        do { try update.run() } catch { return }
+        rebuild.started()
+        browserUpdate = update
     }
 
     /// Reads the feed's latest.json. A manual check always answers, even "you're up to date".
@@ -342,6 +369,7 @@ final class Updater: NSObject {
             self.installing = nil
             UserDefaults.standard.removeObject(forKey: "updatingTo")
             self.onChange()
+            if self.rebuild.look(free: self.rebuildFree) { self.runBrowserUpdate() }
             // Success means this app is about to be replaced; nothing to say.
             guard code != 0 else { return }
             let log = (try? String(contentsOf: Self.logURL, encoding: .utf8)) ?? ""

@@ -99,6 +99,23 @@ public enum ThemeIcon {
         return file
     }
 
+    /// Keeps `file` holding `wanted`, or gone when it is nil: Polycarp Browser's icon beside its theme, which
+    /// `polycarp browser update` builds in. True when the file changed, so the browser needs building again.
+    public static func syncFile(_ wanted: Data?, at file: URL) -> Bool {
+        let fm = FileManager.default
+        let now = try? Data(contentsOf: file)
+        guard now != wanted else { return false }
+        guard let wanted else {
+            try? fm.removeItem(at: file)
+            return true
+        }
+        do {
+            try fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try wanted.write(to: file, options: .atomic)
+            return true
+        } catch { return false }
+    }
+
     private static func bigEndian(_ n: UInt32) -> Data {
         withUnsafeBytes(of: n.bigEndian) { Data($0) }
     }

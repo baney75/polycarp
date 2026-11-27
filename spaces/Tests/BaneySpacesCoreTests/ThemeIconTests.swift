@@ -80,6 +80,20 @@ final class ThemeIconTests: XCTestCase {
         XCTAssertEqual(pixel(small, olive.x, olive.y), "#FBF6FA/255")
     }
 
+    func testTheBrowsersIconFileIsWrittenReplacedAndRemovedOnlyWhenItChanges() throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("browser-icon-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("browser-theme/icon.icns")
+        XCTAssertFalse(ThemeIcon.syncFile(nil, at: file), "no theme and no file: nothing to build")
+        XCTAssertTrue(ThemeIcon.syncFile(Data("plum".utf8), at: file))
+        XCTAssertEqual(try Data(contentsOf: file), Data("plum".utf8))
+        XCTAssertFalse(ThemeIcon.syncFile(Data("plum".utf8), at: file), "the same icon: no new build")
+        XCTAssertTrue(ThemeIcon.syncFile(Data("teal".utf8), at: file))
+        XCTAssertEqual(try Data(contentsOf: file), Data("teal".utf8))
+        XCTAssertTrue(ThemeIcon.syncFile(nil, at: file))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+    }
+
     func testTheIcnsHoldsEverySizeAsAPngOfThatSize() throws {
         let data = try XCTUnwrap(ThemeIcon.icns(ThemeIcon.brand))
         XCTAssertEqual(String(decoding: data.prefix(4), as: UTF8.self), "icns")
