@@ -13,7 +13,7 @@ public struct TileCauses: Equatable, Sendable {
         public var at: Double
         /// The app a `new` window belongs to.
         public var pid: Int32?
-        /// The workspace a `close` window left.
+        /// The workspace a `close` window left, or the one a `switch` goes to.
         public var workspace: Int?
 
         public init(_ kind: Kind, at: Double, pid: Int32? = nil, workspace: Int? = nil) {
@@ -40,7 +40,18 @@ public struct TileCauses: Equatable, Sendable {
     /// Stale causes leave as each comes, so a day of switches with nothing tiling keeps none.
     public mutating func add(_ cause: Cause) {
         prune(now: cause.at)
+        // Only the last switch ends in sight: an earlier one has no look of its own left to come.
+        if cause.kind == .switch { pending.removeAll { $0.kind == .switch } }
         pending.append(cause)
+    }
+
+    /// A look with `shown` in sight that asked for `wrote`: a switch to a workspace in sight that it wrote nothing on had
+    /// its look, which had nothing to do. It leaves with no line, so no later write answers it.
+    public mutating func looked(shown: Set<Int>, wrote: [Wrote]) {
+        pending.removeAll { c in
+            guard c.kind == .switch, let n = c.workspace, shown.contains(n) else { return false }
+            return !wrote.contains { $0.workspace == n }
+        }
     }
 
     private mutating func prune(now: Double) {
@@ -56,7 +67,7 @@ public struct TileCauses: Equatable, Sendable {
             let yes: Bool
             switch c.kind {
             case .key: yes = focus || !wrote.isEmpty
-            case .switch: yes = !wrote.isEmpty
+            case .switch: yes = c.workspace.map { n in wrote.contains { $0.workspace == n } } ?? !wrote.isEmpty
             case .new: yes = wrote.contains { $0.new && $0.pid == c.pid }
             case .close: yes = wrote.contains { $0.workspace == c.workspace }
             }

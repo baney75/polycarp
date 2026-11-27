@@ -150,7 +150,7 @@ final class Spaces {
     /// A window got the focus on its workspace.
     var onFocus: (WindowID) -> Void = { _ in }
     /// A switch was asked for, at this system uptime: tiling times its look after it (spec/tiling-speed.md R-TS2).
-    var onSwitchAsked: (Double) -> Void = { _ in }
+    var onSwitchAsked: (Double, Int) -> Void = { _, _ in }
 
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         .appendingPathComponent("Polycarp")
@@ -934,7 +934,7 @@ final class Spaces {
     func switchTo(_ n: Int, takeFocus moveFocus: Bool = true, announce: Bool = true) {
         if active, n == Workspaces.scratchpad { return showScratchpad() }
         guard active, Workspaces.range.contains(n) else { return }
-        onSwitchAsked(ProcessInfo.processInfo.systemUptime)
+        onSwitchAsked(ProcessInfo.processInfo.systemUptime, n)
         if switching {
             // Presses keep their order; only back-to-back switches collapse to the last one.
             if case .switchTo = queued.last { queued.removeLast() }
