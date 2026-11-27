@@ -17,6 +17,10 @@ public enum AgentAPI {
         case noSuchWindow = "no_such_window"
         /// `move` named a window on another workspace whose app has run for over `freshProcess` seconds: Donovan's own.
         case refused
+        /// `probe start` while a probe runs (spec/tiling-speed.md R-TS12).
+        case probeBusy = "probe_busy"
+        /// `probe start` while Polycarp isn't placing windows.
+        case probeOff = "probe_off"
     }
 
     /// One window on the agent workspace.

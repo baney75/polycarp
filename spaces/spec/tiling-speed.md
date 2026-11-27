@@ -83,11 +83,6 @@ dormant, so a window whose app still lists it at the next scan goes back to its 
 looks at once: no `lookSoon` delay, no scan and no settle first. The note still starts a scan of the app (R-TS6),
 which only confirms. A sheet or panel closing is not a window leaving: nothing is written.
 
-Two windows are the exception. A closed window whose app has another window on that workspace the window server
-doesn't draw may be a native tab, whose hidden sibling takes its tile (`TilingEngine` swaps it in); filling first would
-move the others twice, so the scan decides, as before. A minimized window stays in the model, out of the layout from
-its note for 2 s while the animation still draws it, then by the scan's own reading; brought back, it is tiled again.
-
 ### R-TS9 One frame per window, sent so it never shows a frame in between
 - A close or a move asks each window for at most one frame. A window is asked again only when it didn't land
   (R-TS5's tries), and that write counts.
@@ -112,13 +107,69 @@ it moved a window. Nothing else is written.
 `spec/speed.json` `close-fill` and `move-fill`, judged on `fill` by `scripts/speed-report.sh`: p90 50 ms each, over at
 least 20 real tries. `writes` is 1 on every line but one whose window didn't land.
 
+### R-TS12 The probe tiles the agent workspace, off screen, only while it runs
+Donovan wants live tiling numbers from the real app with nothing on his screen. The agent workspace is never shown,
+so the probe tiles there, off every display, with windows of its own.
+
+1. `polycarp-spaces agent probe [--rounds N] [--seconds S] [--json]` runs the probe in the running app and prints its
+   numbers. N is 1 to 10, 3 when left out. S is 1 to 300, 180 when left out. A caller on another machine is refused,
+   as for every agent operation but `status` (`Remote.allows`).
+2. On the wire: op `agent`, text `probe`. Args `["start", "<caller pid>", "<rounds>", "<seconds>"]` answers at once
+   with `ok` and `info.state` `running`; an empty number takes its default. Args `["status"]` answers `info.state`
+   `running`, `done` (with `info.result`, the JSON of rule 12) or `ended` (with `info.why`). With no probe since the app
+   started, `status` is `ended` with why `error`. The command starts it, asks `status` every 0.5 s until it is not
+   running, then prints. Refusals are `AgentAPI.refusal`: `bad_request` for N or S out of range or a pid that isn't a
+   running process, `agent_workspace_off` with no agent workspace, `probe_busy` while one runs, `probe_off` while
+   Polycarp isn't placing windows.
+3. While a probe runs, and only then, `tiles(agent workspace)` is true (`TilingOptions.probing`). No settings key sets
+   it: `TilingOptions(_:agentWorkspace:)` never does, and a settings reload during a probe keeps it
+   (`TilingOptions.reloaded`). The Settings row for the agent workspace stays disabled, and `tile on` and
+   `tile toggle` of it still answer "the agent workspace never tiles" (`refusesTurning`).
+4. The probe's area is `TilingProbe.area(screens:usable:)`: the size of the main display's tiling area as TilingView
+   takes it, its right edge 2000 pt left of the leftmost display, its top at that area's top. In the window server's
+   coordinates, as every TilingView area is. `Geometry.isStranded` is true for it.
+5. During a probe TilingView shows the agent workspace on the display key `probe` with that area. Only the helper's
+   windows there count as in sight; every other window of the agent workspace stays parked. Nothing changes for the
+   other workspaces.
+6. Probe windows come from one helper: a copy of the app binary, started as `MoveTiming.Helpers` starts them, with
+   `BANEYSPACES_RENDER_MOVE_FREE=1` and `BANEYSPACES_PROBE_AREA="x y w h"`. Its windows are titled, closable and
+   resizable, at level 0, alpha 0.01, with no shadow, taking no click, in an accessory app that never activates
+   (`orderFrontRegardless`, never `makeKey`). Each frame is inside the probe area from the window's creation. Its
+   input is a line at a time: `open` opens a window and answers `open <window number>`, `close <i>` closes the i-th
+   opened, the end of input quits. Without `BANEYSPACES_PROBE_AREA` the helper is the render harness's as before.
+7. A new window of a helper's pid joins the agent workspace in the scan that finds it, before any look
+   (`TilingProbe.homes`): never the current workspace, never another, and no claim, rule or parked-app adoption
+   moves it, and a switch never parks it: it stays in the probe area. The helper is scanned while the probe runs,
+   though it is not a regular app.
+8. The probe drives tiling through the same engine and look a key uses (`Tiling.runProbe`), on the agent workspace,
+   with a probe window as the one in front and `pressed` the uptime the probe asked. A focus moves the engine's
+   focus alone: never `spaces.focus`, never an app activation. Only focus, move and resize in four directions run;
+   any other command, and an outcome that would cross a display or turn tiling on or off, does nothing.
+9. A probe ends when it is done; at its deadline (a timer in the app, at most 300 s); when the caller's process exits
+   (a pid already gone at the start is `bad_request`); when Polycarp stops placing windows; when the agent workspace
+   changes or turns off. Every end closes the helper's input, stops a helper still running 1 s later, turns the
+   probe flag off, drops the agent workspace's layout from the engine and writes one trace line
+   `probe end why=<done|deadline|caller|inactive|workspace|error>`. Its state is in memory only.
+10. The probe never touches the current workspace, the focus, a display or any app but its helper, so it needs no
+    idle wait.
+11. Each round opens 3 windows one at a time (3 `new` samples, each waiting for its window to land), presses 4 move,
+    4 focus and 4 resize keys, closes 2 windows one at a time (2 `close` samples, each must fill) and closes the last
+    (no sample). A sample is the result the action would write to timing.log (R-TS1 `tile=`, R-TS10 `close`),
+    heard in the app (`Tiling.probeHook`): `asked` of a `tile=` line, `fill` of a `close` line. The probe's own
+    results stay out of timing.log, so `scripts/speed-report.sh` judges real use alone. One with no landing in 2 s
+    is a miss. A key with nothing to do (at an edge) writes no line and is no sample.
+12. The result has, for each of `key focus`, `key move`, `key resize`, `new` and `close`: n, p50, p90 and max in ms
+    over the samples that landed, the misses, and the most frames any one window got. Percentiles are nearest rank,
+    as `scripts/speed-report.sh` takes them. Exit 0 when every sample landed, 1 on a miss or an early end, 2 on a
+    refusal. `--json` prints the result's JSON.
+13. The agent workspace never tiles outside a probe.
+
 ## Measuring
 
 - In real use: the `tile=` lines in timing.log, read by `scripts/speed-report.sh`.
-- End to end, outside Polycarp: `swift scripts/tile-probe.swift <empty tiling workspace>` opens and closes TextEdit
-  and Finder windows and presses the tiling keys there, timing from its own Accessibility notifications and key events
-  to the frames it reads back. It takes the keyboard, so it runs only after 10 minutes with no input, switches to the
-  workspace given and back.
+- In the running app, with nothing on screen: `polycarp-spaces agent probe [--rounds N] [--json]` (R-TS12) tiles the
+  agent workspace off screen with windows of its own and prints each kind's n, p50, p90, max, misses and writes. It
+  needs an agent workspace and no idle wait.
 
 ## Cases
 
@@ -167,4 +218,24 @@ Each row is a test; the test names it.
 | 39 | R-TS10 | a move key at 10.000, two windows written once, back at 10.012 | `move fill=12 writes=1 windows=2 how=key` |
 | 40 | R-TS10 | a close of the last tiled window on its workspace | no line |
 | 41 | R-TS11 | the app's code | `close-fill` and `move-fill` have budgets (`SpeedBudgetTests`) |
+| 42 | R-TS12.13 | options with agentWorkspace 9, no probe | `tiles(9)` false |
+| 43 | R-TS12.3 | same, probe on | `tiles(9)` true; `tiles(3)` unchanged from settings |
+| 44 | R-TS12.3 | probe on, then the options rebuilt as readSettings does | probe still on after the reload; options built fresh have it off |
+| 45 | R-TS12.3 | `tile on 9` or toggle 9 during a probe | refused "the agent workspace never tiles"; the options unchanged, so surfaces.json is untouched |
+| 46 | R-TS12.4 | screens [(0,0,1512,982)], usable (0,40,1512,934) | area (-3512, 40, 1512, 934); isStranded true |
+| 47 | R-TS12.4 | screens [(-1920,0,1920,1080),(0,0,1512,982)], usable (0,40,1512,934) | area maxX = -3920; isStranded true |
+| 48 | R-TS12.2 | start with seconds 900 / 0 / missing | bad_request / bad_request / 180 |
+| 49 | R-TS12.2 | start with rounds 0 / 11 / missing | bad_request / bad_request / 3 |
+| 50 | R-TS12.2 | start with no agent workspace | `agent_workspace_off` |
+| 51 | R-TS12.2 | start while one runs | `probe_busy` |
+| 52 | R-TS12.9 | session: start; caller exits | ended, why `caller` |
+| 53 | R-TS12.9 | session: start; deadline passes | ended, why `deadline` |
+| 54 | R-TS12.9 | session: start; agent workspace set to another number | ended, why `workspace` |
+| 55 | R-TS12.9 | any end | probe flag off; `tiles(agent)` false |
+| 56 | R-TS12.7 | a new window of a probe pid while current is 2 and agent is 9 | assigned to 9 |
+| 57 | R-TS12.7 | a new window of another pid | the usual path (not 9) |
+| 58 | R-TS12.8 | probe `focus right` on 3 probe windows | the engine's focus moves; the step has no app focus in it |
+| 59 | R-TS12.8 | probe asks `toggle` or `scratchpad` | refused |
+| 60 | R-TS12.12 | samples [10, 20, 30, 40, 1000] | p50 30, p90 1000, max 1000 |
+| 61 | R-TS12.12 | one miss among 5 | misses 1, exit code 1 |
 Cases 21, 22 and 24 to 30 have no safe pure test: they are wiring tests that read `Spaces.swift`, plus the probe live.
