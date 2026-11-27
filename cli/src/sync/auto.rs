@@ -332,7 +332,8 @@ mod tests {
                 .chain(unload_argv(os, Some(501)))
             {
                 if os != Os::Windows {
-                    assert!(prog.is_absolute(), "{prog:?}");
+                    // A Unix path, checked as text: on Windows `/bin/launchctl` has no drive, so is_absolute says no.
+                    assert!(prog.to_string_lossy().starts_with('/'), "{prog:?}");
                 }
             }
         }
