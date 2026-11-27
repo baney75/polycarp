@@ -67,8 +67,9 @@ struct Window {
         }
     }
 
-    /// `place` off the main thread, stopped between two messages once `go` says no. True when all of it was sent.
-    func place(_ r: CGRect, currentSize: CGSize, while go: () -> Bool, file: String = #fileID, line: Int = #line) -> Bool {
+    /// `place` off the main thread, stopped between two messages once `go` says no. True when all of it was sent. The
+    /// messages come in the order that never shows the window clamped by `display`'s edge on its way (`FrameSteps`).
+    func place(_ r: CGRect, from: CGRect, display: CGRect?, while go: () -> Bool, file: String = #fileID, line: Int = #line) -> Bool {
         guard Windows.isResponsive(pid), go() else { return false }
         DragFrameTrace.write(id, .frame, origin: r.origin, size: r.size, file: file, line: line)
         var whole = true
@@ -77,10 +78,12 @@ struct Window {
             send()
         }
         withoutAnimation {
-            let resizes = currentSize != r.size
-            if resizes { step { element.set(kAXSizeAttribute, r.size, .cgSize) } }
-            step { element.set(kAXPositionAttribute, r.origin, .cgPoint) }
-            if resizes { step { element.set(kAXSizeAttribute, r.size, .cgSize) } }
+            for s in FrameSteps.order(from: from, to: r, display: display) {
+                switch s {
+                case .size: step { element.set(kAXSizeAttribute, r.size, .cgSize) }
+                case .position: step { element.set(kAXPositionAttribute, r.origin, .cgPoint) }
+                }
+            }
         }
         return whole
     }
