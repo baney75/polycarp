@@ -4,9 +4,13 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
+use super::progress::{self, Progress, Step};
 use super::release::{curl, Release};
 use super::tools::{must, Call, Tools};
 use super::{refuse, Refused};
@@ -28,22 +32,47 @@ fn requirement() -> String {
 }
 
 /// The disk image with the release's own digest, downloaded unless the cache already has it.
-pub fn fetch(tools: &dyn Tools, release: &Release, cache: &Path) -> Result<PathBuf, Refused> {
+pub fn fetch(
+    tools: &dyn Tools,
+    release: &Release,
+    cache: &Path,
+    progress: &Progress,
+) -> Result<PathBuf, Refused> {
+    progress.begin(Step::Download);
     let dmg = cache.join(&release.name);
     if digest(&dmg).is_ok_and(|d| d == release.sha256) {
+        progress.end(Some("kept from before"));
         return Ok(dmg);
     }
     let part = cache.join(format!("{}.part", release.name));
     let _ = fs::remove_file(&part);
     let call = curl(1800, &[&"--output", &part, &"--", &release.url]);
-    must(tools, "download", &call)?;
-    let got = digest(&part).map_err(refuse("digest", "reading the download"))?;
-    if got != release.sha256 {
+    progress.flowing();
+    let done = AtomicBool::new(false);
+    let ran = thread::scope(|scope| {
+        // Reads how much of the file is there while curl writes it.
+        scope.spawn(|| {
+            while !done.load(Ordering::SeqCst) {
+                let got = fs::metadata(&part).map_or(0, |m| m.len());
+                progress.bytes(got, release.size);
+                thread::sleep(Duration::from_millis(100));
+            }
+        });
+        let ran = must(tools, "download", &call);
+        done.store(true, Ordering::SeqCst);
+        ran
+    });
+    ran?;
+    let got = fs::metadata(&part).map_or(0, |m| m.len());
+    progress.bytes(got, release.size);
+    let got_digest = digest(&part).map_err(refuse("digest", "reading the download"))?;
+    if got_digest != release.sha256 {
         let _ = fs::remove_file(&part);
         let why = format!("{} does not match the release's sha256", release.name);
         return Err(Refused::new("digest", why));
     }
     fs::rename(&part, &dmg).map_err(refuse("download", "keeping it"))?;
+    progress.end(Some(&progress::size(got)));
     // Images of older releases, and halves of them.
     for other in fs::read_dir(cache).into_iter().flatten().flatten() {
         let name = other.file_name().to_string_lossy().into_owned();
@@ -176,7 +205,7 @@ mod tests {
     fn fetched(t: &Fake) -> Result<(Release, PathBuf), Refused> {
         t.place().prepare().unwrap();
         let release = newest(t, "arm64")?;
-        let dmg = fetch(t, &release, &t.place().cache)?;
+        let dmg = fetch(t, &release, &t.place().cache, &Progress::silent())?;
         Ok((release, dmg))
     }
 
@@ -226,10 +255,10 @@ mod tests {
         let t = Fake::new();
         let (release, dmg) = fetched(&t).unwrap();
         let downloads = || t.calls().iter().filter(|c| c.contains("--output")).count();
-        fetch(&t, &release, &t.place().cache).unwrap();
+        fetch(&t, &release, &t.place().cache, &Progress::silent()).unwrap();
         assert_eq!(downloads(), 1);
         fs::write(&dmg, "changed after it was downloaded").unwrap();
-        fetch(&t, &release, &t.place().cache).unwrap();
+        fetch(&t, &release, &t.place().cache, &Progress::silent()).unwrap();
         assert_eq!(downloads(), 2);
     }
 

@@ -23,6 +23,8 @@ pub struct Release {
     pub sha256: String,
     /// The day it came out, counted from 1970.
     pub published: Option<i64>,
+    /// The disk image's size in bytes, when GitHub lists it.
+    pub size: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -41,6 +43,8 @@ struct ListedAsset {
     name: String,
     browser_download_url: String,
     digest: Option<String>,
+    #[serde(default)]
+    size: Option<u64>,
 }
 
 /// `curl`, https only, without the person's own curl settings.
@@ -98,6 +102,7 @@ pub fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
         url,
         sha256,
         published: listed.published_at.as_deref().and_then(day),
+        size: asset.size,
     })
 }
 

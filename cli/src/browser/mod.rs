@@ -11,6 +11,7 @@ mod install;
 mod keys;
 mod pages;
 mod pak;
+mod progress;
 mod release;
 mod running;
 mod sign;
@@ -29,6 +30,7 @@ use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
+use progress::{Progress, Step};
 use tools::{System, Tools};
 
 /// Why nothing was installed: the check that failed, and what it found.
@@ -130,13 +132,18 @@ fn clear(dir: &Path) -> io::Result<()> {
 }
 
 /// `polycarp browser install --dry-run`: everything up to the install, then the work is thrown away.
-fn dry_run(tools: &dyn Tools, place: &Place, arch: &str) -> Result<String, Refused> {
+fn dry_run(
+    tools: &dyn Tools,
+    place: &Place,
+    arch: &str,
+    progress: &Progress,
+) -> Result<String, Refused> {
     place.prepare()?;
     let _lock = place.lock()?;
     let release = release::newest(tools, arch)?;
-    let dmg = source::fetch(tools, &release, &place.cache)?;
+    let dmg = source::fetch(tools, &release, &place.cache, progress)?;
     let work = place.work(tools)?;
-    let built = build(tools, place, &dmg, &work, &release);
+    let built = build(tools, place, &dmg, &work, &release, progress);
     let cleared = clear(&work).map_err(refuse("work folder", "clearing it"));
     let (_, note) = built?;
     cleared?;
@@ -154,7 +161,9 @@ fn build(
     dmg: &Path,
     work: &Path,
     release: &release::Release,
+    progress: &Progress,
 ) -> Result<(PathBuf, Option<&'static str>), Refused> {
+    progress.begin(Step::Verify);
     let changes = change::Changes::read(&place.parts)?;
     let (identity, note) = sign::Identity::find(tools, &place.parts)?;
     let certificate = identity.certificate();
@@ -164,6 +173,8 @@ fn build(
         return Err(Refused::new("signing", why));
     }
     let app = source::unpack(tools, dmg, work, &release.version)?;
+    progress.end(None);
+    progress.begin(Step::Build);
     change::apply(tools, &app, &place.parts, &changes)?;
     pages::put_in(tools, &app, place, &changes)?;
     let built = spot::Built {
@@ -176,9 +187,14 @@ fn build(
     built
         .write(&app)
         .map_err(refuse("built-in pages", "marking the build"))?;
+    progress.end(None);
+    progress.begin(Step::Sign);
     identity.again(tools, &place.parts)?;
     sign::sign(tools, &app, work, &identity, &changes)?;
+    progress.end(None);
+    progress.begin(Step::Check);
     start::check(tools, &app, work, &changes)?;
+    progress.end(None);
     Ok((app, note))
 }
 
@@ -341,7 +357,11 @@ pub fn run(
                 page_cache: gone::profile(&home)[1].clone(),
                 host: app.map(|a| a.join("Contents/Resources/bin/polycarp-spaces")),
             };
-            answer(&System, &place, &asked)
+            let progress = match builds {
+                true => Progress::terminal(),
+                false => Progress::silent(),
+            };
+            answer(&System, &place, &asked, &progress)
         });
     Some(print(done))
 }
@@ -362,7 +382,12 @@ fn print(done: Result<String, Refused>) -> i32 {
     }
 }
 
-fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Refused> {
+fn answer(
+    tools: &dyn Tools,
+    place: &Place,
+    asked: &Asked,
+    progress: &Progress,
+) -> Result<String, Refused> {
     let arch = release::this_arch();
     let flag = |f: &str| asked.flags.iter().any(|x| x == f);
     let ask = install::Ask {
@@ -385,9 +410,9 @@ fn answer(tools: &dyn Tools, place: &Place, asked: &Asked) -> Result<String, Ref
         "open" => return gone::open(tools, &place.spot, asked.what.as_deref()),
         "import" => return import::answer(tools, &keys::Keychain, place, asked),
         "uninstall" => return gone::uninstall(place, flag("--profile")),
-        "install" if flag("--dry-run") => return dry_run(tools, place, arch),
+        "install" if flag("--dry-run") => return dry_run(tools, place, arch, progress),
         "install" if flag("--rollback") => install::roll_back(tools, place)?,
-        _ => install::install(tools, place, arch, ask)?,
+        _ => install::install(tools, place, arch, ask, progress)?,
     };
     if outcome.waiting {
         let start = std::env::current_exe().and_then(|me| install::start_waiter(&me, &place.spot));
@@ -407,7 +432,7 @@ mod tests {
     #[test]
     fn a_dry_run_checks_the_release_and_leaves_no_work_behind() {
         let t = Fake::new();
-        let line = dry_run(&t, &t.place(), "arm64").unwrap();
+        let line = dry_run(&t, &t.place(), "arm64", &Progress::silent()).unwrap();
         assert!(line.contains(VERSION), "{line}");
         assert!(!t.place().cache.join("work").exists());
         assert!(!t.mounted(), "the disk image stayed mounted");
@@ -437,7 +462,7 @@ mod tests {
         if let Some(kept) = std::env::var_os("POLYCARP_CACHE_DIR") {
             place.cache = kept.into();
         }
-        let line = dry_run(&System, &place, release::this_arch()).unwrap();
+        let line = dry_run(&System, &place, release::this_arch(), &Progress::silent()).unwrap();
         assert!(line.contains("which starts"), "{line}");
         assert!(!place.cache.join("work").exists());
     }
@@ -447,10 +472,10 @@ mod tests {
         let t = Fake::new();
         t.place().prepare().unwrap();
         let held = t.place().lock().unwrap();
-        let e = dry_run(&t, &t.place(), "arm64").unwrap_err();
+        let e = dry_run(&t, &t.place(), "arm64", &Progress::silent()).unwrap_err();
         assert_eq!(e.check, "lock");
         drop(held);
-        dry_run(&t, &t.place(), "arm64").unwrap();
+        dry_run(&t, &t.place(), "arm64", &Progress::silent()).unwrap();
     }
 
     #[test]
