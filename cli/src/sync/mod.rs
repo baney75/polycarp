@@ -6,5 +6,6 @@
 
 pub mod crypto;
 pub mod model;
+pub mod relay;
 pub mod settings;
 pub mod store;
