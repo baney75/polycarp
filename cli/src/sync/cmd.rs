@@ -232,8 +232,10 @@ fn same_fp(a: &str, b: &str) -> bool {
     n(a) == n(b)
 }
 
-/// A new list, signed here, put on the relay and kept, then every bundle sealed again to it. The bundles there now
-/// were made under `old`, so they are checked against it: one last written by a device being removed still counts.
+/// A new list, signed here: every bundle is sealed again to it first, then the list is put on the relay and kept. The
+/// bundles there now were made under `old`, so they are checked against it: one last written by a device being
+/// removed still counts. A failure on the way leaves the old list on the relay, which every device can still use
+/// with the bundle there: the resealed one is signed by this device, which is on both lists.
 fn publish(
     c: &Ctx,
     me: &Me,
@@ -242,12 +244,12 @@ fn publish(
     old: &DeviceList,
     list: DeviceList,
 ) -> Result<(), String> {
+    sync_settings(c, me, dev, relay, old, &list)?;
     relay.put(
         DEVICES,
         &serde_json::to_vec(&list).map_err(|e| e.to_string())?,
     )?;
-    write_json(&c.dir.join(DEVICES), &list)?;
-    sync_settings(c, me, dev, relay, old, &list).map(|_| ())
+    write_json(&c.dir.join(DEVICES), &list)
 }
 
 fn approve(code: &str, fingerprint: Option<&str>) -> Result<(), String> {
@@ -347,12 +349,20 @@ fn sync_settings(
         }
     };
     let last_path = c.dir.join("settings.last.json");
-    let last: Bundle = read_json(&last_path)?.unwrap_or(Bundle {
-        kind: "settings".into(),
-        ..Default::default()
-    });
+    let last: Option<Bundle> = read_json(&last_path)?;
     let ((merged, wrote), notes) = crate::theme::locked_then_refresh(|| {
-        let local = model::observe(&last, &settings::snapshot(&c.paths)?, now_ms(), &dev.id);
+        let mut snap = settings::snapshot(&c.paths)?;
+        // A device's first sync joins what the others already have. Its own values are not edits made after theirs
+        // (a new install's defaults would win over months of settings), so where the relay has an item, the
+        // relay's stands, and this device adds only what the relay has never had.
+        if let (None, Some((_, b))) = (&last, &theirs) {
+            snap.retain(|id, _| !b.items.contains_key(id));
+        }
+        let empty = Bundle {
+            kind: "settings".into(),
+            ..Default::default()
+        };
+        let local = model::observe(last.as_ref().unwrap_or(&empty), &snap, now_ms(), &dev.id);
         let mut merged = match &theirs {
             Some((_, b)) => model::merge(&local, b),
             None => local,

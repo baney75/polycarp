@@ -115,6 +115,8 @@ fn two_devices_sync_settings_through_a_folder_relay() {
     a.set_surfaces(json!({"bar": {"height": 30, "displayId": "37D8832A"}, "mac": {"menuBarAutohide": "fullscreen"}}));
     let out = a.ok(&["sync", "init", "--relay", &addr, "--name", "mac"]);
     assert!(out.contains("first device"), "{out}");
+    // B comes with settings of its own: a default where A has a value, and one A has never had.
+    b.set_surfaces(json!({"bar": {"height": 24}, "dock": {"autohide": true}}));
     let out = b.ok(&["sync", "init", "--relay", &addr, "--name", "win"]);
     let (code, bfp) = (after(&out, "Pairing code: "), after(&out, "fingerprint "));
     assert!(a
@@ -136,11 +138,15 @@ fn two_devices_sync_settings_through_a_folder_relay() {
     b.ok(&["sync", "now", "--approver", &afp]);
     assert!(b.ok(&["sync", "devices"]).contains("mac"));
 
-    // What A had reached B, without the display id; the Mac-only setting arrived as it was.
+    // What A had reached B, without the display id; the Mac-only setting arrived as it was. B's own default did not
+    // win over A's value, though it is newer, and what only B had joined in.
     assert_eq!(
         b.surfaces(),
-        json!({"bar": {"height": 30}, "mac": {"menuBarAutohide": "fullscreen"}})
+        json!({"bar": {"height": 30}, "dock": {"autohide": true}, "mac": {"menuBarAutohide": "fullscreen"}})
     );
+    a.ok(&["sync", "now"]);
+    assert_eq!(a.surfaces()["bar"]["height"], json!(30));
+    assert_eq!(a.surfaces()["dock"], json!({"autohide": true}));
     for f in fs::read_dir(&relay).unwrap().flatten() {
         let text = fs::read_to_string(f.path()).unwrap();
         assert!(
