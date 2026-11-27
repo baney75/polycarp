@@ -19,10 +19,12 @@ use std::path::{Path, PathBuf};
 pub const USAGE: &str = "\
 polycarp sync: Polycarp's settings, the same on each of your own devices. Docs: docs/sync.md.
 
-  polycarp sync init [--relay ADDR] [--name NAME]   set up this device (the first, or one to approve)
+  polycarp sync init [--relay ADDR] [--name NAME] [--auto]
+                                                    set up this device (the first, or one to approve)
   polycarp sync approve CODE [--fingerprint FP]     on a device already set up: let the new one in
   polycarp sync now [--approver FP]                 sync now (FP: the approving device's, the first time)
   polycarp sync now --background                    what the 5-minute run does: quiet, waits after failures
+  polycarp sync auto on|off|status                  sync on its own every 5 minutes (--auto at init)
   polycarp sync devices                             the devices that take part
   polycarp sync remove DEVICE                       drop a device; later bundles are sealed without it
 
@@ -489,6 +491,158 @@ fn background() -> i32 {
     }
 }
 
+fn write_only() -> bool {
+    std::env::var_os("POLYCARP_SYNC_SERVICE").is_some_and(|v| v == "write")
+}
+
+fn run_all(cmds: Vec<(PathBuf, Vec<String>)>) -> Result<(), String> {
+    for (prog, args) in cmds {
+        let out = std::process::Command::new(&prog)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| format!("could not run {}: {e}", prog.display()))?;
+        if !out.status.success() {
+            return Err(format!(
+                "{} {} failed: {}",
+                prog.display(),
+                args.join(" "),
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn auto_units() -> Result<(Os, Vec<PathBuf>), String> {
+    let os = Os::current();
+    let home = crate::home().ok_or("no home folder")?;
+    Ok((os, auto::unit_paths(os, &home, local_app_data().as_deref())))
+}
+
+fn auto_on() -> Result<(), String> {
+    let c = ctx()?;
+    load(&c)?;
+    let (os, paths) = auto_units()?;
+    let exe = crate::files::service::service_exe().ok_or("can't tell where polycarp is")?;
+    let user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+    let log = log_path()?;
+    let (_, iso) = crate::theme::stamps();
+    let start = format!("{}Z", &iso[..19]);
+    for (p, text) in paths
+        .iter()
+        .zip(auto::render(os, &exe, &log, &user, &start))
+    {
+        crate::files::service::write_unit(os, p, &text)?;
+    }
+    let shown: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    if write_only() {
+        println!(
+            "Wrote {}; loaded nothing (POLYCARP_SYNC_SERVICE=write).",
+            shown.join(", ")
+        );
+        return Ok(());
+    }
+    let uid = crate::files::service::uid();
+    if os == Os::Mac {
+        // A unit loaded before is taken out first, so this one replaces it.
+        let _ = run_all(auto::unload_argv(os, uid));
+    }
+    // launchd can still be tearing the old job down, so a Mac tries a few times.
+    let tries = if os == Os::Mac { 5 } else { 1 };
+    let mut loaded = Err(String::new());
+    for n in 0..tries {
+        if n > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        loaded = run_all(auto::load_argv(os, uid, &paths));
+        if loaded.is_ok() {
+            break;
+        }
+    }
+    if let Err(e) = loaded {
+        // A unit left behind would load at the next login while `auto on` said it failed.
+        for p in &paths {
+            let _ = fs::remove_file(p);
+        }
+        return Err(format!("{e}; sync on its own is still off"));
+    }
+    println!(
+        "This device syncs on its own every 5 minutes. Failures go to {}. Turn it off with `polycarp sync auto off`.",
+        log.display()
+    );
+    Ok(())
+}
+
+fn auto_off() -> Result<(), String> {
+    let (os, paths) = auto_units()?;
+    if !paths.iter().any(|p| p.exists()) {
+        println!("Sync on its own is already off here.");
+        return Ok(());
+    }
+    // A unit that is written but not loaded fails to unload; its files go all the same.
+    let unloaded = if write_only() {
+        Ok(())
+    } else {
+        run_all(auto::unload_argv(os, crate::files::service::uid()))
+    };
+    for p in &paths {
+        match fs::remove_file(p) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("could not remove {}: {e}", p.display())),
+        }
+    }
+    if let (Err(e), true) = (unloaded, is_loaded(os)) {
+        return Err(format!(
+            "removed the unit, but it is still loaded until you log out: {e}"
+        ));
+    }
+    println!("Sync on its own is off; `polycarp sync now` still works by hand.");
+    Ok(())
+}
+
+/// Whether the unit is loaded now. Under the test hook, written counts as loaded.
+fn is_loaded(os: Os) -> bool {
+    if write_only() {
+        return true;
+    }
+    let (prog, args) = auto::loaded_argv(os, crate::files::service::uid());
+    std::process::Command::new(prog)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+fn auto_status() -> Result<(), String> {
+    let (os, paths) = auto_units()?;
+    if !paths.iter().all(|p| p.exists()) {
+        println!("off: turn it on with `polycarp sync auto on`");
+        return Ok(());
+    }
+    if !is_loaded(os) {
+        println!("off: the unit is written but not loaded; `polycarp sync auto on` loads it");
+        return Ok(());
+    }
+    let c = ctx()?;
+    let b: Backoff = read_json(&c.dir.join(AUTO))?.unwrap_or_default();
+    let t = now_ms();
+    match b.failures {
+        0 => println!("on: every 5 minutes"),
+        n => println!(
+            "on, but the last {n} run(s) failed; the next try is in {} minutes. See {}",
+            b.wait_min(t),
+            log_path()?.display()
+        ),
+    }
+    Ok(())
+}
+
 fn devices() -> Result<(), String> {
     let c = ctx()?;
     let (_, _, dev, _) = load(&c)?;
@@ -535,6 +689,20 @@ fn remove(which: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `init`'s options: `--relay ADDR` and `--name NAME` once each at most, and `--auto`.
+fn init_args<'a>(rest: &[&'a str]) -> Option<Vec<(&'a str, &'a str)>> {
+    let mut pairs = Vec::new();
+    let mut it = rest.iter().filter(|a| **a != "--auto");
+    while let Some(k) = it.next() {
+        let v = it.next()?;
+        if !["--relay", "--name"].contains(k) || pairs.iter().any(|(p, _)| p == k) {
+            return None;
+        }
+        pairs.push((*k, *v));
+    }
+    (rest.iter().filter(|a| **a == "--auto").count() <= 1).then_some(pairs)
+}
+
 pub fn run(args: &[OsString]) -> i32 {
     let args: Vec<String> = match args.iter().map(|a| a.clone().into_string()).collect() {
         Ok(a) => a,
@@ -544,26 +712,31 @@ pub fn run(args: &[OsString]) -> i32 {
         }
     };
     let a: Vec<&str> = args.iter().map(String::as_str).collect();
-    let opt = |name: &str| a.windows(2).find(|w| w[0] == name).map(|w| w[1]);
     let result = match a.as_slice() {
         [] | ["help" | "--help" | "-h"] => {
             println!("{USAGE}");
             return 0;
         }
-        ["init", rest @ ..]
-            if rest.len() % 2 == 0
-                && rest
-                    .iter()
-                    .step_by(2)
-                    .all(|k| ["--relay", "--name"].contains(k)) =>
-        {
-            init(opt("--relay"), opt("--name"))
+        ["init", rest @ ..] if init_args(rest).is_some() => {
+            let pairs = init_args(rest).unwrap_or_default();
+            let get = |k: &str| pairs.iter().find(|(p, _)| *p == k).map(|(_, v)| *v);
+            init(get("--relay"), get("--name"))
         }
+        .and_then(|()| {
+            if rest.contains(&"--auto") {
+                auto_on()
+            } else {
+                Ok(())
+            }
+        }),
         ["approve", code] => approve(code, None),
         ["approve", code, "--fingerprint", fp] => approve(code, Some(fp)),
         ["now"] => now(None),
         ["now", "--approver", fp] => now(Some(fp)),
         ["now", "--background"] => return background(),
+        ["auto", "on"] => auto_on(),
+        ["auto", "off"] => auto_off(),
+        ["auto", "status"] => auto_status(),
         ["devices"] => devices(),
         ["remove", which] => remove(which),
         _ => {

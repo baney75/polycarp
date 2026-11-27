@@ -9,7 +9,7 @@ What syncs today:
 - Your themes in `themes/` and `style.css`.
 - The Settings window's preferences: the modifier, Overview and Cmd-Tab choices, the launcher and quick terminal keys, which agent answers questions, the daily update check and the apps hidden by parking. A synced preference takes effect the next time Polycarp starts. Machine-only preferences, such as the login item, update state and privacy choices like letting agents see your tabs or remote control, stay on each device; both lists are in `cli/src/sync/prefs.rs`. On Windows and Linux they are kept in the sync folder and passed back unchanged.
 
-Not yet: a run every few minutes, and the browser (cookies, bookmarks, extensions and its settings). They come in later steps.
+Not yet: the browser (cookies, bookmarks, extensions and its settings). It comes in a later step.
 
 ## Set it up
 
@@ -63,6 +63,20 @@ Choose another relay at `init`:
 Polycarp runs the system's own `ssh` with `BatchMode`, so it never asks for a password, and a stalled link gives up after about 30 seconds. The relay needs nothing installed: a home folder and `sh` are enough. A file is replaced only once all of it has arrived, so a sync cut off partway leaves the last good copy.
 
 The relay sees file names, sizes and times. It never sees a setting.
+
+## Sync on its own
+
+Turn it on at setup with `polycarp sync init --auto`, or later on a device that is set up:
+
+```sh
+polycarp sync auto on       # every 5 minutes, and once at login
+polycarp sync auto status   # on, off, or how many runs failed and when the next one is
+polycarp sync auto off      # `polycarp sync now` still works by hand
+```
+
+It is a launchd agent on a Mac (`com.polycarp.sync`), a systemd user timer on Linux (`polycarp-sync.timer`) and a Task Scheduler entry on Windows (`Polycarp Sync`). None needs admin rights. Each run is `polycarp sync now --background`: it prints nothing, and when the relay can't be reached it writes one line to the sync log and waits 10 minutes, then 20, 40 and at most 60, before it tries again. A sync that works, by hand or on its own, ends the wait. The log is `~/Library/Logs/polycarp-sync.log` on a Mac, `~/.local/state/polycarp/sync.log` on Linux and `%LOCALAPPDATA%\Polycarp\sync.log` on Windows, and it keeps one older copy past 1 MB.
+
+A new device's first sync still needs `polycarp sync now --approver FP` by hand; until then each run on its own fails and waits.
 
 ## What keeps it private
 
