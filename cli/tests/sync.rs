@@ -357,5 +357,43 @@ fn a_synced_preference_reaches_the_other_mac_and_a_local_one_stays() {
     assert_eq!(defaults(&b, &["read", "modifier"]).trim(), "control");
     let all = defaults(&b, &["export", "-"]);
     assert!(!all.contains("remoteEnabled"), "{all}");
+
+    // Preferences travel in their own bundle, and the settings bundle takes no `prefs:` item of its own.
+    assert!(relay.join("prefs.age.json").exists());
+    let a_last = a.root.join("cfg/sync/settings.last.json");
+    let text = fs::read_to_string(&a_last).unwrap();
+    assert!(!text.contains("prefs:"), "{text}");
+
+    // A build from before the prefs bundle deletes `prefs:` items in the settings bundle, because its read never
+    // holds them. Such a delete, newer than anything, reaches the relay from b; neither Mac loses the preference.
+    let b_last = b.root.join("cfg/sync/settings.last.json");
+    let mut last: Value = serde_json::from_str(&fs::read_to_string(&b_last).unwrap()).unwrap();
+    last["items"]["prefs:modifier"] = json!({"updated": 4_000_000_000_000u64, "device": "old"});
+    fs::write(&b_last, last.to_string()).unwrap();
+    b.ok(&["sync", "now"]);
+    a.ok(&["sync", "now"]);
+    assert_eq!(defaults(&a, &["read", "modifier"]).trim(), "control");
+    assert_eq!(defaults(&b, &["read", "modifier"]).trim(), "control");
+
+    // And preferences still flow both ways.
+    defaults(&b, &["write", "modifier", "-string", "option"]);
+    b.ok(&["sync", "now"]);
+    a.ok(&["sync", "now"]);
+    assert_eq!(defaults(&a, &["read", "modifier"]).trim(), "option");
+
+    // Upgrading from that build: no prefs bundle yet, and the `prefs:` items sit in the settings state. They start
+    // the prefs bundle with their own times, so the upgrade itself is not an edit.
+    let b_prefs = b.root.join("cfg/sync/prefs.last.json");
+    let p: Value = serde_json::from_str(&fs::read_to_string(&b_prefs).unwrap()).unwrap();
+    let item = p["items"]["prefs:modifier"].clone();
+    let mut last: Value = serde_json::from_str(&fs::read_to_string(&b_last).unwrap()).unwrap();
+    last["items"]["prefs:modifier"] = item.clone();
+    fs::write(&b_last, last.to_string()).unwrap();
+    fs::remove_file(&b_prefs).unwrap();
+    fs::remove_file(relay.join("prefs.age.json")).unwrap();
+    b.ok(&["sync", "now"]);
+    let p: Value = serde_json::from_str(&fs::read_to_string(&b_prefs).unwrap()).unwrap();
+    assert_eq!(p["items"]["prefs:modifier"], item);
+    assert!(relay.join("prefs.age.json").exists());
     let _ = fs::remove_dir_all(&world);
 }

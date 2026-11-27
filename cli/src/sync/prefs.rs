@@ -12,7 +12,7 @@
 //! as a domain). It is for tests and never set in real use.
 
 use serde_json::Value as Json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -167,9 +167,20 @@ pub fn delete_args(domain: &str, key: &str) -> Vec<String> {
     vec!["delete".into(), domain.into(), key.into()]
 }
 
+/// What one read of this machine's preferences found.
+#[derive(Debug, Default, PartialEq)]
+pub struct Read {
+    /// The synced keys whose values this build can use, as `prefs:` items.
+    pub items: BTreeMap<String, Json>,
+    /// Synced keys that hold a value of another kind here, such as `checkForUpdates` written as an integer.
+    pub odd: BTreeSet<String>,
+    /// True when the read found no keys at all, synced or machine-only.
+    pub empty: bool,
+}
+
 /// The synced items in what `defaults export <domain> -` printed. A failed run or output that is not a plist is an
 /// error naming the domain, so it is never taken for deletes.
-pub fn parse_export(domain: &str, ok: bool, out: &[u8]) -> Result<BTreeMap<String, Json>, String> {
+pub fn parse_export(domain: &str, ok: bool, out: &[u8]) -> Result<Read, String> {
     let fail = |why: String| {
         format!("could not read the preferences in {domain}, so settings were not synced: {why}")
     };
@@ -180,12 +191,23 @@ pub fn parse_export(domain: &str, ok: bool, out: &[u8]) -> Result<BTreeMap<Strin
     let dict = doc
         .as_dictionary()
         .ok_or_else(|| fail("it is not a dictionary".into()))?;
-    Ok(keys()
-        .filter_map(|(k, kd)| {
-            let v = to_json(*kd, dict.get(k)?)?;
-            Some((format!("prefs:{k}"), v))
-        })
-        .collect())
+    let mut read = Read {
+        empty: dict.is_empty(),
+        ..Read::default()
+    };
+    for (k, kd) in keys() {
+        let Some(v) = dict.get(k) else { continue };
+        let id = format!("prefs:{k}");
+        match to_json(*kd, v) {
+            Some(j) => {
+                read.items.insert(id, j);
+            }
+            None => {
+                read.odd.insert(id);
+            }
+        }
+    }
+    Ok(read)
 }
 
 /// Runs `/usr/bin/defaults` with no shell and no input, and returns what it printed.
@@ -203,7 +225,7 @@ fn defaults(domain: &str, args: &[String]) -> Result<Vec<u8>, String> {
     }
 }
 
-fn read_domain(domain: &str) -> Result<BTreeMap<String, Json>, String> {
+fn read_domain(domain: &str) -> Result<Read, String> {
     let out = defaults(domain, &["export".into(), domain.into(), "-".into()]);
     parse_export(domain, out.is_ok(), out.as_deref().unwrap_or(&[]))
 }
@@ -223,26 +245,31 @@ fn read_file(p: &Path) -> Result<BTreeMap<String, Json>, String> {
 }
 
 /// The preferences this machine holds now, as `prefs:` items.
-pub fn snapshot(s: &Store) -> Result<BTreeMap<String, Json>, String> {
+pub fn snapshot(s: &Store) -> Result<Read, String> {
     match s {
         Store::Defaults(d) => read_domain(d),
         // Every `prefs:` item, known to this build or not, so another OS passes them all back as they came.
-        Store::File(p) => Ok(read_file(p)?
-            .into_iter()
-            .filter(|(id, _)| id.starts_with("prefs:"))
-            .collect()),
+        Store::File(p) => {
+            let items: BTreeMap<String, Json> = read_file(p)?
+                .into_iter()
+                .filter(|(id, _)| id.starts_with("prefs:"))
+                .collect();
+            Ok(Read {
+                empty: items.is_empty(),
+                items,
+                ..Read::default()
+            })
+        }
     }
 }
 
-/// What this machine holds now, or the last synced `prefs:` values when it holds none. `defaults export` prints an
-/// empty domain for one it can't read, so an empty read never deletes the other devices' preferences; the last
-/// values stand and are written back here.
-pub fn or_last(
-    now: BTreeMap<String, Json>,
-    last: &BTreeMap<String, Json>,
-) -> BTreeMap<String, Json> {
-    if !now.is_empty() {
-        return now;
+/// What this machine holds now, or the last synced `prefs:` values when the read found no keys at all. `defaults
+/// export` prints an empty domain for one it can't read, so an empty read never deletes the other devices'
+/// preferences; the last values stand and are written back here. A read with only machine-only keys is a real one,
+/// so resetting the last synced key here is a delete like any other.
+pub fn or_last(now: Read, last: &BTreeMap<String, Json>) -> BTreeMap<String, Json> {
+    if !now.empty {
+        return now.items;
     }
     last.iter()
         .filter(|(id, v)| synced(id, v).is_some())
@@ -253,24 +280,22 @@ pub fn or_last(
 /// This device's `prefs:` items as `observe` should see them:
 ///
 /// - an empty read stands for the last synced values ([`or_last`]);
+/// - a synced key that holds a value of another kind here is the last synced value, so it is never taken for a
+///   delete;
 /// - an item this build can't use, a key it doesn't know or a value of another kind from a newer build, is the last
-///   synced value, so it is passed back as it came and never taken for a delete or a local edit;
-/// - when this device has never synced a preference (`had_prefs` false), the relay's items stand, as at a first sync,
-///   so the Mac that upgrades last doesn't replace the other's choices.
-pub fn local_items(
-    now: BTreeMap<String, Json>,
-    last: &BTreeMap<String, Json>,
-    had_prefs: bool,
-    relay_has: impl Fn(&str) -> bool,
-) -> BTreeMap<String, Json> {
+///   synced value, so it is passed back as it came and never taken for a delete or a local edit.
+pub fn local_items(now: Read, last: &BTreeMap<String, Json>) -> BTreeMap<String, Json> {
+    let odd = now.odd.clone();
     let mut out = or_last(now, last);
+    for id in odd {
+        if let Some(v) = last.get(&id) {
+            out.insert(id, v.clone());
+        }
+    }
     for (id, v) in last {
         if id.starts_with("prefs:") && synced(id, v).is_none() {
             out.insert(id.clone(), v.clone());
         }
-    }
-    if !had_prefs {
-        out.retain(|id, _| !relay_has(id));
     }
     out
 }
@@ -307,7 +332,7 @@ pub fn apply(s: &Store, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
             Ok(vec![p.clone()])
         }
         Store::Defaults(d) => {
-            let have = read_domain(d)?;
+            let have = read_domain(d)?.items;
             let mut plan = Vec::new();
             for (key, _) in keys() {
                 let id = format!("prefs:{key}");
@@ -335,58 +360,73 @@ pub fn apply(s: &Store, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
 mod tests {
     use super::*;
 
+    fn j(pairs: &[(&str, Json)]) -> BTreeMap<String, Json> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.clone()))
+            .collect()
+    }
+
+    fn read(items: BTreeMap<String, Json>, odd: &[&str]) -> Read {
+        Read {
+            empty: items.is_empty() && odd.is_empty(),
+            items,
+            odd: odd.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
     #[test]
-    fn what_this_build_cant_use_passes_back_and_the_relay_stands_the_first_time() {
-        let j = |pairs: &[(&str, Json)]| -> BTreeMap<String, Json> {
-            pairs
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.clone()))
-                .collect()
-        };
+    fn what_this_build_cant_use_and_a_value_of_another_kind_pass_back_as_last_synced() {
         // A newer build's key, and a known key of another kind, come back as they were synced.
         let last = j(&[
             ("prefs:modifier", Json::from("control")),
             ("prefs:newKey", Json::from(3)),
             ("prefs:terminalQuickKey", Json::from("sometimes")),
+            ("prefs:checkForUpdates", Json::Bool(false)),
         ]);
         let now = j(&[
             ("prefs:modifier", Json::from("option")),
             ("prefs:terminalQuickKey", Json::Bool(true)),
         ]);
-        let got = local_items(now, &last, true, |_| false);
+        // `checkForUpdates` is an integer on this Mac: present, so not a delete, and the synced value stands.
+        let got = local_items(
+            read(now, &["prefs:checkForUpdates", "prefs:launcherAgent"]),
+            &last,
+        );
         assert_eq!(
             got,
             j(&[
+                ("prefs:checkForUpdates", Json::Bool(false)),
                 ("prefs:modifier", Json::from("option")),
                 ("prefs:newKey", Json::from(3)),
                 ("prefs:terminalQuickKey", Json::from("sometimes")),
             ])
         );
-        // Never synced a preference before: what the relay has stands; what it lacks is added.
-        let now = j(&[
-            ("prefs:modifier", Json::from("option")),
-            ("prefs:launcherAgent", Json::from("claude")),
-        ]);
-        let got = local_items(now, &BTreeMap::new(), false, |id| id == "prefs:modifier");
-        assert_eq!(got, j(&[("prefs:launcherAgent", Json::from("claude"))]));
     }
 
     #[test]
-    fn an_empty_read_keeps_the_last_synced_values_instead_of_deleting_them() {
-        let last: BTreeMap<String, Json> = [
-            ("prefs:modifier".to_string(), Json::from("control")),
-            ("prefs:remoteEnabled".to_string(), Json::Bool(true)),
-            ("surfaces:/bar/height".to_string(), Json::from(30)),
-        ]
-        .into();
-        let kept = or_last(BTreeMap::new(), &last);
-        assert_eq!(
-            kept,
-            [("prefs:modifier".to_string(), Json::from("control"))].into()
+    fn only_a_read_with_no_keys_at_all_keeps_the_last_synced_values() {
+        let last = j(&[
+            ("prefs:modifier", Json::from("control")),
+            ("prefs:remoteEnabled", Json::Bool(true)),
+            ("surfaces:/bar/height", Json::from(30)),
+        ]);
+        let kept = or_last(
+            Read {
+                empty: true,
+                ..Read::default()
+            },
+            &last,
         );
-        let now: BTreeMap<String, Json> =
-            [("prefs:checkForUpdates".to_string(), Json::Bool(false))].into();
-        assert_eq!(or_last(now.clone(), &last), now);
+        assert_eq!(kept, j(&[("prefs:modifier", Json::from("control"))]));
+        // The only synced key was reset, and machine-only keys remain: that is a delete, not an unreadable domain.
+        let reset = Read {
+            empty: false,
+            ..Read::default()
+        };
+        assert!(or_last(reset, &last).is_empty());
+        let now = j(&[("prefs:checkForUpdates", Json::Bool(false))]);
+        assert_eq!(or_last(read(now.clone(), &[]), &last), now);
     }
     use serde_json::json;
 
@@ -492,7 +532,16 @@ mod tests {
         assert!(err.contains("/x/p.plist"), "{err}");
         let empty =
             br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict/></plist>"#;
-        assert!(parse_export("d", true, empty).unwrap().is_empty());
+        assert!(parse_export("d", true, empty).unwrap().empty);
+        let some = br#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>
+            <key>checkForUpdates</key><integer>1</integer>
+            <key>modifier</key><string>control</string>
+            <key>loginItemChosen</key><true/>
+        </dict></plist>"#;
+        let r = parse_export("d", true, some).unwrap();
+        assert!(!r.empty);
+        assert_eq!(r.items, items(&[("prefs:modifier", json!("control"))]));
+        assert_eq!(r.odd, ["prefs:checkForUpdates".to_string()].into());
     }
 
     #[test]
@@ -505,7 +554,7 @@ mod tests {
         ]);
         assert_eq!(apply(&s, &theirs).unwrap().len(), 1);
         // Every item comes back as it came; only a Mac decides which it writes.
-        let back = snapshot(&s).unwrap();
+        let back = snapshot(&s).unwrap().items;
         assert_eq!(back, theirs);
         assert!(
             apply(&s, &theirs).unwrap().is_empty(),
@@ -541,7 +590,7 @@ mod tests {
                 ],
             );
             assert_eq!(
-                snapshot(&Store::Defaults(d)).unwrap(),
+                snapshot(&Store::Defaults(d)).unwrap().items,
                 items(&[
                     ("prefs:checkForUpdates", json!(false)),
                     ("prefs:modifier", json!("control")),
