@@ -188,6 +188,39 @@ pub fn apply(
     Ok(())
 }
 
+/// Where Polycarp.app keeps the browser's icon in the Polycarp theme's colors, beside the browser theme (spec/themes.md,
+/// "The icons"). It is there only while a theme is in force.
+pub fn theme_icon_path(home: &Path) -> PathBuf {
+    home.join("Library/Application Support/Polycarp/browser-theme/icon.icns")
+}
+
+/// That icon, when it is a whole `.icns`: its header, then a length that is the file's, at most 8 MB.
+pub fn theme_icon(home: &Path) -> Option<Vec<u8>> {
+    const MOST: usize = 8 << 20;
+    let file = theme_icon_path(home);
+    let meta = fs::metadata(&file).ok()?;
+    if !meta.is_file() || meta.len() > MOST as u64 {
+        return None;
+    }
+    let bytes = fs::read(file).ok()?;
+    let length = u32::from_be_bytes(bytes.get(4..8)?.try_into().ok()?) as usize;
+    (bytes.starts_with(b"icns") && length == bytes.len() && length <= MOST).then_some(bytes)
+}
+
+/// Puts the theme's icon where `apply` put the shipped one, so the build is signed with it. Without one, or one that is
+/// not whole, the shipped icon stays. True when the theme's went in.
+pub fn put_theme_icon(app: &Path, home: &Path, changes: &Changes) -> Result<bool, Refused> {
+    let Some(icon) = theme_icon(home) else {
+        return Ok(false);
+    };
+    let framework = framework(app, &changes.from.name)?;
+    for listed in &changes.icons.icns {
+        let to = changes.path(app, &framework, listed);
+        fs::write(&to, &icon).map_err(refuse(CHECK, "putting the theme's icon in"))?;
+    }
+    Ok(true)
+}
+
 fn remove(path: &Path) -> Result<(), Refused> {
     let gone = match fs::symlink_metadata(path) {
         Ok(meta) if meta.is_dir() => fs::remove_dir_all(path),
@@ -423,6 +456,47 @@ mod tests {
             fs::read(app.join("Contents/Resources/app.icns")).unwrap(),
             icon
         );
+    }
+
+    #[test]
+    fn the_themes_icon_goes_in_only_when_it_is_whole() {
+        let (t, app) = changed();
+        let changes = Changes::read(&t.parts()).unwrap();
+        let home = t.work().join("home");
+        let shipped = fs::read(t.parts().join("icon.icns")).unwrap();
+        let main = app.join("Contents/Resources/app.icns");
+        // No theme: the shipped icon.
+        assert!(!put_theme_icon(&app, &home, &changes).unwrap());
+        assert_eq!(fs::read(&main).unwrap(), shipped);
+        let file = theme_icon_path(&home);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        // A header whose length is not the file's, then one cut short: not whole.
+        for bad in [&b"icns\0\0\0\x20 too short"[..], &b"icns"[..]] {
+            fs::write(&file, bad).unwrap();
+            assert!(!put_theme_icon(&app, &home, &changes).unwrap());
+            assert_eq!(fs::read(&main).unwrap(), shipped);
+        }
+        // Whole but over 8 MB.
+        let mut big = vec![0u8; (8 << 20) + 16];
+        big[..4].copy_from_slice(b"icns");
+        let length = (big.len() as u32).to_be_bytes();
+        big[4..8].copy_from_slice(&length);
+        fs::write(&file, &big).unwrap();
+        assert!(!put_theme_icon(&app, &home, &changes).unwrap());
+        assert_eq!(fs::read(&main).unwrap(), shipped);
+        let mut whole = b"icns\0\0\0\0ic07 a png".to_vec();
+        let length = (whole.len() as u32).to_be_bytes();
+        whole[4..8].copy_from_slice(&length);
+        fs::write(&file, &whole).unwrap();
+        assert!(put_theme_icon(&app, &home, &changes).unwrap());
+        for listed in &changes.icons.icns {
+            let framework = framework(&app, &changes.from.name).unwrap();
+            assert_eq!(
+                fs::read(changes.path(&app, &framework, listed)).unwrap(),
+                whole,
+                "{listed}"
+            );
+        }
     }
 
     #[test]

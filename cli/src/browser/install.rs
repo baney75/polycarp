@@ -119,6 +119,14 @@ pub fn fingerprint(place: &Place) -> Result<String, Refused> {
             digest.update(bytes);
         }
     }
+    // The theme's icon is built in too (change::put_theme_icon): a new, changed or removed one is an update.
+    match super::change::theme_icon(&place.home) {
+        Some(icon) => {
+            digest.update(format!("\0theme icon\0{}\0", icon.len()));
+            digest.update(icon);
+        }
+        None => digest.update("\0no theme icon\0"),
+    }
     let digest = digest.finalize();
     Ok(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
@@ -332,6 +340,35 @@ mod tests {
         // Asked for, it is made again.
         go(&t, INSTALL).unwrap();
         assert!(place.spot.previous().exists());
+    }
+
+    /// With a Polycarp theme in force the build carries its icon, signed in with the rest (spec/themes.md, "The icons").
+    #[test]
+    fn the_build_carries_the_themes_icon() {
+        let t = Fake::new();
+        let place = t.place();
+        let file = super::super::change::theme_icon_path(&place.home);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        let mut icon = b"icns\0\0\0\0ic07 the theme's".to_vec();
+        let length = (icon.len() as u32).to_be_bytes();
+        icon[4..8].copy_from_slice(&length);
+        fs::write(&file, &icon).unwrap();
+        go(&t, INSTALL).unwrap();
+        let installed = place.spot.app().join("Contents/Resources/app.icns");
+        assert_eq!(fs::read(&installed).unwrap(), icon);
+        assert!(go(&t, UPDATE).unwrap().line.contains("up to date"));
+        // Another theme: an update builds its icon in.
+        icon.extend_from_slice(b" and another");
+        let length = (icon.len() as u32).to_be_bytes();
+        icon[4..8].copy_from_slice(&length);
+        fs::write(&file, &icon).unwrap();
+        assert!(!go(&t, UPDATE).unwrap().line.contains("up to date"));
+        assert_eq!(fs::read(&installed).unwrap(), icon);
+        // The theme off: the shipped icon is back.
+        fs::remove_file(&file).unwrap();
+        assert!(!go(&t, UPDATE).unwrap().line.contains("up to date"));
+        let shipped = fs::read(place.parts.join("icon.icns")).unwrap();
+        assert_eq!(fs::read(&installed).unwrap(), shipped);
     }
 
     /// Whichever check fails, what was installed is what is still there.
