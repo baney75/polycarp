@@ -464,4 +464,64 @@ mod tests {
             "oLpP/A0Gpx2rsN+Jkd8Ei85ovZQIulkOB3NE536nRBw="
         );
     }
+
+    /// Bech32 (BIP 173), enough to build an age identity from fixed bytes, so no key-shaped string sits in the repo.
+    fn bech32(hrp: &str, data: &[u8]) -> String {
+        const CH: &[u8] = b"qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+        fn polymod(v: &[u8]) -> u32 {
+            let g = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+            let mut c: u32 = 1;
+            for &x in v {
+                let b = c >> 25;
+                c = ((c & 0x1ffffff) << 5) ^ x as u32;
+                for (i, gi) in g.iter().enumerate() {
+                    if (b >> i) & 1 == 1 {
+                        c ^= gi;
+                    }
+                }
+            }
+            c
+        }
+        let (mut acc, mut bits, mut d) = (0u32, 0, Vec::new());
+        for &x in data {
+            acc = (acc << 8) | x as u32;
+            bits += 8;
+            while bits >= 5 {
+                bits -= 5;
+                d.push(((acc >> bits) & 31) as u8);
+            }
+        }
+        if bits > 0 {
+            d.push(((acc << (5 - bits)) & 31) as u8);
+        }
+        let mut v: Vec<u8> = hrp.bytes().map(|c| c >> 5).collect();
+        v.push(0);
+        v.extend(hrp.bytes().map(|c| c & 31));
+        v.extend(&d);
+        v.extend([0; 6]);
+        let p = polymod(&v) ^ 1;
+        d.extend((0..6).map(|i| ((p >> (5 * (5 - i))) & 31) as u8));
+        format!(
+            "{hrp}1{}",
+            d.iter()
+                .map(|&x| CH[x as usize] as char)
+                .collect::<String>()
+        )
+    }
+
+    #[test]
+    fn a_fixed_age_identity_gives_the_same_keys_from_its_stored_string() {
+        // Covers the whole path a device takes: stored string, age's parse, age's to_string, HKDF, Ed25519. The
+        // expected values were computed apart from this code, in Python (hmac HKDF and the cryptography package).
+        let raw: Vec<u8> = (1..=32).collect();
+        let stored = bech32("age-secret-key-", &raw).to_uppercase();
+        let me = Me::from_secret(&stored).unwrap();
+        assert_eq!(me.secret().expose_secret(), stored);
+        let d = me.device("vector");
+        assert_eq!(d.verify, "gGDNCTzPmNMJF6mmOfJXP+6Jc0UE8iJs4n38mPYMsrQ=");
+        assert_eq!(
+            d.recipient,
+            "age1q73he0q5yzfu3d64msd3p6rvksnrwjk3d2598mgtmlqt9wrdr37q2vrn72"
+        );
+    }
 }
