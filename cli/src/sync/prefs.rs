@@ -233,6 +233,22 @@ pub fn snapshot(s: &Store) -> Result<BTreeMap<String, Json>, String> {
     }
 }
 
+/// What this machine holds now, or the last synced `prefs:` values when it holds none. `defaults export` prints an
+/// empty domain for one it can't read, so an empty read never deletes the other devices' preferences; the last
+/// values stand and are written back here.
+pub fn or_last(
+    now: BTreeMap<String, Json>,
+    last: &BTreeMap<String, Json>,
+) -> BTreeMap<String, Json> {
+    if !now.is_empty() {
+        return now;
+    }
+    last.iter()
+        .filter(|(id, v)| synced(id, v).is_some())
+        .map(|(id, v)| (id.clone(), v.clone()))
+        .collect()
+}
+
 /// Makes this machine's synced preferences what `values` holds. A key whose synced value is of the wrong kind, and
 /// every key not in [`SYNCED`], is left as it is. Reads happen before the first write. Returns the domain or file
 /// when something changed.
@@ -287,6 +303,24 @@ pub fn apply(s: &Store, values: &BTreeMap<String, Json>) -> Result<Vec<PathBuf>,
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_read_keeps_the_last_synced_values_instead_of_deleting_them() {
+        let last: BTreeMap<String, Json> = [
+            ("prefs:modifier".to_string(), Json::from("control")),
+            ("prefs:remoteEnabled".to_string(), Json::Bool(true)),
+            ("surfaces:/bar/height".to_string(), Json::from(30)),
+        ]
+        .into();
+        let kept = or_last(BTreeMap::new(), &last);
+        assert_eq!(
+            kept,
+            [("prefs:modifier".to_string(), Json::from("control"))].into()
+        );
+        let now: BTreeMap<String, Json> =
+            [("prefs:checkForUpdates".to_string(), Json::Bool(false))].into();
+        assert_eq!(or_last(now.clone(), &last), now);
+    }
     use serde_json::json;
 
     fn temp(name: &str) -> PathBuf {

@@ -368,7 +368,8 @@ fn sync_settings(
     let last: Option<Bundle> = read_json(&last_path)?;
     let ((merged, wrote), notes) = crate::theme::locked_then_refresh(|| {
         let mut snap = settings::snapshot(&c.paths)?;
-        snap.extend(prefs::snapshot(&c.prefs)?);
+        let last_values = last.as_ref().map(model::values).unwrap_or_default();
+        snap.extend(prefs::or_last(prefs::snapshot(&c.prefs)?, &last_values));
         // A device's first sync joins what the others already have. Its own values are not edits made after theirs
         // (a new install's defaults would win over months of settings), so where the relay has an item, the
         // relay's stands, and this device adds only what the relay has never had.

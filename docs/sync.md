@@ -87,6 +87,7 @@ When the relay can't be reached, nothing here changes, and the next `polycarp sy
 
 - A removed device that still has relay access can delete or replace files there. It can't forge them, so the other devices refuse what it writes, but sync stops until the files are put back. Taking away its SSH access closes this.
 - Two devices that approve or remove at the same moment can each write a list of the same version. The one written last stands, and the other device refuses it as not newer than its own. Approve or remove once more on the device whose list stands; the newer list it writes brings both back together.
+- A Mac whose preferences read as empty, as after a reset, never deletes the synced ones: the last synced values are written back to it.
 
 ## Passwords
 
