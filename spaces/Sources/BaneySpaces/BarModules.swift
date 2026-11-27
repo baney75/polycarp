@@ -126,7 +126,9 @@ struct StatusRow: View {
     }
 
     private func drawer(_ apps: [Int]) -> some View {
-        let n = BarTray.open(apps.count, room: room - Double(model.status.count - apps.count + 1) * BarGeometry.slot)
+        // The system items and the chevron take a slot each, the battery its own width.
+        let battery = model.status.contains(where: shows) ? BarGeometry.battery(percentAt: percentSize) - BarGeometry.slot : 0
+        let n = BarTray.open(apps.count, room: room - Double(model.status.count - apps.count + 1) * BarGeometry.slot - battery)
         let out = open || model.trayHeld
         return HStack(spacing: 0) {
             HStack(spacing: 0) { ForEach(apps.suffix(n), id: \.self) { item($0) } }
@@ -162,18 +164,31 @@ struct StatusRow: View {
 
     private func item(_ i: Int) -> some View {
         let item = model.status.indices.contains(i) ? model.status[i] : BarStatus.Item(owner: "")
-        // The battery is wider than the slot: it keeps a symbol's room either side, so the gaps stay even.
-        let wide = BarStatus.isBattery(item) && model.charge != nil
-        return BarButton(width: wide ? 0 : CGFloat(BarGeometry.slot), inset: wide ? CGFloat(BarGeometry.glyphSide) : 0,
+        // The battery is wider than the slot: it keeps a symbol's room either side, so the gaps stay even. With its
+        // digits it takes what they need.
+        let wide = shows(item), digits = wide && model.bar.batteryPercent
+        return BarButton(width: digits ? 0 : CGFloat(wide ? BarGeometry.battery : BarGeometry.slot),
+                         inset: digits ? CGFloat(BarGeometry.glyphSide) : 0,
                          label: item.name, help: item.name, action: { model.onStatus(i) }) { glyph(item) }
     }
+
+    /// Whether this item draws as the battery glyph: macOS's own battery, with a charge to show.
+    private func shows(_ item: BarStatus.Item) -> Bool {
+        guard BarStatus.isBattery(item), let c = model.charge else { return false }
+        return look(c) != nil
+    }
+
+    private func look(_ c: TopBarModel.Charge) -> BarStatus.BatteryLook? {
+        BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower, lowPower: c.lowPower)
+    }
+
+    private var percentSize: Double? { model.bar.batteryPercent ? BarWords.size : nil }
 
     /// macOS's items as symbols and a template icon in the bar's ink; any other app's icon in its own colors, since a
     /// gray one is a smudge at this size.
     @ViewBuilder private func glyph(_ item: BarStatus.Item) -> some View {
         let size = CGFloat(BarGeometry.canvas)
-        if BarStatus.isBattery(item), let c = model.charge,
-           let look = BarStatus.batteryLook(percent: c.percent, charging: c.charging, onPower: c.onPower, lowPower: c.lowPower) {
+        if BarStatus.isBattery(item), let c = model.charge, let look = look(c) {
             HStack(spacing: 4) {
                 if model.bar.batteryPercent {
                     BarWords.text("\(c.percent)%", style).monospacedDigit().foregroundStyle(ink)

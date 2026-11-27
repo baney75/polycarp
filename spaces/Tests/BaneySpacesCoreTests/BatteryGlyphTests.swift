@@ -79,7 +79,8 @@ final class BatteryGlyphTests: XCTestCase {
                 XCTAssertLessThanOrEqual(a, 0.75, "\(label): the outline stays lighter than the fill")
                 for back in backs {
                     XCTAssertGreaterThanOrEqual(fg.over(back, alpha: 0.88 * a).contrast(with: back), 3, "\(label) outline")
-                    XCTAssertGreaterThanOrEqual(fg.over(back, alpha: 0.88).contrast(with: back), 3, "\(label) badge and fill")
+                    // The status row draws in 0.88 of the foreground, the battery module in 0.85: the lower holds both.
+                    XCTAssertGreaterThanOrEqual(fg.over(back, alpha: 0.85).contrast(with: back), 3, "\(label) badge and fill")
                     XCTAssertGreaterThanOrEqual(working.contrast(with: back), 3, "\(label) Low Power fill")
                     XCTAssertGreaterThanOrEqual(urgent.contrast(with: back), 3, "\(label) nearly empty fill")
                 }
@@ -111,5 +112,15 @@ final class BatteryGlyphTests: XCTestCase {
             return base
         }
         return Dictionary(uniqueKeysWithValues: raw.keys.map { ($0, resolved($0)) })
+    }
+
+    /// The battery's button is a whole point wide, so the items beside it stay on whole pixels at 1x, and with its
+    /// digits on it counts room for "100%".
+    func testTheBatteryButtonIsWholePoints() {
+        XCTAssertEqual(BarGeometry.battery, 36)
+        XCTAssertGreaterThan(BarGeometry.battery, BatteryGlyphSpec.width + 2 * BarGeometry.glyphSide - 0.001)
+        XCTAssertEqual(BarGeometry.battery(percentAt: nil), 36)
+        XCTAssertEqual(BarGeometry.battery(percentAt: 12), 36 + 34)
+        XCTAssertEqual(BarGeometry.battery(percentAt: 12).rounded(), BarGeometry.battery(percentAt: 12))
     }
 }
