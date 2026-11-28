@@ -330,7 +330,8 @@ mod system {
         })
     }
 
-    /// gpg with its own keyring folder and none of the person's settings or keys.
+    /// gpg with its own keyring folder and none of the person's settings or keys. `--no-autostart` keeps it from
+    /// leaving a gpg-agent running in that folder: a public key and a signature need no agent.
     fn gpg(program: &Path, keyring: &Path) -> Command {
         let mut command = Command::new(program);
         command
@@ -342,6 +343,7 @@ mod system {
                 "--batch",
                 "--no-tty",
                 "--no-options",
+                "--no-autostart",
                 "--no-auto-key-retrieve",
             ]);
         command
