@@ -9,11 +9,13 @@ public enum FocusKeep {
 
     /// Whether a switch to the workspace already shown leaves focus where it is, so the app in front can be followed.
     /// - reapply: the switch targets the workspace you are on.
+    /// - frontIsBrowser: the app in front is a browser (R-F4): brought forward by a link you clicked, your choice.
+    ///   Any other app that came forward on its own keeps R-F2: your window here is put back.
     /// - frontIsOurs: the app in front is Polycarp, or one Polycarp's own switch brought forward.
     /// - sinceActivation: seconds since the app in front came forward.
     /// - frontHasWindowHere: the app in front has a window on that workspace (then focusing it here is right).
-    public static func keepsFront(reapply: Bool, frontIsOurs: Bool, sinceActivation: TimeInterval,
+    public static func keepsFront(reapply: Bool, frontIsBrowser: Bool, frontIsOurs: Bool, sinceActivation: TimeInterval,
                                   frontHasWindowHere: Bool) -> Bool {
-        reapply && !frontIsOurs && !frontHasWindowHere && sinceActivation >= 0 && sinceActivation < window
+        reapply && frontIsBrowser && !frontIsOurs && !frontHasWindowHere && sinceActivation >= 0 && sinceActivation < window
     }
 }
