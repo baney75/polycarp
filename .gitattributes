@@ -2,3 +2,5 @@
 plugins/** text eol=lf
 # Images are not text, whatever folder they are in.
 plugins/**/*.png binary
+# Helium's pinned Linux signing key: its sha256 is checked, so no checkout may change its line endings.
+cli/src/browser/helium-linux.asc -text
