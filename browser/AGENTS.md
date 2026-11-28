@@ -7,7 +7,9 @@
   Authenticode-valid from the pinned signer imput LLC; nothing from it is run or installed before that. Its dry run then builds
   Polycarp Browser from the checked copy in a work folder (parts from `POLYCARP_BROWSER_RESOURCES`, made by
   `scripts/build-parts-windows.sh`): `helium_update_helper.exe` is removed and must be there to remove, `initial_preferences`
-  beside `chrome.exe` turns Helium's update fetching off, the `locales` text packs are renamed, and no program or DLL is edited. On Linux the source is a
+  beside `chrome.exe` turns Helium's update fetching off, the `locales` text packs are renamed, and no program or DLL is edited. It is then started once headless, with a throwaway profile and every
+  per-user folder inside the work folder, `POLYCARP_GITHUB_TOKEN` taken out of its environment and no remote debugging, and
+  must show Polycarp's new tab within 180 s; whatever still runs from the build is stopped and the work folder deleted. On Linux the source is a
   published `imputnet/helium-linux` release tarball with the sha256 GitHub's listing gives, and its detached OpenPGP signature
   must be valid from the pinned key `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`; nothing from it is unpacked, run or
   installed before that.

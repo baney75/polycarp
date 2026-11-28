@@ -1,7 +1,7 @@
 //! Polycarp Browser on Windows, step one: `polycarp browser install --dry-run` downloads Helium's newest Windows
 //! release, checks its sha256 and the signature on every program in it, builds Polycarp Browser from it in a work
-//! folder, and throws it all away. Nothing is installed and nothing from the release is run. The rules are in
-//! `../browser/AGENTS.md`.
+//! folder, starts that once with no window and a throwaway profile, and throws it all away. Nothing is installed.
+//! The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -411,7 +411,14 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
             let n = signatures(&folder)?;
             then(&folder, &work).map(|()| n)
         });
-        let _ = fs::remove_dir_all(&work);
+        stop_inside(&work.join("build"));
+        // A browser that just quit can hold its files a moment longer.
+        for _ in 0..10 {
+            if fs::remove_dir_all(&work).is_ok() || !work.exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         let n = done?;
         if work.exists() {
             return Err(Refused::new("work folder", "it could not be deleted"));
@@ -419,15 +426,93 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         Ok((release.version, n))
     }
 
-    /// Builds Polycarp Browser from the checked release inside the work folder, which then goes.
+    /// Builds Polycarp Browser from the checked release and starts it once, all inside the work folder, which then
+    /// goes.
     pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
-        let (version, n) = checked(dir, |folder, work| {
-            portable::build(folder, &work.join("build"), parts).map(drop)
-        })?;
+        let (version, n) = checked(dir, |folder, work| started(folder, work, parts))?;
         Ok(format!(
             "Helium {version} was downloaded and passed its checks: the sha256 GitHub lists, and imput LLC's \
-             signature on all {n} programs in it. Polycarp Browser was built from it. Nothing was installed."
+             signature on all {n} programs in it. Polycarp Browser was built from it and started once without a \
+             window, showing its own new tab. Nothing was installed."
         ))
+    }
+
+    /// Builds in `work\build` and starts that once with its home in `work\home`.
+    pub fn started(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<(), Refused> {
+        let launcher = portable::build(folder, &work.join("build"), parts)?;
+        let home = work.join("home");
+        let start = portable::start(&launcher, &home);
+        portable::make_home(&start, &home)?;
+        let (out, err) = run_for(&start, std::time::Duration::from_secs(180))?;
+        portable::judge(&out, &err)
+    }
+
+    /// Reads a pipe to its end on a thread of its own.
+    fn drain<R: std::io::Read + Send + 'static>(
+        pipe: Option<R>,
+    ) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut text);
+            }
+            String::from_utf8_lossy(&text).into_owned()
+        })
+    }
+
+    /// Runs the start, killed when it takes longer than `limit`; what it wrote to stdout and stderr.
+    fn run_for(
+        start: &portable::Start,
+        limit: std::time::Duration,
+    ) -> Result<(String, String), Refused> {
+        let mut command = Command::new(&start.program);
+        command.args(&start.args).envs(start.env.iter().cloned());
+        for name in start.unset {
+            command.env_remove(name);
+        }
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(refuse("start", "running it"))?;
+        let out = drain(child.stdout.take());
+        let err = drain(child.stderr.take());
+        let began = std::time::Instant::now();
+        while child
+            .try_wait()
+            .map_err(refuse("start", "waiting for it"))?
+            .is_none()
+        {
+            if began.elapsed() > limit {
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        // Its own helpers may hold the pipes open; they are this build's, so they are stopped.
+        stop_inside(start.program.parent().unwrap_or(&start.program));
+        Ok((
+            out.join().unwrap_or_default(),
+            err.join().unwrap_or_default(),
+        ))
+    }
+
+    /// Stops every process whose program is inside `folder`, best effort. The folder arrives in an environment
+    /// variable, never in the script's text.
+    fn stop_inside(folder: &Path) {
+        let script = "$b = $env:POLYCARP_BUILD_DIR.TrimEnd('\\') + '\\'; Get-Process | Where-Object { $_.Path -and \
+                      $_.Path.StartsWith($b, [System.StringComparison]::OrdinalIgnoreCase) } | \
+                      Stop-Process -Force -ErrorAction SilentlyContinue";
+        let mut ps = Command::new(system32(r"WindowsPowerShell\v1.0\powershell.exe"));
+        ps.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        ps.env("POLYCARP_BUILD_DIR", folder);
+        let _ = ps
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
     }
 }
 
@@ -704,8 +789,8 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The real release, downloaded into a temp cache: it passes and is built from the parts CI made, and one changed
-    /// byte in chrome.exe is refused.
+    /// The real release, downloaded into a temp cache: it passes, is built from the parts CI made and starts once with
+    /// no window showing Polycarp's new tab, and one changed byte in chrome.exe is refused.
     #[cfg(windows)]
     #[test]
     #[ignore]
@@ -714,13 +799,9 @@ mod tests {
         let dir = cache.join("browser");
         let parts = portable::parts(std::env::var_os(portable::RESOURCES)).unwrap();
         let (_, n) = system::checked(&dir, |folder, work| {
-            let launcher = portable::build(folder, &work.join("build"), &parts)?;
-            let build = launcher.parent().unwrap();
-            assert!(
-                launcher.ends_with("Polycarp Browser.exe"),
-                "{}",
-                launcher.display()
-            );
+            system::started(folder, work, &parts)?;
+            let build = work.join("build");
+            assert!(build.join("Polycarp Browser.exe").is_file());
             assert!(!build.join("helium_update_helper.exe").exists());
             assert_eq!(
                 fs::read_to_string(build.join("initial_preferences")).unwrap(),
@@ -733,7 +814,7 @@ mod tests {
         })
         .unwrap();
         assert!(n >= 16, "{n} programs");
-        assert!(!dir.join("work").exists(), "the unpacked copy was kept");
+        assert!(!dir.join("work").exists(), "the work folder was kept");
         let (release, arch, zip) = system::download(&dir).unwrap();
         let (work, changed) = (cache.join("work"), cache.join("changed"));
         fs::create_dir(&work).unwrap();
