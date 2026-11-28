@@ -1,8 +1,8 @@
 //! Polycarp Browser on Linux: `polycarp browser install --dry-run` downloads Helium's newest Linux release, checks
 //! its sha256 and its OpenPGP signature against Helium's pinned key, and only then unpacks it into a private folder,
 //! checks the layout, builds Polycarp Browser from it there, starts that once headless with a throwaway home and
-//! throws it all away. `install` does the same, then puts the build in place with a menu entry; `status` reads it.
-//! The rules are in `../browser/AGENTS.md`.
+//! throws it all away. `install` does the same, then puts the build in place with a menu entry; `status` and
+//! `uninstall` read and remove it. The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -32,8 +32,7 @@ mod portable;
 mod rename;
 // Where it is installed and the file work of installing and removing it, shared with Windows.
 #[allow(clippy::duplicate_mod)]
-// `remove` and `would_remove` are for `uninstall`, which comes next on Linux.
-#[allow(dead_code)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[path = "browser/installed.rs"]
 mod installed;
 
@@ -60,11 +59,14 @@ const VERBS: [&str; 7] = [
     "finish",
 ];
 const ONLY: &str =
-    "polycarp browser: on Linux only `install`, `install --dry-run` and `status [--json]` work so far.";
+    "polycarp browser: on Linux only `install`, `install --dry-run`, `status [--json]` and \
+                    `uninstall [--profile --yes]` work so far.";
 const USAGE: &str = "polycarp browser on Linux:
   install                    build Polycarp Browser from Helium's newest release and install it
   install --dry-run          download, check, build and start it once, then throw it all away
-  status [--json]            say what is installed";
+  status [--json]            say what is installed
+  uninstall                  remove it; your profile stays
+  uninstall --profile --yes  remove it and its profile";
 const NOTHING: &str = " Nothing was installed.";
 
 /// None when these arguments are not a browser command.
@@ -116,6 +118,17 @@ fn answer(
             };
             say(status.and_then(json), "")
         }
+        ("uninstall", ["--profile"]) => match places(env) {
+            Ok(p) => {
+                println!("{}", installed::would_remove(&p));
+                2
+            }
+            Err(e) => say(Err(e), ""),
+        },
+        ("uninstall", [] | ["--profile", "--yes"]) => say(
+            places(env).and_then(|p| system::uninstall(&p, !rest.is_empty())),
+            "",
+        ),
         _ => {
             eprintln!("{ONLY}");
             2
@@ -935,6 +948,12 @@ mod system {
             places.profile.display()
         ))
     }
+
+    /// Removes the browser while it is not running.
+    pub fn uninstall(places: &Places, with_profile: bool) -> Result<String, Refused> {
+        not_running(Path::new("/proc"), &places.program)?;
+        installed::remove(places, with_profile)
+    }
 }
 
 /// Off Linux nothing here runs a program: each step that would is refused.
@@ -951,6 +970,10 @@ mod system {
     }
 
     pub fn install(_: &Path, _: &portable::Parts, _: &Places) -> Result<String, Refused> {
+        not_linux()
+    }
+
+    pub fn uninstall(_: &Places, _: bool) -> Result<String, Refused> {
         not_linux()
     }
 }
@@ -1407,7 +1430,7 @@ mod tests {
     }
 
     #[test]
-    fn install_and_status_are_answered_and_nothing_else() {
+    fn install_status_and_uninstall_are_answered_and_nothing_else() {
         #[cfg(target_os = "macos")]
         assert_eq!(VERBS, crate::browser::VERBS);
         let dir = temp("verbs");
@@ -1429,7 +1452,6 @@ mod tests {
             (&["status"], 0),
             (&["status", "--json"], 0),
             (&["uninstall", "--profile"], 2),
-            (&["uninstall"], 2),
             (&["update"], 2),
             (&["install", "--dry-run", "--yes"], 2),
             (&["status", "--yes"], 2),
@@ -1438,7 +1460,15 @@ mod tests {
         ] {
             assert_eq!(run_(asked, home.clone()), Some(code), "{asked:?}");
         }
-        assert!(p.profile.is_dir(), "`uninstall --profile` removed it");
+        assert!(
+            p.profile.is_dir(),
+            "`uninstall --profile` without --yes removed it"
+        );
+        // Off Linux these refuse with check `system`; on Linux nothing is installed in these folders.
+        let gone = if cfg!(target_os = "linux") { 0 } else { 1 };
+        for asked in [&["uninstall"][..], &["uninstall", "--yes", "--profile"]] {
+            assert_eq!(run_(asked, home.clone()), Some(gone), "{asked:?}");
+        }
         assert_eq!(run_(&["install", "--dry-run"], None), Some(1));
         assert!(ONLY.ends_with("work so far."));
         fs::remove_dir_all(&dir).unwrap();
@@ -1448,7 +1478,7 @@ mod tests {
     /// is found by the folder's real path. Nothing is stopped.
     #[cfg(unix)]
     #[test]
-    fn install_refuses_while_the_browser_runs() {
+    fn install_and_uninstall_refuse_while_the_browser_runs() {
         use std::os::unix::fs::symlink;
         let root = fs::canonicalize(temp("running")).unwrap();
         let (proc, program) = (root.join("proc"), root.join("data/polycarp-browser"));
@@ -1770,11 +1800,12 @@ mod tests {
         fs::remove_dir_all(&cache).unwrap();
     }
 
-    /// A full install into the folders CI points `HOME` and the `XDG_*` folders at, never a person's, then status.
+    /// A full install into the folders CI points `HOME` and the `XDG_*` folders at, never a person's: status, then
+    /// uninstall.
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore]
-    fn the_real_release_installs() {
+    fn the_real_release_installs_and_uninstalls() {
         let env = |k: &str| std::env::var_os(k);
         let data = PathBuf::from(env("XDG_DATA_HOME").unwrap());
         assert!(
@@ -1798,5 +1829,9 @@ mod tests {
         assert_eq!(studio.is_file(), has_studio);
         let status = installed::status(&p);
         assert!(status.installed.is_some(), "{}", status.text());
+        let line = system::uninstall(&p, false).unwrap();
+        assert!(line.starts_with("Polycarp Browser was removed"), "{line}");
+        assert!(!p.program.exists() && !p.shortcut.exists());
+        assert_eq!(installed::status(&p).installed, None);
     }
 }

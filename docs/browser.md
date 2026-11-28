@@ -133,8 +133,9 @@ old one as it was. The browser goes in `$XDG_DATA_HOME/polycarp-browser` (defaul
 entry, `polycarp-browser.desktop`, in `applications` beside it, so it shows in your desktop's menu as Polycarp Browser. The menu entry has no icon yet. Your
 profile is `$XDG_CONFIG_HOME/Polycarp/Browser` (default `~/.config/Polycarp/Browser`), which install never touches. No root is
 needed. Each install builds the newest release again; updates on Linux come later. `polycarp browser status` (or `status
---json`) says which Helium release is installed. Every other `polycarp browser` command on Linux says what works there so far;
-`uninstall` comes next.
+--json`) says which Helium release is installed. `polycarp browser uninstall` removes the browser and its menu entry and keeps your
+profile; `uninstall --profile --yes` removes the profile too, and without `--yes` it only lists what would go. Every other
+`polycarp browser` command on Linux says what works there so far.
 
 ## What is different from Helium
 

@@ -95,7 +95,7 @@ jobs:
           grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/helium-windows.log"
       # Downloads Helium's real Linux release, checks its sha256 and OpenPGP signature, builds Polycarp Browser from it with the
       # parts made here and starts it once headless, then refuses a copy with one byte changed. Then installs it into runner
-      # temp folders, never the runner's own home, and reads its status.
+      # temp folders, never the runner's own home, reads its status and uninstalls it.
       # The workflow's own token goes to the release listing only, so a shared runner's address isn't rate limited.
       # The start runs under Chromium's own sandbox, which needs unprivileged user namespaces; Ubuntu 24.04's AppArmor
       # restricts them, so the runner allows them here. Polycarp never passes --no-sandbox.
@@ -110,7 +110,7 @@ jobs:
           export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
           export HOME="$RUNNER_TEMP/home" XDG_DATA_HOME="$RUNNER_TEMP/xd" XDG_CONFIG_HOME="$RUNNER_TEMP/xc"
           mkdir -p "$HOME" "$XDG_DATA_HOME" "$XDG_CONFIG_HOME"
-          cargo test --bin polycarp -- --ignored --exact --test-threads 1 browser_linux::tests::the_real_release_passes_and_a_changed_tarball_is_refused browser_linux::tests::the_real_release_installs | tee "$RUNNER_TEMP/helium-linux.log"
+          cargo test --bin polycarp -- --ignored --exact --test-threads 1 browser_linux::tests::the_real_release_passes_and_a_changed_tarball_is_refused browser_linux::tests::the_real_release_installs_and_uninstalls | tee "$RUNNER_TEMP/helium-linux.log"
           grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/helium-linux.log"
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
