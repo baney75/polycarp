@@ -223,7 +223,7 @@ fn others(name: &str) -> bool {
 #[cfg(windows)]
 mod system {
     use super::*;
-    use std::process::{Command, Stdio};
+    use std::process::Command;
 
     /// Lists each program's own signature. The folder arrives in an environment variable, never in the script's text.
     ///
@@ -310,22 +310,9 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         let cannot = |e: std::io::Error| {
             Refused::new(check, format!("{} could not run: {e}", program.display()))
         };
-        let ran = match input {
-            None => command.stdin(Stdio::null()).output().map_err(cannot)?,
-            Some(input) => {
-                command
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped());
-                let mut child = command.spawn().map_err(cannot)?;
-                if let Some(mut stdin) = child.stdin.take() {
-                    use std::io::Write;
-                    // A failed write shows as curl's own error; what was being written is never said.
-                    let _ = stdin.write_all(input.as_bytes());
-                }
-                child.wait_with_output().map_err(cannot)?
-            }
-        };
+        // The token reaches only curl, and only on its input: no program run here has it in its environment.
+        command.env_remove(download::TOKEN);
+        let ran = download::run_fed(&mut command, input).map_err(cannot)?;
         if !ran.status.success() {
             let said = String::from_utf8_lossy(&ran.stderr);
             let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
@@ -361,7 +348,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     }
 
     fn newest(arch: &str) -> Result<Release, Refused> {
-        let header = download::token_header(std::env::var_os(download::TOKEN));
+        let header = download::feed_token();
         let args = download::feed_args(FEED, header.is_some());
         let more: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
         let said = curl_fed("release", 60, &more, header)?;

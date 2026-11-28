@@ -283,7 +283,7 @@ mod system {
     use super::*;
     use std::ffi::OsStr;
     use std::os::unix::fs::DirBuilderExt;
-    use std::process::{Command, Output, Stdio};
+    use std::process::{Command, Output};
 
     /// Runs a program by its absolute path, no shell, nothing on stdin; what it did, whatever its exit.
     fn ran(check: &'static str, command: Command) -> Result<Output, Refused> {
@@ -300,20 +300,7 @@ mod system {
         let cannot = |e: std::io::Error| {
             Refused::new(check, format!("{} could not run: {e}", program.display()))
         };
-        let Some(input) = input else {
-            return command.stdin(Stdio::null()).output().map_err(cannot);
-        };
-        command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        let mut child = command.spawn().map_err(cannot)?;
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            // A failed write shows as curl's own error; what was being written is never said.
-            let _ = stdin.write_all(input.as_bytes());
-        }
-        child.wait_with_output().map_err(cannot)
+        download::run_fed(&mut command, input).map_err(cannot)
     }
 
     /// Runs a program, which must succeed; its output.
@@ -389,7 +376,7 @@ mod system {
     }
 
     fn newest(arch: &str) -> Result<(Release, Release), Refused> {
-        let header = download::token_header(std::env::var_os(download::TOKEN));
+        let header = download::feed_token();
         let args = download::feed_args(FEED, header.is_some());
         let more: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
         let said = curl_fed("release", 60, 734_003_200, &more, header)?;

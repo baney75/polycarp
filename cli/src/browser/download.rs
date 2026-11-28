@@ -1,9 +1,10 @@
 //! A Helium release's download, kept only while its sha256 matches, and the refusal every check gives. Shared by
-//! Windows and Linux; nothing here runs a program or needs a particular system.
+//! Windows and Linux; nothing here needs a particular system, and only `run_fed` runs a program, the one it is given.
 
 use std::fs::{self, File};
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Output, Stdio};
 
 use sha2::{Digest, Sha256};
 
@@ -26,7 +27,8 @@ impl Refused {
 }
 
 /// The variable CI sets to its own GitHub token, so the release listing is not rate limited on a shared runner.
-#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+// Each system's module reads its own copy of this file; the other system's copy of this name goes unused.
+#[allow(dead_code)]
 pub const TOKEN: &str = "POLYCARP_GITHUB_TOKEN";
 
 /// The header curl reads from its input (`--header @-`), so the token is in no argument, file or log. Only a token
@@ -38,6 +40,18 @@ pub fn token_header(token: Option<std::ffi::OsString>) -> Option<String> {
     ok.then(|| format!("Authorization: Bearer {token}\n"))
 }
 
+/// The header for the token in `TOKEN`, when it is set. One that is set but not plain is said to be left out, by name
+/// only, so a run that goes unauthenticated shows why.
+#[allow(dead_code)]
+pub fn feed_token() -> Option<String> {
+    let set = std::env::var_os(TOKEN)?;
+    let header = token_header(Some(set));
+    if header.is_none() {
+        eprintln!("polycarp browser: {TOKEN} is not a plain token; the release listing is read without it");
+    }
+    header
+}
+
 /// curl's arguments for the release listing at `feed`, reading the token's header from its input when there is one.
 pub fn feed_args(feed: &'static str, token: bool) -> Vec<&'static str> {
     let mut args = vec!["--header", "Accept: application/vnd.github+json"];
@@ -46,6 +60,24 @@ pub fn feed_args(feed: &'static str, token: bool) -> Vec<&'static str> {
     }
     args.extend(["--", feed]);
     args
+}
+
+/// Runs `command` with `input` as all it reads, or nothing, and gathers its output. A failed write shows as the
+/// program's own error; what was being written is never said.
+#[allow(dead_code)]
+pub fn run_fed(command: &mut Command, input: Option<String>) -> io::Result<Output> {
+    let Some(input) = input else {
+        return command.stdin(Stdio::null()).output();
+    };
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let mut child = command.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    child.wait_with_output()
 }
 
 pub fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error) -> Refused + 'a {
