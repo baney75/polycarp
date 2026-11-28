@@ -25,6 +25,29 @@ impl Refused {
     }
 }
 
+/// The variable CI sets to its own GitHub token, so the release listing is not rate limited on a shared runner.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+pub const TOKEN: &str = "POLYCARP_GITHUB_TOKEN";
+
+/// The header curl reads from its input (`--header @-`), so the token is in no argument, file or log. Only a token
+/// of letters, digits and `_`, as GitHub's are, so it can't add a line of its own; anything else sends none.
+pub fn token_header(token: Option<std::ffi::OsString>) -> Option<String> {
+    let token = token?.into_string().ok()?;
+    let plain = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let ok = (1..=255).contains(&token.len()) && token.bytes().all(plain);
+    ok.then(|| format!("Authorization: Bearer {token}\n"))
+}
+
+/// curl's arguments for the release listing at `feed`, reading the token's header from its input when there is one.
+pub fn feed_args(feed: &'static str, token: bool) -> Vec<&'static str> {
+    let mut args = vec!["--header", "Accept: application/vnd.github+json"];
+    if token {
+        args.extend(["--header", "@-"]);
+    }
+    args.extend(["--", feed]);
+    args
+}
+
 pub fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error) -> Refused + 'a {
     move |e| Refused::new(check, format!("{doing}: {e}"))
 }
@@ -102,4 +125,45 @@ pub fn is_link(meta: &fs::Metadata) -> bool {
         }
     }
     meta.file_type().is_symlink()
+}
+
+#[cfg(test)]
+mod token_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_plain_token_becomes_a_header() {
+        let header = |t: &str| token_header(Some(t.into()));
+        assert_eq!(
+            header("ghs_A1b2"),
+            Some("Authorization: Bearer ghs_A1b2\n".into())
+        );
+        assert_eq!(token_header(None), None);
+        for bad in ["", "a b", "a\nX-Evil: 1", "a\r", "tok:en", "ünï"] {
+            assert_eq!(header(bad), None, "{bad:?}");
+        }
+        assert_eq!(header(&"a".repeat(256)), None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            assert_eq!(
+                token_header(Some(std::ffi::OsString::from_vec(vec![0xff]))),
+                None
+            );
+        }
+    }
+
+    #[test]
+    fn the_token_is_read_from_curl_s_input_never_its_arguments() {
+        let feed = "https://api.github.com/repos/x/y/releases/latest";
+        let accept = ["--header", "Accept: application/vnd.github+json"];
+        assert_eq!(
+            feed_args(feed, false),
+            [&accept[..], &["--", feed]].concat()
+        );
+        assert_eq!(
+            feed_args(feed, true),
+            [&accept[..], &["--header", "@-", "--", feed]].concat()
+        );
+    }
 }

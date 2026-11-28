@@ -292,15 +292,40 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     }
 
     /// Runs a program by its absolute path, which must succeed; its output.
-    fn must(check: &'static str, mut command: Command) -> Result<String, Refused> {
+    fn must(check: &'static str, command: Command) -> Result<String, Refused> {
+        must_fed(check, command, None)
+    }
+
+    /// Runs a program, which must succeed, with `input` as all it reads, or nothing; its output.
+    fn must_fed(
+        check: &'static str,
+        mut command: Command,
+        input: Option<String>,
+    ) -> Result<String, Refused> {
         let program = PathBuf::from(command.get_program());
         if !program.is_file() {
             let why = format!("{} is missing", program.display());
             return Err(Refused::new(check, why));
         }
-        let ran = command.stdin(Stdio::null()).output().map_err(|e| {
+        let cannot = |e: std::io::Error| {
             Refused::new(check, format!("{} could not run: {e}", program.display()))
-        })?;
+        };
+        let ran = match input {
+            None => command.stdin(Stdio::null()).output().map_err(cannot)?,
+            Some(input) => {
+                command
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped());
+                let mut child = command.spawn().map_err(cannot)?;
+                if let Some(mut stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    // A failed write shows as curl's own error; what was being written is never said.
+                    let _ = stdin.write_all(input.as_bytes());
+                }
+                child.wait_with_output().map_err(cannot)?
+            }
+        };
         if !ran.status.success() {
             let said = String::from_utf8_lossy(&ran.stderr);
             let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
@@ -312,6 +337,15 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
 
     /// `curl`, https only, without the person's own curl settings, as on the Mac.
     fn curl(check: &'static str, limit: u64, more: &[&std::ffi::OsStr]) -> Result<String, Refused> {
+        curl_fed(check, limit, more, None)
+    }
+
+    fn curl_fed(
+        check: &'static str,
+        limit: u64,
+        more: &[&std::ffi::OsStr],
+        input: Option<String>,
+    ) -> Result<String, Refused> {
         let mut command = Command::new(system32("curl.exe"));
         let options =
             "-q --fail --silent --show-error --location --proto =https --proto-redir =https \
@@ -321,21 +355,14 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
             .args(options.split_whitespace())
             .arg(limit.to_string())
             .args(more);
-        must(check, command)
+        must_fed(check, command, input)
     }
 
     fn newest(arch: &str) -> Result<Release, Refused> {
-        let accept = "Accept: application/vnd.github+json";
-        let said = curl(
-            "release",
-            60,
-            &[
-                "--header".as_ref(),
-                accept.as_ref(),
-                "--".as_ref(),
-                FEED.as_ref(),
-            ],
-        )?;
+        let header = download::token_header(std::env::var_os(download::TOKEN));
+        let args = download::feed_args(FEED, header.is_some());
+        let more: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
+        let said = curl_fed("release", 60, &more, header)?;
         parse(&said, arch)
     }
 
