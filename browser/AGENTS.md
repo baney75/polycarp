@@ -9,7 +9,7 @@
   `scripts/build-parts-windows.sh`): `helium_update_helper.exe` is removed and must be there to remove, `initial_preferences`
   beside `chrome.exe` turns Helium's update fetching off, the `locales` text packs are renamed, and no program or DLL is edited. It is then started once headless, without Local Studio's part, with a throwaway profile (`--user-data-dir`) and
   `TEMP`, `TMP`, `LOCALAPPDATA`, `APPDATA` and `USERPROFILE` pointed inside the work folder, `POLYCARP_GITHUB_TOKEN` taken out of its environment and no remote debugging, and
-  must show Polycarp's new tab within 180 s; whatever still runs from the build is stopped and the work folder deleted. On Linux the source is a
+  must show Polycarp's new tab within 180 s; whatever still runs from the build is stopped and the work folder deleted. `install` then adds Local Studio's part, refuses while anything runs from `%LOCALAPPDATA%\Programs\Polycarp Browser`, and swaps the build in through `Polycarp Browser.new` and `.old` beside it, writing `polycarp\installed.json` and a Start Menu shortcut; it never touches the profile. On Linux the source is a
   published `imputnet/helium-linux` release tarball with the sha256 GitHub's listing gives, and its detached OpenPGP signature
   must be valid from the pinned key `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`; nothing from it is unpacked, run or
   installed before that.

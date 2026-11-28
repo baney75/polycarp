@@ -133,7 +133,7 @@ pub fn build(helium: &Path, build: &Path, parts: &Parts) -> Result<PathBuf, Refu
 }
 
 /// Plain files and folders only: a link would lead out of the build.
-fn copy(from: &Path, to: &Path) -> Result<(), Refused> {
+pub fn copy(from: &Path, to: &Path) -> Result<(), Refused> {
     let fail = || refuse("built-in pages", "copying the extension");
     fs::create_dir_all(to).map_err(fail())?;
     for entry in fs::read_dir(from).map_err(fail())? {

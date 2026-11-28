@@ -86,6 +86,8 @@ pub fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error)
     move |e| Refused::new(check, format!("{doing}: {e}"))
 }
 
+// Windows prints through its own `say`, so its copy of this goes unused.
+#[allow(dead_code)]
 pub fn print(done: Result<String, Refused>) -> i32 {
     match done {
         Ok(line) => {
