@@ -16,8 +16,12 @@
   `scripts/build-parts-linux.sh`): the tarball has no updater program, `initial_preferences` goes beside `helium`, not its
   wrapper, and the launcher is `polycarp-browser` (mode 0755) beside `helium-wrapper`. It is then started once headless as on
   Windows, under Chromium's own sandbox (never `--no-sandbox`), with `--password-store=basic`, `HOME`, the `XDG_*` folders and
-  `TMPDIR` inside the work folder, and `POLYCARP_GITHUB_TOKEN`, `DISPLAY`, `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` taken
-  out of its environment; every process whose `/proc/<pid>/exe` is inside the build is then stopped and the work folder deleted.
+  `TMPDIR` inside a private folder of its own under `/tmp` (short, so Chromium's socket path fits), and `POLYCARP_GITHUB_TOKEN`, `DISPLAY`, `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` taken
+  out of its environment; every process whose `/proc/<pid>/exe` is inside the build is then stopped and that folder and the work folder deleted.
+  `install` then works as on Windows, in `$XDG_DATA_HOME/polycarp-browser` (else `~/.local/share/polycarp-browser`): it refuses
+  while any `/proc/<pid>/exe` is inside it (never stopping one), swaps the build in through `.new` and `.old` beside it, writes
+  `polycarp/installed.json` and a menu entry, `applications/polycarp-browser.desktop` (0644, its `Exec` path quoted, a path with
+  a line break or `%` refused).
 - The result is built on the person's machine, from scratch, beside the old one, and swapped in only after it starts headless on a
   fresh throwaway profile, deleted afterwards. The running browser is never replaced under the person. Nothing here needs admin rights.
 - No Helium binary, logo or non-free asset is committed or published, and Helium's name is never the product's name or brand.

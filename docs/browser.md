@@ -115,8 +115,8 @@ own that holds only Helium's signing key, check the signature: it must be good a
 is laid out as Helium's. Then it builds Polycarp Browser from that copy: it turns Helium's update checks off for the first profile
 (the Linux release has no updater program to remove), puts Polycarp's name in the browser's text and adds Polycarp's launcher,
 `polycarp-browser`, and extension. Then it starts the build once headless, without Local Studio's part, with a throwaway profile
-and `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` and `TMPDIR` all inside the work
-folder. It
+and `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` and `TMPDIR` all inside a
+private folder of its own under `/tmp`, kept short so the socket Chromium makes there fits a Unix socket's path. It
 takes `POLYCARP_GITHUB_TOKEN`, `DISPLAY`, `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` out of its environment, so it reaches no
 session, passes `--password-store=basic`, so it never touches a desktop keyring, and opens no remote debugging. It runs under
 Chromium's own sandbox, which needs unprivileged user namespaces (Ubuntu 24.04's AppArmor restricts them; Polycarp never turns the
@@ -124,8 +124,17 @@ sandbox off). On Ubuntu 23.10 and later AppArmor does this by default
 (`kernel.apparmor_restrict_unprivileged_userns=1`), so the dry run refuses with check `sandbox` before it downloads anything, and
 says so when the browser reports no usable sandbox. The dumped page must be Polycarp's new tab within 180 s, or it refuses with check `start`. Whatever still runs from
 the build is then stopped, and it deletes it all, the keyring too. Nothing is installed. The build needs Polycarp's parts: run `browser/scripts/build-parts-linux.sh DEST` from a checkout and set
-`POLYCARP_BROWSER_RESOURCES` to `DEST`; without them it stops before downloading. Every other `polycarp browser` command on
-Linux says that only `install --dry-run` works there so far. Installing the browser on Linux comes later.
+`POLYCARP_BROWSER_RESOURCES` to `DEST`; without them it stops before downloading.
+
+`polycarp browser install` does all of that, then installs the build, as on Windows. The AppArmor refusal above applies to it too,
+before anything is downloaded. It adds Local Studio's part (left out of the start), and refuses, changing nothing, while any
+process runs from the program folder. The new build goes in beside the old one and is swapped in, so a failed install leaves the
+old one as it was. The browser goes in `$XDG_DATA_HOME/polycarp-browser` (default `~/.local/share/polycarp-browser`), with a menu
+entry, `polycarp-browser.desktop`, in `applications` beside it, so it shows in your desktop's menu as Polycarp Browser. The menu entry has no icon yet. Your
+profile is `$XDG_CONFIG_HOME/Polycarp/Browser` (default `~/.config/Polycarp/Browser`), which install never touches. No root is
+needed. Each install builds the newest release again; updates on Linux come later. `polycarp browser status` (or `status
+--json`) says which Helium release is installed. Every other `polycarp browser` command on Linux says what works there so far;
+`uninstall` comes next.
 
 ## What is different from Helium
 

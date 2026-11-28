@@ -86,24 +86,6 @@ pub fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error)
     move |e| Refused::new(check, format!("{doing}: {e}"))
 }
 
-// Windows prints through its own `say`, so its copy of this goes unused.
-#[allow(dead_code)]
-pub fn print(done: Result<String, Refused>) -> i32 {
-    match done {
-        Ok(line) => {
-            println!("{line}");
-            0
-        }
-        Err(r) => {
-            eprintln!(
-                "polycarp browser: the {} check failed: {}. Nothing was installed.",
-                r.check, r.why
-            );
-            1
-        }
-    }
-}
-
 /// The release's file with its own digest, downloaded by `download` unless the folder already has it. Files that
 /// `others` names, other than this one, are other releases' leftovers and are deleted.
 pub fn fetch(
