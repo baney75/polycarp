@@ -1454,10 +1454,10 @@ final class Spaces {
             return
         }
         // A browser brought forward with nothing of it here is opening a link in a window it already has
-        // (R-F4): go there at once, without the new-window wait below. A window it opens later still lands
-        // where you are by then.
+        // (R-F4): go there at once, without the new-window wait below. A browser set to open links in a new
+        // window shows it on the workspace you were taken to, beside its other windows.
         if Catalog.isBrowser(NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
-                             defaultBrowser: Self.defaultBrowserID()) {
+                             defaultBrowser: Self.defaultBrowserID) {
             following += 1
             Trace.log("followFocus at once: \(w.appName) is a browser")
             return followAway(w, to: n, pid: pid)

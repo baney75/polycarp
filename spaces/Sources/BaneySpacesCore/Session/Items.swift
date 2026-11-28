@@ -46,11 +46,13 @@ public struct AppSpec: Equatable, Sendable, Codable {
 /// `~/.config/baneyspaces/session.json`, and the default browser joins automatically.
 public enum Catalog {
     /// A browser: one of the known ones or the default browser. Brought forward with no window here, it is
-    /// opening a link in a window it already has, so following it waits for no new window (R-F4).
-    public static func isBrowser(_ bundleID: String?, defaultBrowser: String?) -> Bool {
+    /// opening a link in a window it already has, so following it waits for no new window (R-F4). A new window it opens for the link
+    /// shows on the workspace you were taken to.
+    /// `defaultBrowser` is asked only when the app isn't a known browser.
+    public static func isBrowser(_ bundleID: String?, defaultBrowser: () -> String?) -> Bool {
         guard let bundleID, !bundleID.isEmpty else { return false }
-        if bundleID == defaultBrowser { return true }
-        return known.contains { $0.bundleID == bundleID && $0.role == .browser }
+        if known.contains(where: { $0.bundleID == bundleID && $0.role == .browser }) { return true }
+        return bundleID == defaultBrowser()
     }
 
     public static let known: [AppSpec] = [
