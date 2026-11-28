@@ -23,7 +23,7 @@ final class Spaces {
     /// the last one pressed, so ⌘2 ⌘3 ⌘4 in quick succession lands on 4 without stopping at 2 and 3.
     private var queued: [Queued] = []
     private enum Queued {
-        case switchTo(n: Int, focus: Bool, announce: Bool)
+        case switchTo(n: Int, focus: Bool, announce: Bool, reapply: Bool)
         case action(() -> Void)
     }
     /// Bumped by every switch and by `suspend()`. A timer or callback from an earlier switch
@@ -201,7 +201,7 @@ final class Spaces {
                 .filter { model.workspace(of: $0.window) == nil && server[$0.window]?.pid == $0.pid }.map { ($0.window, $0) })
         }
         persist()
-        switchTo(model.current, takeFocus: false, announce: false)
+        switchTo(model.current, takeFocus: false, announce: false, reapply: true)
         flattenFullScreen()
     }
 
@@ -539,7 +539,7 @@ final class Spaces {
         if returned {
             let again: () -> Void = { [weak self] in
                 guard let self, self.active, !self.switching else { return }
-                self.switchTo(self.model.current, takeFocus: false, announce: false)
+                self.switchTo(self.model.current, takeFocus: false, announce: false, reapply: true)
             }
             // Mid-switch (its own scan) the window goes out of sight once the switch is done.
             if switching { enqueue(again) } else { DispatchQueue.main.async(execute: again) }
@@ -770,7 +770,7 @@ final class Spaces {
                     guard !held.isEmpty, self.placeByRule(held) else { return }
                     let again: () -> Void = { [weak self] in
                         guard let self, self.active, !self.switching else { return }
-                        self.switchTo(self.model.current, takeFocus: false, announce: false)
+                        self.switchTo(self.model.current, takeFocus: false, announce: false, reapply: true)
                     }
                     if self.switching { self.enqueue(again) } else { again() }
                 }
@@ -931,14 +931,17 @@ final class Spaces {
     /// `takeFocus: false` rearranges windows without touching focus, for moves made from the
     /// viewer while it holds the keyboard. `announce` flashes the workspace HUD, only when
     /// `showSwitchHUD` is on (off by default, `SwitchHUDPolicy`).
-    func switchTo(_ n: Int, takeFocus moveFocus: Bool = true, announce: Bool = true) {
+    /// `reapply`: Polycarp applying the workspace you are on again on its own (a rescan, a window coming back),
+    /// never a switch you asked for.
+    func switchTo(_ n: Int, takeFocus: Bool = true, announce: Bool = true, reapply: Bool = false) {
+        let moveFocus = takeFocus
         if active, n == Workspaces.scratchpad { return showScratchpad() }
         guard active, Workspaces.range.contains(n) else { return }
         onSwitchAsked(ProcessInfo.processInfo.systemUptime, n)
         if switching {
             // Presses keep their order; only back-to-back switches collapse to the last one.
             if case .switchTo = queued.last { queued.removeLast() }
-            queued.append(.switchTo(n: n, focus: moveFocus, announce: announce))
+            queued.append(.switchTo(n: n, focus: moveFocus, announce: announce, reapply: reapply))
             return
         }
         // The HUD is drawn after the switch is under way, never in front of it, from the windows
@@ -963,12 +966,35 @@ final class Spaces {
         refresh(full: false, asking: [], then: { [self] in
             guard gen == generation, active else { return }
             holding = false
-            plan(n, moveFocus: moveFocus)
+            let keep = keptFront(reapplying: reapply && n == model.current, on: n)
+            plan(n, moveFocus: moveFocus && keep == nil, keep: keep)
         })
     }
 
+    /// R-F5, decided after the switch's own scan so a window that just appeared here counts: Polycarp applying the
+    /// workspace you are on again on its own, before it has decided where a browser you just brought forward goes (a
+    /// link opened it), leaves that browser in front and unhidden, and follows it once the switch is done. Hiding it
+    /// would hand focus back to the app you clicked in.
+    private func keptFront(reapplying: Bool, on n: Int) -> pid_t? {
+        guard reapplying, let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        let pid = front.processIdentifier
+        let agents = AgentWorkspace.parkedApps(owners: windows.mapValues(\.pid), home: model.home, agent: Self.agentWorkspace)
+        let keep = FocusKeep.keepsFront(reapply: true,
+                                        frontIsBrowser: Catalog.isBrowser(front.bundleIdentifier, defaultBrowser: Self.defaultBrowserID),
+                                        frontIsOurs: pid == getpid() || pid == expectedFront,
+                                        frontIsAgents: agents.contains(pid),
+                                        decided: decidedAt == activatedAt,
+                                        sinceActivation: Date().timeIntervalSince(activatedAt),
+                                        frontHasWindowHere: model.windows(on: n).contains { windows[$0]?.pid == pid })
+        guard keep else { return nil }
+        Trace.log("switch to \(n) keeps \(front.localizedName ?? "pid \(pid)") in front: it just came forward")
+        followPending = true
+        return pid
+    }
+
     /// The switch, once the window list is fresh.
-    private func plan(_ n: Int, moveFocus: Bool) {
+    /// `keep`: an app left in front and unhidden (R-F5).
+    private func plan(_ n: Int, moveFocus: Bool, keep: pid_t? = nil) {
         clock.mark(.scanned)
         // The window in front, from the window server's stacking order: asking its app could wait on it.
         let focused = Windows.front(in: windows) { [self] id in saved.frames[id] == nil }
@@ -991,7 +1017,7 @@ final class Spaces {
         for w in carried { model.assign(w.id, to: n, focus: false) }
         let asking = full.filter { !refusedFullScreen.contains($0.id) }
         guard !asking.isEmpty else {
-            return apply(carried.isEmpty ? plan : model.switchTo(n), moveFocus: moveFocus)
+            return apply(carried.isEmpty ? plan : model.switchTo(n), moveFocus: moveFocus, keep: keep)
         }
         let gen = generation
         let known = Set(model.home.keys).union(pendingLayout.keys)
@@ -1008,7 +1034,7 @@ final class Spaces {
                 holding = false
                 guard gen == generation, active else { return }
                 for id in Set(model.home.keys).subtracting(known) { model.assign(id, to: leaving, focus: false) }
-                apply(model.switchTo(n), moveFocus: moveFocus)
+                apply(model.switchTo(n), moveFocus: moveFocus, keep: keep)
             })
         }
     }
@@ -1379,6 +1405,7 @@ final class Spaces {
     /// The rest of `followFocus`, with the app's focused window `w` on workspace `n` and what the app said about its
     /// windows (`look`), asked off the main thread. Nothing here asks the app again.
     private func followed(_ w: Window, on n: Int, pid: pid_t, look: Windows.FocusLook) {
+        decidedAt = activatedAt
         let known = look.standard
         let minimized: (WindowID) -> Bool = { look.minimized[$0] ?? false }
         // An agent action on this very window (for its whole run and a moment after), or an app the agent
@@ -1404,7 +1431,7 @@ final class Spaces {
             // from other workspaces are in sight too. They go back out of view.
             if strayed(pid, minimized: minimized) {
                 Trace.log("followFocus here: \(w.appName) on \(n); its other windows go back out of view")
-                return switchTo(model.current, announce: false)
+                return switchTo(model.current, announce: false, reapply: true)
             }
             Trace.log("followFocus here: \(w.appName) on \(n)")
             return persist()
@@ -1423,7 +1450,7 @@ final class Spaces {
             model.assign(w.id, to: model.current, focus: true)
             lastKey[pid] = w.id
             noteFocus(w.id)
-            return switchTo(model.current, announce: false)
+            return switchTo(model.current, announce: false, reapply: true)
         }
         if let here = windowHere(of: pid, minimized: minimized) {
             Trace.log("followFocus stayed: \(w.appName) has a window here")
@@ -1557,6 +1584,8 @@ final class Spaces {
     private var handedOffAt = Date.distantPast
     /// When the last app activation BaneySpaces didn't ask for arrived.
     private var activatedAt = Date.distantPast
+    /// The `activatedAt` a follow decision was last made for (`followed`): a re-apply after it carries that decision.
+    private var decidedAt = Date.distantPast
     /// An app `openWindowHere` asked for a window, until when: its coming forward isn't followed.
     private var opening: (pid: pid_t, until: Date)?
     /// The app in front, as of the last activation.
@@ -1697,7 +1726,7 @@ final class Spaces {
     }
 
     /// Re-applies the workspace you're on, after the parked-apps list changed.
-    func reapply() { switchTo(model.current, takeFocus: false, announce: false) }
+    func reapply() { switchTo(model.current, takeFocus: false, announce: false, reapply: true) }
 
     /// Every window onto workspace 1, all visible. The way out of any tangle.
     func gatherOnOne() {
@@ -1760,7 +1789,7 @@ final class Spaces {
             // macOS moved windows around for the change; any on a shown workspace that landed on
             // another display goes back to its workspace's display.
             self.returnToDisplays()
-            self.switchTo(self.model.current, takeFocus: false, announce: false)
+            self.switchTo(self.model.current, takeFocus: false, announce: false, reapply: true)
         }
         screensWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
@@ -1984,7 +2013,7 @@ final class Spaces {
         // The window had the keyboard (it was just dragged) and the overview never took it, so
         // this workspace's next window takes it, or the empty-workspace holder when none is left.
         model.assign(id, to: n, focus: false)
-        switchTo(model.current, announce: false)
+        switchTo(model.current, announce: false, reapply: true)
         // Out of sight now, it goes back where the drag picked it up, never on screen here.
         let putBack: () -> Void = { [weak self] in self?.placeAway(id, at: frame) }
         if switching { enqueue(putBack) } else { putBack() }
@@ -2141,7 +2170,7 @@ final class Spaces {
             }
             lastKey[pid] = new.id
             noteFocus(new.id)
-            switchTo(model.current, announce: false)
+            switchTo(model.current, announce: false, reapply: true)
             done(true)
         }
     }
@@ -2159,7 +2188,7 @@ final class Spaces {
         for id in ids { model.assign(id, to: n, focus: false) }
         // The workspace it left fills now, before the switch parks it (R-TS8): it is away from there already.
         onWindowsLeft(leaving, "workspace", at)
-        switchTo(model.current, takeFocus: false, announce: false)
+        switchTo(model.current, takeFocus: false, announce: false, reapply: true)
     }
 
     /// The ⌘Tab switcher's list: the current workspace (even when empty), then others with
@@ -2202,7 +2231,7 @@ final class Spaces {
         return model.windows(on: n).compactMap { windows[$0]?.appName }.filter { seen.insert($0).inserted }
     }
 
-    private func apply(_ plan: SwitchPlan, moveFocus: Bool = true) {
+    private func apply(_ plan: SwitchPlan, moveFocus: Bool = true, keep: pid_t? = nil) {
         guard active else { return }
         let gen = generation
         // What follows changes each app's windows on its own schedule. Held, they reach the screen as one change.
@@ -2265,10 +2294,12 @@ final class Spaces {
         //    changes nothing about focus, so there's no reason to wait for it.
         let deferred: Set<pid_t> = moveFocus ? Set([oldFront].compactMap { $0 }).intersection(how.hideApps) : []
         // Our own hides are announced a moment later; they aren't an app you closed.
-        ownHides = how.hideApps.union(Date() < ownHidesUntil ? ownHides : [])
+        // A browser you just brought forward stays (R-F5): it is followed once this switch is done.
+        let kept: Set<pid_t> = keep.map { [$0] } ?? []
+        ownHides = how.hideApps.subtracting(kept).union(Date() < ownHidesUntil ? ownHides : [])
         ownHidesUntil = Date().addingTimeInterval(1)
         let leavingParked: pid_t? = moveFocus ? oldFront.flatMap { parkedApps.contains($0) && !how.showApps.contains($0) ? $0 : nil } : nil
-        conceal(how, apps: how.hideApps.subtracting(deferred), screens: screens)
+        conceal(how, apps: FocusKeep.hiddenNow(how.hideApps, deferred: deferred, kept: kept), screens: screens)
         clock.mark(.concealed)
         // 3. Focus moves to this workspace. Only then does the old front app hide: hiding the app
         //    in front makes macOS activate another app on its own, which would look like the
@@ -2356,7 +2387,7 @@ final class Spaces {
         startScan()
         while !switching, !queued.isEmpty {
             switch queued.removeFirst() {
-            case let .switchTo(n, focus, announce): switchTo(n, takeFocus: focus, announce: announce)
+            case let .switchTo(n, focus, announce, reapply): switchTo(n, takeFocus: focus, announce: announce, reapply: reapply)
             case let .action(run): run()
             }
         }

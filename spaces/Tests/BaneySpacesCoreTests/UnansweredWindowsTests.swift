@@ -52,7 +52,7 @@ final class UnansweredWindowsWiringTests: XCTestCase {
     private func spaces() throws -> String { try SourceText.code("Sources/BaneySpaces/Spaces.swift") }
 
     func testASwitchHoldsUnansweredWindowsBeforeItPlans() throws {
-        let plan = try XCTUnwrap(SourceText.block(after: "private func plan(_ n: Int, moveFocus: Bool)", in: spaces()))
+        let plan = try XCTUnwrap(SourceText.block(after: "private func plan(_ n: Int, moveFocus: Bool, keep: pid_t? = nil)", in: spaces()))
         let hold = try XCTUnwrap(plan.range(of: "holdUnanswered()"), "a switch must hold the windows whose app didn't answer")
         let make = try XCTUnwrap(plan.range(of: "model.switchTo(n)"))
         XCTAssertLessThan(hold.lowerBound, make.lowerBound, "held before the plan is made, on the workspace being left")
@@ -61,7 +61,7 @@ final class UnansweredWindowsWiringTests: XCTestCase {
     }
 
     func testTheSwitchHidesTheAppOfAWindowHeldElsewhere() throws {
-        let apply = try XCTUnwrap(SourceText.block(after: "private func apply(_ plan: SwitchPlan, moveFocus: Bool = true)", in: spaces()))
+        let apply = try XCTUnwrap(SourceText.block(after: "private func apply(_ plan: SwitchPlan, moveFocus: Bool = true, keep: pid_t? = nil)", in: spaces()))
         XCTAssertTrue(apply.contains("alsoHidden:"), "Concealment must hide the app of a window held for a workspace not shown")
     }
 

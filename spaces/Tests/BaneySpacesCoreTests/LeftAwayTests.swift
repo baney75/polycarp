@@ -57,7 +57,7 @@ final class LeftAwayWiringTests: XCTestCase {
     }
 
     func testASwitchLooksForWindowsItLeftAway() throws {
-        XCTAssertTrue(try block("private func apply(_ plan: SwitchPlan, moveFocus: Bool = true)").contains("noteLeftAway()"))
+        XCTAssertTrue(try block("private func apply(_ plan: SwitchPlan, moveFocus: Bool = true, keep: pid_t? = nil)").contains("noteLeftAway()"))
         XCTAssertTrue(try block("private func noteLeftAway()").contains("scheduleRetry()"), "their apps are asked again")
         XCTAssertTrue(try block("private func scheduleRetry()").contains("leftAway()"), "the retry asks their apps, not only the unread ones")
     }
