@@ -30,14 +30,20 @@ mod portable;
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/rename.rs"]
 mod rename;
-// Where it is installed and the file work of installing and removing it; tested on every system.
+// Where it is installed and the file work of installing and removing it, shared with Linux; tested on every system.
+#[allow(clippy::duplicate_mod)]
 #[cfg_attr(not(windows), allow(dead_code))]
-#[path = "browser/windows_install.rs"]
-mod windows_install;
+#[path = "browser/installed.rs"]
+mod installed;
 
 use download::{fetch, is_link, refuse, Refused};
+use installed::{say, System};
 use listing::Release;
-use windows_install::{places, say};
+
+/// The places by Windows' rule.
+fn places(env: &dyn Fn(&str) -> Option<OsString>) -> Result<installed::Places, Refused> {
+    installed::places(System::Windows, env)
+}
 
 #[cfg(windows)]
 const FEED: &str = "https://api.github.com/repos/imputnet/helium-windows/releases/latest";
@@ -102,9 +108,9 @@ fn answer(
             let missing = matches!(&done, Err(r) if ["shortcut", "stranded"].contains(&r.check));
             say(done, if missing { "" } else { NOTHING })
         }
-        ("status", []) => say(places(env).map(|p| windows_install::status(&p).text()), ""),
+        ("status", []) => say(places(env).map(|p| installed::status(&p).text()), ""),
         ("status", ["--json"]) => {
-            let status = places(env).map(|p| windows_install::status(&p));
+            let status = places(env).map(|p| installed::status(&p));
             let json = |s| {
                 serde_json::to_string_pretty(&s).map_err(|e| Refused::new("status", e.to_string()))
             };
@@ -112,7 +118,7 @@ fn answer(
         }
         ("uninstall", ["--profile"]) => match places(env) {
             Ok(p) => {
-                println!("{}", windows_install::would_remove(&p));
+                println!("{}", installed::would_remove(&p));
                 2
             }
             Err(e) => say(Err(e), ""),
@@ -273,8 +279,8 @@ fn others(name: &str) -> bool {
 #[cfg(windows)]
 mod system {
     use super::*;
+    use installed::{Places, NAME};
     use std::process::{Command, Stdio};
-    use windows_install::{Places, NAME};
 
     /// Lists each program's own signature. The folder arrives in an environment variable, never in the script's text.
     ///
@@ -507,11 +513,11 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
                     &build.join("polycarp").join("local-studio"),
                 )?;
             }
-            windows_install::write_record(&build, version)?;
+            installed::write_record(&build, version)?;
             if let Some(parent) = places.program.parent() {
                 fs::create_dir_all(parent).map_err(refuse("swap", "making the Programs folder"))?;
             }
-            windows_install::swap(&build, &places.program, &moved)?;
+            installed::swap(&build, &places.program, &installed::moved)?;
             *placed.borrow_mut() = Some(version.to_string());
             Ok(())
         });
@@ -537,18 +543,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     /// Removes the browser while it is not running.
     pub fn uninstall(places: &Places, with_profile: bool) -> Result<String, Refused> {
         not_running(&places.program)?;
-        windows_install::remove(places, with_profile)
-    }
-
-    /// A rename, tried again for a while: a browser that just quit can hold its files a moment longer.
-    fn moved(from: &Path, to: &Path) -> std::io::Result<()> {
-        for _ in 0..10 {
-            if fs::rename(from, to).is_ok() {
-                return Ok(());
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-        fs::rename(from, to)
+        installed::remove(places, with_profile)
     }
 
     /// Creates or replaces the Start Menu shortcut. Every path arrives in an environment variable.
@@ -707,12 +702,12 @@ mod system {
     pub fn install(
         _: &Path,
         _: &portable::Parts,
-        _: &windows_install::Places,
+        _: &installed::Places,
     ) -> Result<String, Refused> {
         not_windows()
     }
 
-    pub fn uninstall(_: &windows_install::Places, _: bool) -> Result<String, Refused> {
+    pub fn uninstall(_: &installed::Places, _: bool) -> Result<String, Refused> {
         not_windows()
     }
 }
@@ -954,7 +949,7 @@ mod tests {
         #[cfg(target_os = "macos")]
         assert_eq!(VERBS, crate::browser::VERBS);
         let dir = temp("verbs");
-        let p = windows_install::places(&|k| Some(dir.join(k).into_os_string())).unwrap();
+        let p = places(&|k| Some(dir.join(k).into_os_string())).unwrap();
         fs::create_dir_all(&p.profile).unwrap();
         // Only temp folders, and no parts, so `install` stops before any download.
         let env = |k: &str| (k != portable::RESOURCES).then(|| dir.join(k).into_os_string());
@@ -1062,7 +1057,7 @@ mod tests {
             local.ends_with("la"),
             "LOCALAPPDATA is not CI's temp folder"
         );
-        let p = windows_install::places(&env).unwrap();
+        let p = places(&env).unwrap();
         let parts = portable::parts(env(portable::RESOURCES), &portable::WINDOWS).unwrap();
         let line = system::install(&local.join("cache"), &parts, &p).unwrap();
         assert!(line.contains("with a Start Menu shortcut"), "{line}");
@@ -1075,12 +1070,12 @@ mod tests {
                 .is_file(),
             has_studio
         );
-        let status = windows_install::status(&p);
+        let status = installed::status(&p);
         assert!(status.installed.is_some(), "{}", status.text());
         fs::create_dir_all(&p.profile).unwrap();
         let line = system::uninstall(&p, false).unwrap();
         assert!(line.starts_with("Polycarp Browser was removed"), "{line}");
         assert!(!p.program.exists() && !p.shortcut.exists() && p.profile.is_dir());
-        assert_eq!(windows_install::status(&p).installed, None);
+        assert_eq!(installed::status(&p).installed, None);
     }
 }
