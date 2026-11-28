@@ -5,6 +5,10 @@
 //! before the next try: 10, 20, 40, then at most 60 minutes. Any run that works, `polycarp sync now` by hand
 //! included, ends the wait.
 //!
+//! On a Mac a background run never lets the Keychain ask. When it would have to, the run skips its turn without
+//! counting a failure, leaves `needs-keychain` ([`Paused`]) in the sync folder and logs that at most once an hour,
+//! until a read of the key works again (`polycarp sync now` by hand, where the Keychain may ask).
+//!
 //! Test hook, never set in real use: `POLYCARP_SYNC_SERVICE=write` writes the unit files and loads nothing, so no test
 //! reaches launchd, systemd or Task Scheduler.
 
@@ -246,6 +250,50 @@ impl Backoff {
     }
 }
 
+/// The log line for a run skipped because the Keychain would have asked. Fixed text: nothing from the store.
+pub const PAUSED_LOG: &str = "skipped: the Keychain must ask before polycarp can read the sync key, and a background run never lets it; run `polycarp sync now` once to allow it";
+
+/// What `auto status` says while that is so.
+pub const PAUSED_STATUS: &str =
+    "on, but paused: run `polycarp sync now` once to allow Keychain access";
+
+/// The skipped run's note at most this often.
+pub const PAUSED_LOG_EVERY_MS: u64 = 60 * 60_000;
+
+/// Background runs skipped since `since_ms` because the Keychain would have asked. Kept in the sync folder as
+/// `needs-keychain`; any read of the key that works removes it.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Paused {
+    pub since_ms: u64,
+    pub logged_ms: u64,
+}
+
+impl Paused {
+    /// After one more skipped run: the marker to keep, and whether to log it. It logs when there was no marker, an
+    /// hour after the last note, or when the clock went back past the last note.
+    pub fn skipped(prev: Option<Paused>, now_ms: u64) -> (Paused, bool) {
+        match prev {
+            Some(p) if now_ms >= p.logged_ms && now_ms - p.logged_ms < PAUSED_LOG_EVERY_MS => {
+                (p, false)
+            }
+            Some(p) => (
+                Paused {
+                    since_ms: p.since_ms.min(now_ms),
+                    logged_ms: now_ms,
+                },
+                true,
+            ),
+            None => (
+                Paused {
+                    since_ms: now_ms,
+                    logged_ms: now_ms,
+                },
+                true,
+            ),
+        }
+    }
+}
+
 /// Adds one line to the log, keeping one older log of about 1 MB.
 pub fn log_line(log: &Path, line: &str) {
     if let Some(d) = log.parent() {
@@ -292,6 +340,74 @@ mod tests {
         let b = Backoff::default().failed(ahead);
         assert!(b.due(0));
         assert!(!b.due(ahead + 60_000));
+    }
+
+    #[test]
+    fn a_skipped_run_is_logged_once_an_hour() {
+        let min = 60_000;
+        let t = 1_000 * min;
+        // No marker: log, and the pause starts now.
+        assert_eq!(
+            Paused::skipped(None, t),
+            (
+                Paused {
+                    since_ms: t,
+                    logged_ms: t
+                },
+                true
+            )
+        );
+        let p = Paused {
+            since_ms: t - 90 * min,
+            logged_ms: t - 10 * min,
+        };
+        // Ten minutes after the last note: quiet, marker kept as it was.
+        assert_eq!(Paused::skipped(Some(p), t), (p, false));
+        // Just under an hour: still quiet.
+        let p = Paused {
+            logged_ms: t - 59 * min,
+            ..p
+        };
+        assert_eq!(Paused::skipped(Some(p), t), (p, false));
+        // An hour on: one more note, the pause keeps its start.
+        let p = Paused {
+            logged_ms: t - 60 * min,
+            ..p
+        };
+        assert_eq!(
+            Paused::skipped(Some(p), t),
+            (
+                Paused {
+                    since_ms: t - 90 * min,
+                    logged_ms: t
+                },
+                true
+            )
+        );
+        // The clock went back past the last note: log again rather than stay quiet for days.
+        let ahead = Paused {
+            since_ms: t + 5 * min,
+            logged_ms: t + 5 * min,
+        };
+        assert_eq!(
+            Paused::skipped(Some(ahead), t),
+            (
+                Paused {
+                    since_ms: t,
+                    logged_ms: t
+                },
+                true
+            )
+        );
+    }
+
+    #[test]
+    fn the_skip_note_names_the_fix_and_carries_nothing_from_the_store() {
+        assert!(PAUSED_LOG.contains("`polycarp sync now`"));
+        assert!(PAUSED_STATUS.contains("`polycarp sync now`"));
+        for s in [PAUSED_LOG, PAUSED_STATUS] {
+            assert!(!s.contains('{') && !s.to_lowercase().contains("secret-key"));
+        }
     }
 
     const START: &str = "2026-11-27T05:00:00Z";

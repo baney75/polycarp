@@ -2,6 +2,10 @@
 //! (`secret-tool`) on Linux. A file only its owner can read is the fallback only where there is no store, and the
 //! command says so. The secret never leaves this device, and nothing here prints it.
 //!
+//! A background run reads with [`Ask::Never`]: on a Mac a read that would need the Keychain to ask (a rebuilt,
+//! ad-hoc signed `polycarp` no longer matches the item's access list) fails as [`KeyError::NeedsPrompt`] instead of
+//! putting a dialog on screen.
+//!
 //! Test hook, never set in real use: `POLYCARP_SYNC_KEY_STORE=file` keeps the secret in the file, so no test reaches a
 //! real Keychain.
 
@@ -11,6 +15,81 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 pub const SERVICE: &str = "Polycarp Sync";
+
+/// errSecInteractionNotAllowed: the Keychain would have to ask, and asking is turned off.
+#[cfg(target_os = "macos")]
+pub const INTERACTION_NOT_ALLOWED: i32 = -25308;
+/// errSecAuthFailed. With asking turned off no password is ever entered, so this is how macOS 27 answers a read whose
+/// access list does not name this `polycarp` (seen on Donovan's Mac, 2026-11-28): the Keychain wanted to ask.
+#[cfg(target_os = "macos")]
+pub const AUTH_FAILED: i32 = -25293;
+
+/// Whether reading the key may put a system prompt on screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ask {
+    Prompt,
+    Never,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum KeyError {
+    /// The store would have to ask, and the read was made with [`Ask::Never`].
+    NeedsPrompt,
+    Failed(String),
+}
+
+impl From<String> for KeyError {
+    fn from(e: String) -> Self {
+        KeyError::Failed(e)
+    }
+}
+
+impl From<KeyError> for String {
+    fn from(e: KeyError) -> Self {
+        match e {
+            KeyError::NeedsPrompt => {
+                "the Keychain must ask before polycarp can read the sync key; run `polycarp sync now` once to allow it"
+                    .into()
+            }
+            KeyError::Failed(e) => e,
+        }
+    }
+}
+
+/// What a read from the Keychain or Credential Manager means. Only a read made with [`Ask::Never`] can need a prompt;
+/// with [`Ask::Prompt`] the same codes (a Deny click) are plain failures. The error text carries only the store's code.
+#[cfg(any(target_os = "macos", windows))]
+fn native_result(
+    r: Result<String, keyring_core::Error>,
+    ask: Ask,
+) -> Result<Option<SecretString>, KeyError> {
+    match r {
+        Ok(s) => Ok(Some(SecretString::from(s))),
+        Err(keyring_core::Error::NoEntry) => Ok(None),
+        Err(e) if ask == Ask::Never && needs_prompt(&e) => Err(KeyError::NeedsPrompt),
+        Err(e) => Err(KeyError::Failed(format!(
+            "the system's secret store refused: {e}"
+        ))),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn needs_prompt(e: &keyring_core::Error) -> bool {
+    use std::error::Error as _;
+    let mut src = e.source();
+    while let Some(s) = src {
+        if let Some(sf) = s.downcast_ref::<security_framework::base::Error>() {
+            return [INTERACTION_NOT_ALLOWED, AUTH_FAILED].contains(&sf.code());
+        }
+        src = s.source();
+    }
+    false
+}
+
+#[cfg(windows)]
+fn needs_prompt(_: &keyring_core::Error) -> bool {
+    false
+}
 
 pub enum Store {
     #[cfg(any(target_os = "macos", windows))]
@@ -64,14 +143,11 @@ impl Store {
         }
     }
 
+    /// Reads the secret; a Mac may ask first.
     pub fn load(&self) -> Result<Option<SecretString>, String> {
         match self {
             #[cfg(any(target_os = "macos", windows))]
-            Store::Native(e) => match e.get_password() {
-                Ok(s) => Ok(Some(SecretString::from(s))),
-                Err(keyring_core::Error::NoEntry) => Ok(None),
-                Err(e) => Err(format!("the system's secret store refused: {e}")),
-            },
+            Store::Native(_) => self.load_with(Ask::Prompt).map_err(String::from),
             #[cfg(all(unix, not(target_os = "macos")))]
             Store::Libsecret { tool, account } => {
                 let out = std::process::Command::new(tool)
@@ -98,6 +174,30 @@ impl Store {
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
                 Err(e) => Err(format!("could not read {}: {e}", p.display())),
             },
+        }
+    }
+
+    /// Reads the secret. With [`Ask::Never`] a Mac turns off Keychain prompts for this process around the one read
+    /// and turns them back on after it; if they can't be turned off, nothing is read. The other stores never ask.
+    pub fn load_with(&self, ask: Ask) -> Result<Option<SecretString>, KeyError> {
+        match self {
+            #[cfg(target_os = "macos")]
+            Store::Native(e) => {
+                use security_framework::os::macos::keychain::SecKeychain;
+                let _quiet = match ask {
+                    Ask::Never => Some(SecKeychain::disable_user_interaction().map_err(|e| {
+                        KeyError::Failed(format!("could not turn off Keychain prompts: {e}"))
+                    })?),
+                    Ask::Prompt => None,
+                };
+                native_result(e.get_password(), ask)
+            }
+            #[cfg(windows)]
+            Store::Native(e) => native_result(e.get_password(), ask),
+            _ => {
+                let _ = ask;
+                self.load().map_err(KeyError::Failed)
+            }
         }
     }
 
@@ -148,6 +248,76 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_keychain_that_would_ask_is_told_apart_from_other_failures() {
+        use security_framework::base::Error as SfError;
+        let platform = |code| {
+            Err(keyring_core::Error::PlatformFailure(Box::new(
+                SfError::from_code(code),
+            )))
+        };
+        for code in [INTERACTION_NOT_ALLOWED, AUTH_FAILED] {
+            assert_eq!(
+                native_result(platform(code), Ask::Never).unwrap_err(),
+                KeyError::NeedsPrompt
+            );
+            // Asked by hand, the same code (a Deny click) is a plain failure with the store's own words.
+            assert!(matches!(
+                native_result(platform(code), Ask::Prompt),
+                Err(KeyError::Failed(_))
+            ));
+        }
+        // errSecNoDefaultKeychain and the like stay plain failures, so the wait after failures still applies.
+        assert!(matches!(
+            native_result(platform(-25307), Ask::Never),
+            Err(KeyError::Failed(_))
+        ));
+        // Any other error in the chain (not one from Security) is a failure too.
+        assert!(matches!(
+            native_result(
+                Err(keyring_core::Error::PlatformFailure("other".into())),
+                Ask::Never
+            ),
+            Err(KeyError::Failed(_))
+        ));
+        assert!(native_result(Err(keyring_core::Error::NoEntry), Ask::Never)
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            native_result(Ok("AGE-SECRET-KEY-1X".into()), Ask::Never)
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "AGE-SECRET-KEY-1X"
+        );
+    }
+
+    #[test]
+    fn the_needs_prompt_text_names_the_fix() {
+        let s = String::from(KeyError::NeedsPrompt);
+        assert!(s.contains("`polycarp sync now`"));
+        assert_eq!(String::from(KeyError::from("x".to_string())), "x");
+    }
+
+    #[test]
+    fn a_file_store_never_asks_either_way() {
+        let dir =
+            std::env::temp_dir().join(format!("polycarp-sync-store-ask-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let s = Store::File(dir.join("identity"));
+        assert_eq!(s.load_with(Ask::Never).unwrap().map(|_| ()), None);
+        fs::write(dir.join("identity"), "AGE-SECRET-KEY-1F").unwrap();
+        for ask in [Ask::Never, Ask::Prompt] {
+            assert_eq!(
+                s.load_with(ask).unwrap().unwrap().expose_secret(),
+                "AGE-SECRET-KEY-1F"
+            );
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_key_in_the_file_is_used_whatever_store_the_system_has() {
