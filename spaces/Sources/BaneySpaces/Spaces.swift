@@ -1276,15 +1276,13 @@ final class Spaces {
         // Its title may have changed while it was in back (a tab switch): the switcher and the dock show the new one.
         refreshDetails(of: pid)
         // Asked for by `openWindowHere`: its window is on the way, here.
-        let name = app.localizedName ?? "pid \(pid)"
-        if let o = opening, o.pid == pid, Date() < o.until { return Trace.log("activated \(name): its window opens here") }
+        if let o = opening, o.pid == pid, Date() < o.until { return }
         activatedAt = Date()
         if switching {
             if pid != expectedFront { followPending = true }
-            return Trace.log("activated \(name) mid-switch: \(pid == expectedFront ? "ours" : "looked at after")")
+            return
         }
-        if pid == expectedFront, Date() < settleUntil { return Trace.log("activated \(name): ours, settling") }
-        Trace.log("activated \(name) on \(model.current)")
+        if pid == expectedFront, Date() < settleUntil { return }
         followFocus()
     }
 
@@ -1349,9 +1347,7 @@ final class Spaces {
     /// which may belong to another workspace. Only an app with nothing here takes you to its
     /// workspace.
     private func followFocus() {
-        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else {
-            return Trace.log("followFocus none: front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "none")")
-        }
+        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return }
         // A newly activated app may have just become a regular app: re-read the app list, which
         // forces a scan only if it changed.
         RunningApps.invalidate()
@@ -1362,14 +1358,11 @@ final class Spaces {
             let mine = windows.values.filter { $0.pid == pid }
             ask({ Windows.look(at: pid, windows: mine) }) { [self] look in
                 // A switch that started meanwhile looks again when it's done.
-                if switching { followPending = true; return Trace.log("followFocus waits: a switch started during the look") }
-                guard let w = look.focused.flatMap({ windows[$0] }), let n = model.workspace(of: w.id) else {
-                    return Trace.log("followFocus none: \(app.localizedName ?? "pid \(pid)") has no known focused window")
-                }
+                if switching { followPending = true; return }
+                guard let w = look.focused.flatMap({ windows[$0] }), let n = model.workspace(of: w.id) else { return }
                 followed(w, on: n, pid: pid, look: look)
             } dropped: { [self] in
                 // A switch overtook the look (one `applyScan` queued, say): follow once it's done, as `finish` does.
-                Trace.log("followFocus waits: a switch overtook the look")
                 followPending = true
                 if !switching { followIfPending() }
             }
@@ -1402,11 +1395,7 @@ final class Spaces {
             noteFocus(w.id)
             // An app BaneySpaces hid, opening a window here: macOS unhid all of it, so its windows
             // from other workspaces are in sight too. They go back out of view.
-            if strayed(pid, minimized: minimized) {
-                Trace.log("followFocus here: \(w.appName) on \(n); its other windows go back out of view")
-                return switchTo(model.current, announce: false)
-            }
-            Trace.log("followFocus here: \(w.appName) on \(n)")
+            if strayed(pid, minimized: minimized) { return switchTo(model.current, announce: false) }
             return persist()
         }
         // A window its own app had put away, shown again now: a screenshot tool's result, say. It comes here, and you stay.
@@ -1425,10 +1414,7 @@ final class Spaces {
             noteFocus(w.id)
             return switchTo(model.current, announce: false)
         }
-        if let here = windowHere(of: pid, minimized: minimized) {
-            Trace.log("followFocus stayed: \(w.appName) has a window here")
-            return stay(on: here)
-        }
+        if let here = windowHere(of: pid, minimized: minimized) { return stay(on: here) }
         // When the app in front closes its last window here, quits or hides (a switch hiding it
         // too), macOS hands focus to the next app in line on its own: often one BaneySpaces just
         // put away, parked or hidden. That isn't you picking it: stay here, and an app the
@@ -1463,19 +1449,11 @@ final class Spaces {
         waitOffMain(timeout: Self.newWindowGrace, interval: 0.02, {
             !Windows.standardIDs(of: pid).subtracting(known).isEmpty
         }) { [self] in
-            let front = NSWorkspace.shared.frontmostApplication
-            guard following == ticket, gen == generation, active, !switching, front?.processIdentifier == pid else {
-                return Trace.log("followFocus dropped: \(w.appName) to \(n); front now \(front?.localizedName ?? "none")"
-                                 + (following == ticket ? "" : ", a later activation") + (switching ? ", mid-switch" : "")
-                                 + (gen == generation ? "" : ", a switch ran") + (active ? "" : ", inactive"))
-            }
+            guard following == ticket, gen == generation, active, !switching,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else { return }
             showNewWindow(of: pid, besides: known) { [self] shown in
                 guard !shown else { return Trace.log("followFocus stayed: \(w.appName) opened a window here") }
-                guard following == ticket, active, !switching else {
-                    return Trace.log("followFocus dropped: \(w.appName) to \(n) after its new-window wait"
-                                     + (following == ticket ? "" : ", a later activation") + (switching ? ", mid-switch" : "")
-                                     + (active ? "" : ", inactive"))
-                }
+                guard following == ticket, active, !switching else { return }
                 followAway(w, to: n, pid: pid)
             }
         }
