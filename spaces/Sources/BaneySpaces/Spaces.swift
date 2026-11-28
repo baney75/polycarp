@@ -1349,7 +1349,9 @@ final class Spaces {
     /// which may belong to another workspace. Only an app with nothing here takes you to its
     /// workspace.
     private func followFocus() {
-        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else { return }
+        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != getpid() else {
+            return Trace.log("followFocus none: front is \(NSWorkspace.shared.frontmostApplication?.localizedName ?? "none")")
+        }
         // A newly activated app may have just become a regular app: re-read the app list, which
         // forces a scan only if it changed.
         RunningApps.invalidate()
@@ -1360,13 +1362,14 @@ final class Spaces {
             let mine = windows.values.filter { $0.pid == pid }
             ask({ Windows.look(at: pid, windows: mine) }) { [self] look in
                 // A switch that started meanwhile looks again when it's done.
-                if switching { followPending = true; return }
+                if switching { followPending = true; return Trace.log("followFocus waits: a switch started during the look") }
                 guard let w = look.focused.flatMap({ windows[$0] }), let n = model.workspace(of: w.id) else {
                     return Trace.log("followFocus none: \(app.localizedName ?? "pid \(pid)") has no known focused window")
                 }
                 followed(w, on: n, pid: pid, look: look)
             } dropped: { [self] in
                 // A switch overtook the look (one `applyScan` queued, say): follow once it's done, as `finish` does.
+                Trace.log("followFocus waits: a switch overtook the look")
                 followPending = true
                 if !switching { followIfPending() }
             }
@@ -1463,12 +1466,15 @@ final class Spaces {
             let front = NSWorkspace.shared.frontmostApplication
             guard following == ticket, gen == generation, active, !switching, front?.processIdentifier == pid else {
                 return Trace.log("followFocus dropped: \(w.appName) to \(n); front now \(front?.localizedName ?? "none")"
-                                 + (following == ticket ? "" : ", a later activation") + (switching ? ", mid-switch" : ""))
+                                 + (following == ticket ? "" : ", a later activation") + (switching ? ", mid-switch" : "")
+                                 + (gen == generation ? "" : ", a switch ran") + (active ? "" : ", inactive"))
             }
             showNewWindow(of: pid, besides: known) { [self] shown in
                 guard !shown else { return Trace.log("followFocus stayed: \(w.appName) opened a window here") }
                 guard following == ticket, active, !switching else {
-                    return Trace.log("followFocus dropped: \(w.appName) to \(n) after its new-window wait")
+                    return Trace.log("followFocus dropped: \(w.appName) to \(n) after its new-window wait"
+                                     + (following == ticket ? "" : ", a later activation") + (switching ? ", mid-switch" : "")
+                                     + (active ? "" : ", inactive"))
                 }
                 followAway(w, to: n, pid: pid)
             }
