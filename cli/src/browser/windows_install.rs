@@ -183,7 +183,16 @@ pub fn remove(places: &Places, with_profile: bool) -> Result<String, Refused> {
     if link {
         fs::remove_file(&places.shortcut).map_err(refuse(check, "removing the shortcut"))?;
     }
-    gone(&old).map_err(refuse(check, "removing the program folder"))?;
+    // A browser that just quit can hold its files a moment longer.
+    let mut deleted = gone(&old);
+    for _ in 0..10 {
+        if deleted.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        deleted = gone(&old);
+    }
+    deleted.map_err(refuse(check, "removing the program folder"))?;
     let mine = with_profile && profile.exists();
     if mine {
         fs::remove_dir_all(profile).map_err(refuse(check, "removing the profile"))?;
@@ -389,6 +398,20 @@ mod tests {
         );
         assert!(!p.program.exists() && !p.shortcut.exists() && !p.profile.exists());
         assert!(would_remove(&p).contains(&p.profile.display().to_string()));
+        // A profile that is a link is refused before anything is removed, and what it leads to stays.
+        #[cfg(unix)]
+        {
+            let real = dir.join("elsewhere");
+            fs::create_dir_all(&real).unwrap();
+            fs::write(real.join("keep"), "x").unwrap();
+            fs::create_dir_all(p.profile.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real, &p.profile).unwrap();
+            fs::create_dir_all(&p.program).unwrap();
+            assert_eq!(remove(&p, true).unwrap_err().check, "uninstall");
+            assert!(p.program.is_dir() && real.join("keep").is_file());
+            fs::remove_file(&p.profile).unwrap();
+            fs::remove_dir_all(&p.program).unwrap();
+        }
         // Only an old build a failed install left aside: it is removed and said to be.
         fs::create_dir_all(beside(&p.program, ".old").join("two")).unwrap();
         assert!(remove(&p, false)
