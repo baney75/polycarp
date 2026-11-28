@@ -4,7 +4,10 @@
   nothing from it is changed, run or installed until the `.app` inside passes a strict code signature check, carries the pinned
   Team ID and Gatekeeper accepts it. A check that can't run is a refusal. On Windows the source is a published
   `imputnet/helium-windows` release zip with the sha256 GitHub's listing gives, and every `.exe` and `.dll` in it must be
-  Authenticode-valid from the pinned signer imput LLC; nothing from it is run or installed before that. On Linux the source is a
+  Authenticode-valid from the pinned signer imput LLC; nothing from it is run or installed before that. Its dry run then builds
+  Polycarp Browser from the checked copy in a work folder (parts from `POLYCARP_BROWSER_RESOURCES`, made by
+  `scripts/build-parts-windows.sh`): `helium_update_helper.exe` is removed and must be there to remove, `initial_preferences`
+  beside `chrome.exe` turns Helium's update fetching off, the `locales` text packs are renamed, and no program or DLL is edited. On Linux the source is a
   published `imputnet/helium-linux` release tarball with the sha256 GitHub's listing gives, and its detached OpenPGP signature
   must be valid from the pinned key `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`; nothing from it is unpacked, run or
   installed before that.

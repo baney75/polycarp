@@ -1,6 +1,7 @@
 //! Polycarp Browser on Windows, step one: `polycarp browser install --dry-run` downloads Helium's newest Windows
-//! release, checks its sha256 and the signature on every program in it, and throws it away. Nothing is installed and
-//! nothing from the release is run. The rules are in `../browser/AGENTS.md`.
+//! release, checks its sha256 and the signature on every program in it, builds Polycarp Browser from it in a work
+//! folder, and throws it all away. Nothing is installed and nothing from the release is run. The rules are in
+//! `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -17,6 +18,16 @@ mod listing;
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/download.rs"]
 mod download;
+
+// The text packs and their renaming, shared with the Mac, and the folder build, shared with Linux later.
+#[allow(clippy::duplicate_mod)]
+#[path = "browser/pak.rs"]
+mod pak;
+#[path = "browser/portable.rs"]
+mod portable;
+#[allow(clippy::duplicate_mod)]
+#[path = "browser/rename.rs"]
+mod rename;
 
 use download::{fetch, is_link, print, refuse, Refused};
 use listing::Release;
@@ -57,14 +68,23 @@ pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> 
         eprintln!("polycarp browser: no home folder");
         return Some(1);
     };
+    let resources = std::env::var_os(portable::RESOURCES);
     #[cfg(windows)]
-    let done = dry_run(&cache.join("browser"));
+    let done = with_parts(resources, |parts| dry_run(&cache.join("browser"), &parts));
     #[cfg(not(windows))]
-    let done = Err(Refused::new(
-        "system",
-        format!("{} is not Windows", cache.display()),
-    ));
+    let done = with_parts(resources, |_| {
+        let why = format!("{} is not Windows", cache.display());
+        Err(Refused::new("system", why))
+    });
     Some(print(done))
+}
+
+/// Runs `go` only once the parts are all there, so a refusal for them comes before any download.
+fn with_parts(
+    resources: Option<OsString>,
+    go: impl FnOnce(portable::Parts) -> Result<String, Refused>,
+) -> Result<String, Refused> {
+    go(portable::parts(resources)?)
 }
 
 /// Helium's name for this processor.
@@ -359,21 +379,38 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         Ok((release, arch, zip))
     }
 
-    /// Downloads and checks the newest release in `dir`, then throws the unpacked copy away.
-    pub fn dry_run(dir: &Path) -> Result<String, Refused> {
+    /// Downloads and checks the newest release in `dir`, hands the checked folder and the work folder to `then`, and
+    /// throws the work folder away whatever happened. The version and the number of programs checked.
+    pub fn checked(
+        dir: &Path,
+        then: impl FnOnce(&Path, &Path) -> Result<(), Refused>,
+    ) -> Result<(String, usize), Refused> {
         let (release, arch, zip) = download(dir)?;
         let work = dir.join("work");
         if fs::symlink_metadata(&work).is_ok() {
             fs::remove_dir_all(&work).map_err(refuse("work folder", "clearing it"))?;
         }
         fs::create_dir(&work).map_err(refuse("work folder", "making it"))?;
-        let checked = unpack(&zip, &work, &release, arch).and_then(|folder| signatures(&folder));
+        let done = unpack(&zip, &work, &release, arch).and_then(|folder| {
+            let n = signatures(&folder)?;
+            then(&folder, &work).map(|()| n)
+        });
         let _ = fs::remove_dir_all(&work);
-        let n = checked?;
+        let n = done?;
+        if work.exists() {
+            return Err(Refused::new("work folder", "it could not be deleted"));
+        }
+        Ok((release.version, n))
+    }
+
+    /// Builds Polycarp Browser from the checked release inside the work folder, which then goes.
+    pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
+        let (version, n) = checked(dir, |folder, work| {
+            portable::build(folder, &work.join("build"), parts).map(drop)
+        })?;
         Ok(format!(
-            "Helium {} was downloaded and passed its checks: the sha256 GitHub lists, and imput LLC's signature \
-             on all {n} programs in it. Nothing was installed.",
-            release.version
+            "Helium {version} was downloaded and passed its checks: the sha256 GitHub lists, and imput LLC's \
+             signature on all {n} programs in it. Polycarp Browser was built from it. Nothing was installed."
         ))
     }
 }
@@ -637,23 +674,49 @@ mod tests {
         assert_eq!(run_(&["install", "--dry-run"], None), Some(1));
     }
 
-    /// The real release, downloaded into a temp cache: it passes, and one changed byte in chrome.exe is refused.
+    #[test]
+    fn parts_are_checked_before_anything_is_downloaded() {
+        let dir = temp("seam");
+        for resources in [
+            None,
+            Some("parts".into()),
+            Some(dir.clone().into_os_string()),
+        ] {
+            let e = with_parts(resources, |_| panic!("it went on without its parts")).unwrap_err();
+            assert_eq!(e.check, "parts");
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The real release, downloaded into a temp cache: it passes and is built from the parts CI made, and one changed
+    /// byte in chrome.exe is refused.
     #[cfg(windows)]
     #[test]
     #[ignore]
     fn the_real_release_passes_and_a_changed_program_is_refused() {
         let cache = temp("live");
         let dir = cache.join("browser");
-        let line = system::dry_run(&dir).unwrap();
-        let n = line
-            .split("on all ")
-            .nth(1)
-            .and_then(|r| r.split(' ').next());
-        assert!(
-            n.and_then(|n| n.parse::<usize>().ok())
-                .is_some_and(|n| n >= 16),
-            "{line}"
-        );
+        let parts = portable::parts(std::env::var_os(portable::RESOURCES)).unwrap();
+        let (_, n) = system::checked(&dir, |folder, work| {
+            let launcher = portable::build(folder, &work.join("build"), &parts)?;
+            let build = launcher.parent().unwrap();
+            assert!(
+                launcher.ends_with("Polycarp Browser.exe"),
+                "{}",
+                launcher.display()
+            );
+            assert!(!build.join("helium_update_helper.exe").exists());
+            assert_eq!(
+                fs::read_to_string(build.join("initial_preferences")).unwrap(),
+                portable::PREFS
+            );
+            let english = fs::read(build.join("locales/en-US.pak")).unwrap();
+            assert!(english.windows(16).any(|w| w == b"Polycarp Browser"));
+            assert!(build.join("polycarp/extension/builtin.txt").is_file());
+            Ok(())
+        })
+        .unwrap();
+        assert!(n >= 16, "{n} programs");
         assert!(!dir.join("work").exists(), "the unpacked copy was kept");
         let (release, arch, zip) = system::download(&dir).unwrap();
         let (work, changed) = (cache.join("work"), cache.join("changed"));
