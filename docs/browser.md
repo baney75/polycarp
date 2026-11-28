@@ -122,8 +122,7 @@ session, passes `--password-store=basic`, so it never touches a desktop keyring,
 Chromium's own sandbox, which needs unprivileged user namespaces (Ubuntu 24.04's AppArmor restricts them; Polycarp never turns the
 sandbox off). On Ubuntu 23.10 and later AppArmor does this by default
 (`kernel.apparmor_restrict_unprivileged_userns=1`), so the dry run refuses with check `sandbox` before it downloads anything, and
-says so when the browser reports no usable sandbox; an AppArmor profile for the browser or
-`sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` lets it start. The dumped page must be Polycarp's new tab within 180 s, or it refuses with check `start`. Whatever still runs from
+says so when the browser reports no usable sandbox. The dumped page must be Polycarp's new tab within 180 s, or it refuses with check `start`. Whatever still runs from
 the build is then stopped, and it deletes it all, the keyring too. Nothing is installed. The build needs Polycarp's parts: run `browser/scripts/build-parts-linux.sh DEST` from a checkout and set
 `POLYCARP_BROWSER_RESOURCES` to `DEST`; without them it stops before downloading. Every other `polycarp browser` command on
 Linux says that only `install --dry-run` works there so far. Installing the browser on Linux comes later.

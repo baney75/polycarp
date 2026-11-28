@@ -232,8 +232,8 @@ fn no_sandbox() -> Refused {
     Refused::new(
         "sandbox",
         "Ubuntu's AppArmor stops unprivileged user namespaces, which Chromium's sandbox needs, so Polycarp Browser \
-         can't start here. Polycarp never turns the sandbox off. An AppArmor profile for the browser or `sudo sysctl \
-         kernel.apparmor_restrict_unprivileged_userns=0` lets it start.",
+         can't start here. Polycarp never turns the sandbox off, so on this system the dry run can't check the \
+         start",
     )
 }
 
@@ -296,7 +296,11 @@ fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::sync::mpsc:
 /// pipes are read for at most the time left plus 5 s.
 #[cfg(unix)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
-fn run_for(start: &portable::Start, limit: std::time::Duration) -> Result<Ran, Refused> {
+fn run_for(
+    start: &portable::Start,
+    build: &Path,
+    limit: std::time::Duration,
+) -> Result<Ran, Refused> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     let mut command = Command::new(&start.program);
@@ -336,7 +340,7 @@ fn run_for(start: &portable::Start, limit: std::time::Duration) -> Result<Ran, R
     }
     let _ = child.kill();
     let _ = child.wait();
-    stop_inside(start.program.parent().unwrap_or(&start.program));
+    stop_inside(build);
     if let Some(e) = failed {
         return Err(refuse("start", "waiting for it")(e));
     }
@@ -359,12 +363,25 @@ fn run_for(start: &portable::Start, limit: std::time::Duration) -> Result<Ran, R
 fn stop_inside(folder: &Path) {
     // `/proc/<pid>/exe` gives the real path, so the folder is compared by its real path too.
     let real = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    if !sweepable(&real) {
+        return;
+    }
     for pid in inside_build(Path::new("/proc"), &real) {
         // SAFETY: kill(2) takes plain integers and touches no memory of ours.
         unsafe {
             libc::kill(pid, libc::SIGKILL);
         }
     }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Only a work folder's own `build` is ever swept, never a system folder a program happens to sit in.
+fn sweepable(real: &Path) -> bool {
+    real.file_name().is_some_and(|n| n == "build")
+        && real
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "work")
 }
 
 /// The processes under `proc` (Linux's `/proc`) whose program, `<pid>/exe`, resolves inside `build`. A process
@@ -685,7 +702,7 @@ mod system {
         let home = work.join("home");
         let start = portable::start(&launcher, &home, parts.layout);
         portable::make_home(&start, &home)?;
-        let ran = run_for(&start, LIMIT)?;
+        let ran = run_for(&start, &work.join("build"), LIMIT)?;
         judge_start(&ran, LIMIT)
     }
 
@@ -1245,10 +1262,13 @@ mod tests {
                 assert!(e
                     .why
                     .starts_with("Ubuntu's AppArmor stops unprivileged user namespaces"));
-                assert!(e.why.contains("Polycarp never turns the sandbox off."));
-                assert!(e
-                    .why
-                    .contains("`sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`"));
+                assert!(e.why.contains("Polycarp never turns the sandbox off"));
+                // It names no profile or system-wide switch to change: neither is Polycarp's to ask for.
+                assert!(
+                    !e.why.contains("sysctl") && !e.why.contains("profile"),
+                    "{}",
+                    e.why
+                );
             }
         }
         fs::remove_dir_all(&dir).unwrap();
@@ -1300,13 +1320,34 @@ mod tests {
         (dir, start)
     }
 
+    /// The sweep after a start takes only a work folder's `build`: a start whose program is `/bin/sh` must never
+    /// sweep `/usr/bin`.
+    #[test]
+    fn only_a_work_folders_build_is_swept() {
+        for (path, ok) in [
+            ("/usr/bin", false),
+            ("/bin", false),
+            ("/", false),
+            ("/tmp/x/build", false),
+            ("/tmp/x/work", false),
+            ("/tmp/x/work/build", true),
+        ] {
+            assert_eq!(sweepable(Path::new(path)), ok, "{path}");
+        }
+    }
+
     /// A helper left behind holding stdout ends with the start's process group, so the pipes close at once.
     #[cfg(unix)]
     #[test]
     fn a_helper_holding_the_pipes_does_not_hold_the_start() {
         let (dir, start) = fake("hold", "sleep 60 &\necho shown\necho said >&2\nexit 0\n");
         let began = std::time::Instant::now();
-        let ran = run_for(&start, std::time::Duration::from_secs(20)).unwrap();
+        let ran = run_for(
+            &start,
+            &dir.join("work/build"),
+            std::time::Duration::from_secs(20),
+        )
+        .unwrap();
         assert!(
             began.elapsed() < std::time::Duration::from_secs(5),
             "{:?}",
@@ -1326,7 +1367,7 @@ mod tests {
         let (dir, start) = fake("slow", "echo waiting >&2\nsleep 60\n");
         let began = std::time::Instant::now();
         let limit = std::time::Duration::from_secs(1);
-        let ran = run_for(&start, limit).unwrap();
+        let ran = run_for(&start, &dir.join("work/build"), limit).unwrap();
         assert!(
             began.elapsed() < std::time::Duration::from_secs(8),
             "{:?}",
