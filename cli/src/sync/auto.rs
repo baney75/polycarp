@@ -472,4 +472,44 @@ mod tests {
         assert!(d.join("polycarp-sync.log.1").exists());
         let _ = fs::remove_dir_all(&d);
     }
+
+    #[test]
+    fn install_app_reloads_every_polycarp_launch_agent_and_no_retired_ones() {
+        let script = fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../spaces/scripts/install-app.sh"),
+        )
+        .unwrap();
+        let line = script
+            .lines()
+            .find(|l| l.starts_with("POLYCARP_AGENT_LABELS="))
+            .expect("install-app.sh defines POLYCARP_AGENT_LABELS");
+        let labels: Vec<&str> = line
+            .trim_start_matches("POLYCARP_AGENT_LABELS=")
+            .trim_matches('"')
+            .split_whitespace()
+            .collect();
+        let expected = [
+            LABEL,
+            crate::files::service::LABEL,
+            crate::agent::service::Unit::Gateway.label(),
+            crate::agent::service::Unit::Tunnel.label(),
+        ];
+        for label in expected {
+            assert!(
+                labels.contains(&label),
+                "install-app.sh is missing LaunchAgent label {label}: {labels:?}"
+            );
+        }
+        assert_eq!(
+            labels.len(),
+            expected.len(),
+            "unexpected labels: {labels:?}"
+        );
+        for retired in crate::retire::LABELS {
+            assert!(
+                !labels.contains(&retired),
+                "install-app.sh must not reload retired label {retired}"
+            );
+        }
+    }
 }

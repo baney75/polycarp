@@ -32,7 +32,84 @@ if [ "${1:-}" = "--in-place" ]; then IN_PLACE=1; shift; fi
 [ $# -eq 1 ] && [ -d "$1" ] || { echo "usage: install-app.sh [--in-place] path/to/$PRODUCT_NAME.app" >&2; exit 1; }
 APP=$(cd "$1" && pwd)
 TEST="${BANEYSPACES_DEST_DIR:-}"
-LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+LSREGISTER="${POLYCARP_LSREGISTER:-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister}"
+LAUNCHCTL="${POLYCARP_LAUNCHCTL:-/bin/launchctl}"
+LAUNCHD_DOMAIN="gui/$(id -u)"
+# Polycarp's own CLI LaunchAgents (cli/src/sync/auto.rs, cli/src/files/service.rs, cli/src/agent/service.rs).
+# Each runs ~/.local/bin/polycarp (which links into Polycarp.app/Contents/Resources/bin/polycarp).
+# Leaving a LaunchAgent loaded while replacing the signed app bundle underneath it leaves launchd
+# holding stale launch-constraint / CDHash state for the prior build (local signing identity, no
+# TeamIdentifier), so the first post-install launchd spawn is killed with SIGKILL / CODESIGNING 4
+# (Launch Constraint Violation). Booting out loaded agents before the swap and re-bootstrapping them
+# after registers the new binary cleanly before its first launchd run.
+POLYCARP_AGENT_LABELS="com.polycarp.sync com.polycarp.files com.polycarp.agent com.polycarp.agent-tunnel"
+RELOAD_AGENTS=""
+AGENTS_RESTORED=0
+STAGE=""
+
+plist_runs_polycarp() {
+  local plist=$1
+  grep -qF "$HOME/.local/bin/polycarp" "$plist" 2>/dev/null \
+    || grep -qF "/.local/bin/polycarp</string>" "$plist" 2>/dev/null \
+    || grep -qF "$PRODUCT_NAME.app/Contents/Resources/bin/polycarp" "$plist" 2>/dev/null
+}
+
+bootout_polycarp_agents() {
+  [ -x "$LAUNCHCTL" ] || return 0
+  local label plist
+  for label in $POLYCARP_AGENT_LABELS; do
+    plist="$HOME/Library/LaunchAgents/$label.plist"
+    [ -f "$plist" ] || continue
+    plist_runs_polycarp "$plist" || continue
+    "$LAUNCHCTL" print "$LAUNCHD_DOMAIN/$label" >/dev/null 2>&1 || continue
+    RELOAD_AGENTS="${RELOAD_AGENTS:+$RELOAD_AGENTS }$label"
+    "$LAUNCHCTL" bootout "$LAUNCHD_DOMAIN/$label" >/dev/null 2>&1 || true
+  done
+}
+
+bootstrap_polycarp_agents() {
+  [ "$AGENTS_RESTORED" = 0 ] || return 0
+  AGENTS_RESTORED=1
+  [ -n "$RELOAD_AGENTS" ] || return 0
+  [ -x "$LAUNCHCTL" ] || return 0
+  local label plist loaded n
+  for label in $RELOAD_AGENTS; do
+    plist="$HOME/Library/LaunchAgents/$label.plist"
+    [ -f "$plist" ] || continue
+    loaded=0
+    # launchd can still be tearing the booted-out job down for a moment, so try a few times.
+    for n in 1 2 3 4 5; do
+      [ "$n" = 1 ] || sleep "${POLYCARP_LAUNCHCTL_RETRY_SLEEP:-0.5}"
+      if "$LAUNCHCTL" bootstrap "$LAUNCHD_DOMAIN" "$plist" >/dev/null 2>&1; then
+        loaded=1
+        break
+      fi
+    done
+    if [ "$loaded" = 0 ]; then
+      echo "warning: could not reload launch agent $label; run: launchctl bootstrap $LAUNCHD_DOMAIN \"$plist\"" >&2
+    fi
+  done
+}
+
+cleanup_install() {
+  if [ -n "$STAGE" ] && [ -d "$STAGE" ]; then
+    rm -rf "$STAGE" 2>/dev/null || true
+  fi
+  # If the install stopped after booting out active agents, bring them back against whatever copy is on disk.
+  if [ "$AGENTS_RESTORED" = 0 ] && [ -n "$RELOAD_AGENTS" ]; then
+    bootstrap_polycarp_agents || true
+  fi
+}
+trap cleanup_install EXIT
+
+# Atomically replace a symlink so readers never observe a missing link during an update.
+link_atomic() {
+  local target=$1 dest=$2 tmp
+  tmp=$(mktemp "$(dirname "$dest")/.$(basename "$dest").link.XXXXXX")
+  rm -f "$tmp"
+  ln -s "$target" "$tmp"
+  mv -f "$tmp" "$dest"
+}
 
 if [ "$IN_PLACE" = 1 ]; then
   DEST="$APP"
@@ -125,9 +202,28 @@ if [ -z "$TEST" ]; then
 fi
 
 if [ "$IN_PLACE" = 0 ]; then
-  rm -rf "$DEST"
+  [ -n "$TEST" ] || bootout_polycarp_agents
   mkdir -p "$DEST_DIR"
-  cp -R "$APP" "$DEST"
+  STAGE=$(mktemp -d "$DEST_DIR/.$PRODUCT_NAME.install.XXXXXX")
+  STAGED="$STAGE/$PRODUCT_NAME.app"
+  # Stage into a sibling folder while $DEST still exists so APFS allocates fresh inodes for every
+  # signed binary, $DEST stays intact if the copy fails, and ditto preserves signatures and xattrs.
+  if command -v ditto >/dev/null 2>&1; then
+    ditto "$APP" "$STAGED"
+  else
+    cp -R "$APP" "$STAGED"
+  fi
+  OLD=""
+  if [ -e "$DEST" ]; then
+    OLD="$STAGE/old.app"
+    mv "$DEST" "$OLD"
+  fi
+  if ! mv "$STAGED" "$DEST"; then
+    [ -n "$OLD" ] && [ -e "$OLD" ] && mv "$OLD" "$DEST" || true
+    exit 1
+  fi
+  rm -rf "$STAGE"
+  STAGE=""
   if [ -n "$TEST" ]; then
     echo "installed $DEST (test mode: nothing else changed)"
     exit 0
@@ -147,18 +243,24 @@ if [ -z "$TEST" ]; then
   fi
 fi
 mkdir -p "$HOME/.local/bin"
+if [ "$IN_PLACE" = 1 ] && [ -z "$TEST" ]; then
+  bootout_polycarp_agents
+fi
 # polycarp-spaces is the command; baneyspaces and ghostdeck stay as names for it, because agents and
 # hooks on other machines call them.
 for name in $CLI_NAME $CLI_ALIASES; do
-  ln -sf "$DEST/Contents/Resources/bin/$CLI_NAME" "$HOME/.local/bin/$name"
+  link_atomic "$DEST/Contents/Resources/bin/$CLI_NAME" "$HOME/.local/bin/$name"
 done
 # The `polycarp` command comes with the app.
-ln -sf "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
+link_atomic "$DEST/Contents/Resources/bin/polycarp" "$HOME/.local/bin/polycarp"
 # The agent browser extension was removed. An older Polycarp left launchd jobs (remote access, hub, link, tunnel) running its
 # helper, which this app no longer carries: they are booted out and their plists removed. A job whose program isn't
 # Polycarp's is left alone. Never in test mode.
 if [ -z "$TEST" ] && [ -x "$DEST/Contents/Resources/bin/polycarp" ]; then
   "$DEST/Contents/Resources/bin/polycarp" update --retire-old-browser </dev/null || true
+fi
+if [ -z "$TEST" ]; then
+  bootstrap_polycarp_agents
 fi
 
 # True when $1 is a link to the old browser helper inside some Polycarp.app: one an older install made.
