@@ -1,5 +1,5 @@
 //! Polycarp Browser as a folder beside Helium's program, the way Windows (and Linux, later) lay it out: what is built
-//! from a checked release. Pure file work; nothing here runs a program.
+//! from a checked release, and the headless start that proves it. Pure file work and data; the caller runs programs.
 
 use std::ffi::OsString;
 use std::fs;
@@ -19,9 +19,11 @@ const UPDATER: &str = "helium_update_helper.exe";
 /// patches/helium/core/add-updater-preference.patch).
 pub const PREFS: &str =
     r#"{"helium":{"completed_onboarding":true,"services":{"browser_updates":false}}}"#;
+/// Something only Polycarp's new tab page says, the same as the Mac's.
+pub const PAGE: &str = "Search or type an address";
 
 /// What the build is made from, out of `POLYCARP_BROWSER_RESOURCES`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Parts {
     pub changes: PathBuf,
     pub launcher: PathBuf,
@@ -148,6 +150,71 @@ fn copy(from: &Path, to: &Path) -> Result<(), Refused> {
         }
     }
     Ok(())
+}
+
+/// One run of the build with no window, its home, profile and every per-user folder inside `home`.
+pub struct Start {
+    pub program: PathBuf,
+    pub args: Vec<OsString>,
+    pub env: Vec<(&'static str, PathBuf)>,
+    /// Taken out of the environment it inherits.
+    pub unset: [&'static str; 1],
+}
+
+pub fn start(launcher: &Path, home: &Path) -> Start {
+    let fixed = "--headless --no-first-run --disable-background-networking --host-resolver-rules=MAP@*@~NOTFOUND \
+                 --allow-chrome-scheme-url --timeout=20000 --virtual-time-budget=4000 --dump-dom";
+    let mut args: Vec<OsString> = fixed
+        .split_whitespace()
+        .map(|a| a.replace('@', " ").into())
+        .collect();
+    let mut profile = OsString::from("--user-data-dir=");
+    profile.push(home.join("profile"));
+    args.extend([profile, "chrome://newtab".into()]);
+    let local = home.join("AppData").join("Local");
+    let env = vec![
+        ("LOCALAPPDATA", local.clone()),
+        ("APPDATA", home.join("AppData").join("Roaming")),
+        ("USERPROFILE", home.to_path_buf()),
+        ("TEMP", local.join("Temp")),
+        ("TMP", local.join("Temp")),
+    ];
+    Start {
+        program: launcher.to_path_buf(),
+        args,
+        env,
+        // Polycarp's own GitHub token never reaches the browser.
+        unset: [super::download::TOKEN],
+    }
+}
+
+/// Makes `home` fresh, with each folder `start` names and a profile that has done Helium's welcome.
+pub fn make_home(start: &Start, home: &Path) -> Result<(), Refused> {
+    let _ = fs::remove_dir_all(home);
+    let first = home.join("profile").join("Default");
+    let folders = start
+        .env
+        .iter()
+        .map(|(_, p)| p.as_path())
+        .chain([first.as_path()]);
+    for folder in folders {
+        fs::create_dir_all(folder).map_err(refuse("start", "making its home"))?;
+    }
+    fs::write(first.join("Preferences"), PREFS).map_err(refuse("start", "making its profile"))
+}
+
+/// By the page it shows, not its exit code.
+pub fn judge(out: &str, err: &str) -> Result<(), Refused> {
+    if out.contains(PAGE) {
+        return Ok(());
+    }
+    let why = if out.trim().is_empty() {
+        let last = err.lines().map(str::trim).rfind(|l| !l.is_empty());
+        format!("it showed nothing ({})", last.unwrap_or("no output"))
+    } else {
+        "its new tab is not Polycarp's".into()
+    };
+    Err(Refused::new("start", why))
 }
 
 #[cfg(test)]
@@ -315,5 +382,69 @@ pub mod tests {
             assert_eq!(e.check, *check, "case {i}: {}", e.why);
             fs::remove_dir_all(&dir).unwrap();
         }
+    }
+
+    #[test]
+    fn the_start_must_show_polycarps_new_tab() {
+        assert_eq!(judge(&format!("<html>{PAGE}</html>"), ""), Ok(()));
+        let other = judge("<title>New Tab</title>", "").unwrap_err();
+        assert_eq!(
+            (other.check, other.why.as_str()),
+            ("start", "its new tab is not Polycarp's")
+        );
+        let empty = judge(" \n", "first\nERROR: no GPU\n\n").unwrap_err();
+        assert_eq!(
+            (empty.check, empty.why.as_str()),
+            ("start", "it showed nothing (ERROR: no GPU)")
+        );
+        assert_eq!(
+            judge("", "").unwrap_err().why,
+            "it showed nothing (no output)"
+        );
+    }
+
+    /// No window, no network, nothing of the person's: every folder it may write is inside its own home.
+    #[test]
+    fn the_start_runs_away_from_everything_of_the_persons() {
+        let work = temp("start");
+        let home = work.join("home");
+        let s = start(&work.join("build/Polycarp Browser.exe"), &home);
+        assert_eq!(s.program, work.join("build/Polycarp Browser.exe"));
+        let args: Vec<String> = s
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let profile = format!("--user-data-dir={}", home.join("profile").display());
+        let want = [
+            "--headless",
+            "--no-first-run",
+            "--disable-background-networking",
+            "--host-resolver-rules=MAP * ~NOTFOUND",
+            "--allow-chrome-scheme-url",
+            "--timeout=20000",
+            "--virtual-time-budget=4000",
+            "--dump-dom",
+            &profile,
+            "chrome://newtab",
+        ];
+        assert_eq!(args, want);
+        assert!(!args
+            .iter()
+            .any(|a| a.contains("remote-debugging") || a.contains("mock-keychain")));
+        let names: Vec<&str> = s.env.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names,
+            ["LOCALAPPDATA", "APPDATA", "USERPROFILE", "TEMP", "TMP"]
+        );
+        assert!(s.env.iter().all(|(_, p)| p.starts_with(&home)));
+        assert_eq!(s.unset, ["POLYCARP_GITHUB_TOKEN"]);
+        make_home(&s, &home).unwrap();
+        assert!(s.env.iter().all(|(_, p)| p.is_dir()));
+        assert_eq!(
+            fs::read_to_string(home.join("profile/Default/Preferences")).unwrap(),
+            PREFS
+        );
+        fs::remove_dir_all(&work).unwrap();
     }
 }
