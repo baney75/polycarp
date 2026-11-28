@@ -931,7 +931,8 @@ final class Spaces {
     /// `takeFocus: false` rearranges windows without touching focus, for moves made from the
     /// viewer while it holds the keyboard. `announce` flashes the workspace HUD, only when
     /// `showSwitchHUD` is on (off by default, `SwitchHUDPolicy`).
-    func switchTo(_ n: Int, takeFocus moveFocus: Bool = true, announce: Bool = true) {
+    func switchTo(_ n: Int, takeFocus: Bool = true, announce: Bool = true) {
+        var moveFocus = takeFocus
         if active, n == Workspaces.scratchpad { return showScratchpad() }
         guard active, Workspaces.range.contains(n) else { return }
         onSwitchAsked(ProcessInfo.processInfo.systemUptime, n)
@@ -940,6 +941,17 @@ final class Spaces {
             if case .switchTo = queued.last { queued.removeLast() }
             queued.append(.switchTo(n: n, focus: moveFocus, announce: announce))
             return
+        }
+        // R-F5: applying this workspace again leaves alone an app you just brought forward with nothing here (a
+        // browser a link opened): it is followed once the switch is done, instead of focus going back behind it.
+        if moveFocus, n == model.current, let front = NSWorkspace.shared.frontmostApplication,
+           FocusKeep.keepsFront(reapply: true,
+                                frontIsOurs: front.processIdentifier == getpid() || front.processIdentifier == expectedFront,
+                                sinceActivation: Date().timeIntervalSince(activatedAt),
+                                frontHasWindowHere: model.windows(on: n).contains { windows[$0]?.pid == front.processIdentifier }) {
+            Trace.log("switch to \(n) keeps focus: \(front.localizedName ?? "pid \(front.processIdentifier)") just came forward")
+            moveFocus = false
+            followPending = true
         }
         // The HUD is drawn after the switch is under way, never in front of it, from the windows
         // the switch's own scan found.

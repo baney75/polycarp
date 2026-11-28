@@ -124,6 +124,11 @@ the workspace you are on (a known browser or the default browser) takes you to i
 no wait for a new window here. A browser set to open links in a new window shows it on that workspace. One ⌘Tab then
 picks the window you left. Other platforms keep R-F2 until they implement this rule.
 
+### R-F5 Applying a workspace again keeps an app you just brought forward (macOS)
+A switch that applies the workspace you are on again (a rescan, a window coming back) within 1 s of an app coming
+forward does not move focus when that app has no window here and Polycarp did not bring it forward. The app is
+followed once the switch is done (R-F4), so a link clicked in another app never lands you back where you clicked.
+
 ## The agent workspace
 
 ### R-A1 Agents never take your screen
