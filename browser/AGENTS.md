@@ -21,4 +21,6 @@
   `spaces/spec/browser.md` R-B20), does that under Local Studio's own rules: it reaches only the helper the person installed for Helium, with that helper's own approvals, and Polycarp grants it no scope. The remote debugging port is never opened in a person's browser.
 - The label `com.polycarp.browser` and `~/.config/polycarp/browser/` belong to the retired helper and are never used. This browser is
   `com.baney.polycarp.browser`, its data folder `Polycarp/Browser` in Application Support.
+  On Windows its profile is `%LOCALAPPDATA%\Polycarp\Browser` and on Linux `$XDG_CONFIG_HOME/Polycarp/Browser` (default
+  `~/.config/Polycarp/Browser`), and the launcher passes it, so Helium's own profile is never used.
 - Tests use throwaway profiles and homes, never a real browser's.

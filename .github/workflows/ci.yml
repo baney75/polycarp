@@ -92,8 +92,8 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo fmt --check
       # Polycarp Browser's launcher, a program of its own (GPL).
-      - if: runner.os == 'macOS'
-        working-directory: browser/launcher
+      - working-directory: browser/launcher
+        shell: bash
         run: cargo test --locked && cargo clippy --locked --all-targets -- -D warnings && cargo fmt --check
 
   browser-sync:
