@@ -416,6 +416,22 @@ fn stop_inside(folder: &Path) {
     }
 }
 
+/// The longest path a Unix socket can have; the browser makes its own under its `TMPDIR`.
+const SOCKET_ROOM: usize = 107;
+const SOCKET: &str = ".org.chromium.Chromium.XXXXXX/SingletonSocket";
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// The folder that holds a start's home: in `base`, named by this process and a count.
+fn start_home(base: &Path, pid: u32, n: u128) -> PathBuf {
+    base.join(format!("polycarp-start-{pid}-{n}"))
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Whether the socket the browser makes under `home`'s `TMPDIR` fits a socket's path.
+fn socket_fits(home: &Path) -> bool {
+    home.join("tmp").join(SOCKET).as_os_str().len() <= SOCKET_ROOM
+}
+
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 /// Only a work folder's own `build` is ever swept, never a system folder a program happens to sit in.
 fn sweepable(real: &Path) -> bool {
@@ -788,11 +804,40 @@ mod system {
             ..parts.clone()
         };
         let launcher = built(folder, work, &parts)?;
-        let home = work.join("home");
+        // Its home is a private folder of its own under `/tmp`, so the socket the browser makes there fits.
+        let private = start_folder(Path::new("/tmp"))?;
+        let home = private.join("h");
         let start = portable::start(&launcher, &home, parts.layout);
-        portable::make_home(&start, &home)?;
-        let ran = run_for(&start, &work.join("build"), LIMIT)?;
-        judge_start(&ran, LIMIT)
+        let judged = portable::make_home(&start, &home)
+            .and_then(|()| run_for(&start, &work.join("build"), LIMIT))
+            .and_then(|ran| judge_start(&ran, LIMIT));
+        stop_inside(&work.join("build"));
+        for _ in 0..10 {
+            if clear(&private).is_ok() && fs::symlink_metadata(&private).is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        judged
+    }
+
+    /// A new folder in `base` only its owner can open, made here and nowhere it already was.
+    fn start_folder(base: &Path) -> Result<PathBuf, Refused> {
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos());
+        let folder = start_home(base, std::process::id(), n);
+        if !socket_fits(&folder.join("h")) {
+            return Err(Refused::new(
+                "start",
+                format!("{} is too long a path for its socket", base.display()),
+            ));
+        }
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&folder)
+            .map_err(refuse("start", "making its home"))?;
+        Ok(folder)
     }
 
     /// Downloads and checks the newest release in `dir`, hands the checked folder, the work folder and the version
@@ -923,6 +968,18 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The browser's socket fits under the start's own home in `/tmp`, and would not under a work folder beside the
+    /// program, which is where CI's first live install failed.
+    #[test]
+    fn the_start_home_leaves_room_for_the_browser_socket() {
+        let home = start_home(Path::new("/tmp"), u32::MAX, u128::from(u64::MAX)).join("h");
+        assert!(socket_fits(&home), "{}", home.display());
+        let beside = Path::new("/home/runner/work/_temp/xd/polycarp-browser.staging/work/home");
+        assert!(!socket_fits(beside));
+        let tmp = PathBuf::from("/tmp/x").join("tmp").join(SOCKET);
+        assert_eq!(tmp.as_os_str().len(), "/tmp/x/tmp/".len() + 45);
     }
 
     fn hex(bytes: &[u8]) -> String {
