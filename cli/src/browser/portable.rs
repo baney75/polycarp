@@ -21,8 +21,6 @@ pub const PREFS: &str =
     r#"{"helium":{"completed_onboarding":true,"services":{"browser_updates":false}}}"#;
 /// Something only Polycarp's new tab page says, the same as the Mac's.
 pub const PAGE: &str = "Search or type an address";
-/// Polycarp's own GitHub token, which never reaches the browser.
-pub const TOKEN: &str = "POLYCARP_GITHUB_TOKEN";
 
 /// What the build is made from, out of `POLYCARP_BROWSER_RESOURCES`.
 #[derive(Debug)]
@@ -185,7 +183,8 @@ pub fn start(launcher: &Path, home: &Path) -> Start {
         program: launcher.to_path_buf(),
         args,
         env,
-        unset: [TOKEN],
+        // Polycarp's own GitHub token never reaches the browser.
+        unset: [super::download::TOKEN],
     }
 }
 
