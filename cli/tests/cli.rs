@@ -255,13 +255,20 @@ fn browser_says_it_was_removed_runs_nothing_and_exits_2() {
     let help = s.run(&["--help"]);
     assert!(out(&help).contains(BROWSER_LINE), "{}", out(&help));
     assert!(!out(&help).contains("polycarp browser ["), "{}", out(&help));
-    // On a Mac it is Polycarp Browser; on Linux only its release check; elsewhere nothing else it could be.
+    // On a Mac it is Polycarp Browser; on Linux its verb list; elsewhere nothing else it could be.
     let bare = s.run(&["browser"]);
     if cfg!(target_os = "macos") {
         assert!(out(&bare).starts_with("polycarp browser: Polycarp Browser"));
     } else if cfg!(target_os = "linux") {
-        let only = "polycarp browser: only `install --dry-run` works on Linux so far.\n";
-        assert_eq!((code(&bare), out(&bare).as_str()), (0, only));
+        assert_eq!(code(&bare), 0);
+        assert!(
+            out(&bare).starts_with("polycarp browser on Linux:\n"),
+            "{}",
+            out(&bare)
+        );
+        for verb in ["install ", "install --dry-run ", "status [--json] "] {
+            assert!(out(&bare).contains(verb), "{verb}: {}", out(&bare));
+        }
     } else {
         assert_eq!((code(&bare), err(&bare).as_str()), (2, BROWSER_LINE));
     }
