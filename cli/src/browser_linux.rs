@@ -799,27 +799,30 @@ mod system {
     /// to `then`, and throws the work folder away whatever happened. The version and the number of files.
     pub fn checked(
         dir: &Path,
+        work: &Path,
         then: impl FnOnce(&Path, &Path, &str) -> Result<(), Refused>,
     ) -> Result<(String, usize), Refused> {
         // Nothing is downloaded or run when the browser's sandbox could not start here.
         sandbox_allowed(Path::new(USERNS))?;
         let got = download(dir)?;
         signature(dir, &got.tarball, &got.asc)?;
-        let work = dir.join("work");
-        let checked = fresh("work folder", &work).and_then(|()| {
-            let (folder, n) = unpack(&got.tarball, &work, &got.release, got.arch)?;
-            then(&folder, &work, &got.release.version).map(|()| n)
+        if let Some(parent) = work.parent() {
+            fs::create_dir_all(parent).map_err(refuse("work folder", "making its folder"))?;
+        }
+        let checked = fresh("work folder", work).and_then(|()| {
+            let (folder, n) = unpack(&got.tarball, work, &got.release, got.arch)?;
+            then(&folder, work, &got.release.version).map(|()| n)
         });
         stop_inside(&work.join("build"));
         // A browser that just quit can hold its files a moment longer.
         for _ in 0..10 {
-            if clear(&work).is_ok() && fs::symlink_metadata(&work).is_err() {
+            if clear(work).is_ok() && fs::symlink_metadata(work).is_err() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
         let n = checked?;
-        if fs::symlink_metadata(&work).is_ok() {
+        if fs::symlink_metadata(work).is_ok() {
             return Err(Refused::new("work folder", "it could not be deleted"));
         }
         Ok((got.release.version, n))
@@ -828,7 +831,9 @@ mod system {
     /// Builds Polycarp Browser from the checked release and starts it once, all inside the work folder, which then
     /// goes.
     pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
-        let (version, n) = checked(dir, |folder, work, _| started(folder, work, parts))?;
+        let (version, n) = checked(dir, &dir.join("work"), |folder, work, _| {
+            started(folder, work, parts)
+        })?;
         Ok(done_line(&version, n))
     }
 
@@ -841,8 +846,13 @@ mod system {
     ) -> Result<String, Refused> {
         // Set once the new build is in place, so a later failure doesn't read as nothing installed.
         let placed = std::cell::RefCell::new(None);
-        let done = checked(dir, |folder, work, version| {
+        // The build is made beside the program folder, on its filesystem, so the swap's renames never cross one
+        // (a cache on tmpfs would). The download stays in the cache.
+        let staging = installed::beside(&places.program, ".staging");
+        let done = checked(dir, &staging.join("work"), |folder, work, version| {
             started(folder, work, parts)?;
+            // A helper the start left must not run on from the installed folder once the build moves there.
+            stop_inside(&work.join("build"));
             not_running(Path::new("/proc"), &places.program)?;
             let build = work.join("build");
             if parts.local_studio.join("manifest.json").is_file() {
@@ -859,6 +869,8 @@ mod system {
             *placed.borrow_mut() = Some(version.to_string());
             Ok(())
         });
+        // Its work folder is gone by now; the empty folder that held it goes too.
+        let _ = fs::remove_dir(&staging);
         let version = match (done, placed.take()) {
             (Ok((version, _)), _) => version,
             (Err(r), Some(version)) => {
@@ -1717,6 +1729,10 @@ mod tests {
         let parts = portable::parts(env(portable::RESOURCES), &portable::LINUX).unwrap();
         let line = system::install(&data.join("cache"), &parts, &p).unwrap();
         assert!(line.contains("with a menu entry"), "{line}");
+        assert!(
+            !installed::beside(&p.program, ".staging").exists(),
+            "its work folder was left"
+        );
         assert!(p.program.join("polycarp-browser").is_file() && p.shortcut.is_file());
         assert!(p.program.join("polycarp/installed.json").is_file());
         assert!(!p.profile.exists(), "the install made a profile");
