@@ -80,7 +80,7 @@ jobs:
           grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/sign.log"
       # Downloads Helium's real Windows release, checks its signatures and builds Polycarp Browser from it with the parts
       # made here, then refuses a copy with one byte changed. Then installs it into runner temp folders, never the
-      # runner's own, and reads its status.
+      # runner's own, reads its status and uninstalls it.
       - if: runner.os == 'Windows'
         shell: bash
         env:
@@ -91,7 +91,7 @@ jobs:
         run: |
           mkdir -p "$LOCALAPPDATA" "$APPDATA"
           env -u POLYCARP_GITHUB_TOKEN ../browser/scripts/build-parts-windows.sh "$POLYCARP_BROWSER_RESOURCES"
-          cargo test --bin polycarp -- --ignored --exact --test-threads 1 browser_windows::tests::the_real_release_passes_and_a_changed_program_is_refused browser_windows::tests::the_real_release_installs | tee "$RUNNER_TEMP/helium-windows.log"
+          cargo test --bin polycarp -- --ignored --exact --test-threads 1 browser_windows::tests::the_real_release_passes_and_a_changed_program_is_refused browser_windows::tests::the_real_release_installs_and_uninstalls | tee "$RUNNER_TEMP/helium-windows.log"
           grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/helium-windows.log"
       # Downloads Helium's real Linux release and checks its sha256 and OpenPGP signature, then refuses a copy with one byte changed.
       # The workflow's own token goes to the release listing only, so a shared runner's address isn't rate limited.

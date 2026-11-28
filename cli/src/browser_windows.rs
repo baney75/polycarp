@@ -1,7 +1,7 @@
 //! Polycarp Browser on Windows: `polycarp browser install --dry-run` downloads Helium's newest Windows release,
 //! checks its sha256 and the signature on every program in it, builds Polycarp Browser from it in a work folder,
 //! starts that once with no window and a throwaway profile, and throws it all away. `install` does the same, then
-//! puts the build in place with a Start Menu shortcut, and `status` says what is installed. The rules are in
+//! puts the build in place with a Start Menu shortcut; `status` and `uninstall` read and remove it. The rules are in
 //! `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
@@ -29,7 +29,7 @@ mod portable;
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/rename.rs"]
 mod rename;
-// Where it is installed and the file work of installing it; tested on every system.
+// Where it is installed and the file work of installing and removing it; tested on every system.
 #[cfg_attr(not(windows), allow(dead_code))]
 #[path = "browser/windows_install.rs"]
 mod windows_install;
@@ -55,11 +55,14 @@ const VERBS: [&str; 7] = [
     "finish",
 ];
 const ONLY: &str =
-    "polycarp browser: on Windows only `install`, `install --dry-run` and `status [--json]` work so far.";
+    "polycarp browser: on Windows only `install`, `install --dry-run`, `status [--json]` and \
+                    `uninstall [--profile --yes]` work so far.";
 const USAGE: &str = "polycarp browser on Windows:
   install                    build Polycarp Browser from Helium's newest release and install it
   install --dry-run          download, check, build and start it once, then throw it all away
-  status [--json]            say what is installed";
+  status [--json]            say what is installed
+  uninstall                  remove it; your profile stays
+  uninstall --profile --yes  remove it and its profile";
 const NOTHING: &str = " Nothing was installed.";
 
 /// None when these arguments are not a browser command.
@@ -98,16 +101,25 @@ fn answer(
             let missing = matches!(&done, Err(r) if ["shortcut", "stranded"].contains(&r.check));
             say(done, if missing { "" } else { NOTHING })
         }
-        ("status", [] | ["--json"]) => {
+        ("status", []) => say(places(env).map(|p| windows_install::status(&p).text()), ""),
+        ("status", ["--json"]) => {
             let status = places(env).map(|p| windows_install::status(&p));
-            say(
-                status.map(|s| match rest.is_empty() {
-                    true => s.text(),
-                    false => serde_json::to_string_pretty(&s).unwrap_or_default(),
-                }),
-                "",
-            )
+            let json = |s| {
+                serde_json::to_string_pretty(&s).map_err(|e| Refused::new("status", e.to_string()))
+            };
+            say(status.and_then(json), "")
         }
+        ("uninstall", ["--profile"]) => match places(env) {
+            Ok(p) => {
+                println!("{}", windows_install::would_remove(&p));
+                2
+            }
+            Err(e) => say(Err(e), ""),
+        },
+        ("uninstall", [] | ["--profile", "--yes"]) => say(
+            places(env).and_then(|p| system::uninstall(&p, !rest.is_empty())),
+            "",
+        ),
         _ => {
             eprintln!("{ONLY}");
             2
@@ -521,6 +533,12 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         ))
     }
 
+    /// Removes the browser while it is not running.
+    pub fn uninstall(places: &Places, with_profile: bool) -> Result<String, Refused> {
+        not_running(&places.program)?;
+        windows_install::remove(places, with_profile)
+    }
+
     /// A rename, tried again for a while: a browser that just quit can hold its files a moment longer.
     fn moved(from: &Path, to: &Path) -> std::io::Result<()> {
         for _ in 0..10 {
@@ -690,6 +708,10 @@ mod system {
         _: &portable::Parts,
         _: &windows_install::Places,
     ) -> Result<String, Refused> {
+        not_windows()
+    }
+
+    pub fn uninstall(_: &windows_install::Places, _: bool) -> Result<String, Refused> {
         not_windows()
     }
 }
@@ -927,10 +949,12 @@ mod tests {
     }
 
     #[test]
-    fn install_and_status_are_answered_and_nothing_else() {
+    fn install_status_and_uninstall_are_answered_and_nothing_else() {
         #[cfg(target_os = "macos")]
         assert_eq!(VERBS, crate::browser::VERBS);
         let dir = temp("verbs");
+        let p = windows_install::places(&|k| Some(dir.join(k).into_os_string())).unwrap();
+        fs::create_dir_all(&p.profile).unwrap();
         // Only temp folders, and no parts, so `install` stops before any download.
         let env = |k: &str| (k != portable::RESOURCES).then(|| dir.join(k).into_os_string());
         let run_ = |a: &[&str], home: Option<PathBuf>| {
@@ -945,13 +969,23 @@ mod tests {
             (&["install", "--dry-run"], 1),
             (&["status"], 0),
             (&["status", "--json"], 0),
+            (&["uninstall", "--profile"], 2),
             (&["update"], 2),
             (&["install", "--dry-run", "--yes"], 2),
             (&["status", "--yes"], 2),
-            (&["uninstall"], 2),
+            (&["uninstall", "--yes"], 2),
             (&["open"], 2),
         ] {
             assert_eq!(run_(asked, home.clone()), Some(code), "{asked:?}");
+        }
+        assert!(
+            p.profile.is_dir(),
+            "`uninstall --profile` without --yes removed it"
+        );
+        // Off Windows these refuse with check `system`; on Windows nothing is installed in these folders.
+        let gone = if cfg!(windows) { 0 } else { 1 };
+        for asked in [&["uninstall"][..], &["uninstall", "--yes", "--profile"]] {
+            assert_eq!(run_(asked, home.clone()), Some(gone), "{asked:?}");
         }
         assert_eq!(run_(&["install", "--dry-run"], None), Some(1));
         fs::remove_dir_all(&dir).unwrap();
@@ -1014,11 +1048,12 @@ mod tests {
         fs::remove_dir_all(&cache).unwrap();
     }
 
-    /// A full install into the folders CI points `LOCALAPPDATA` and `APPDATA` at, never a person's, then its status.
+    /// A full install into the folders CI points `LOCALAPPDATA` and `APPDATA` at, never a person's: status, then
+    /// uninstall.
     #[cfg(windows)]
     #[test]
     #[ignore]
-    fn the_real_release_installs() {
+    fn the_real_release_installs_and_uninstalls() {
         let env = |k: &str| std::env::var_os(k);
         let local = PathBuf::from(env("LOCALAPPDATA").unwrap());
         assert!(
@@ -1030,11 +1065,20 @@ mod tests {
         let line = system::install(&local.join("cache"), &parts, &p).unwrap();
         assert!(line.contains("with a Start Menu shortcut"), "{line}");
         assert!(p.program.join("Polycarp Browser.exe").is_file() && p.shortcut.is_file());
-        let studio = parts.local_studio.join("manifest.json").is_file();
-        let built_in = p.program.join("polycarp/local-studio/manifest.json");
-        assert_eq!(built_in.is_file(), studio);
+        assert!(p.program.join("polycarp/installed.json").is_file());
+        let has_studio = parts.local_studio.join("manifest.json").is_file();
+        assert_eq!(
+            p.program
+                .join("polycarp/local-studio/manifest.json")
+                .is_file(),
+            has_studio
+        );
         let status = windows_install::status(&p);
         assert!(status.installed.is_some(), "{}", status.text());
-        assert!(!p.profile.exists(), "install made the profile");
+        fs::create_dir_all(&p.profile).unwrap();
+        let line = system::uninstall(&p, false).unwrap();
+        assert!(line.starts_with("Polycarp Browser was removed"), "{line}");
+        assert!(!p.program.exists() && !p.shortcut.exists() && p.profile.is_dir());
+        assert_eq!(windows_install::status(&p).installed, None);
     }
 }

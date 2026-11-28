@@ -1,6 +1,6 @@
 //! Polycarp Browser installed on Windows: where it goes, the swap that puts a new build in place, the record of what
-//! is installed and `status`. Pure file work over the folders it is given; the caller checks what runs and makes the
-//! shortcut.
+//! is installed, `status` and the file work of `uninstall`. Pure file work over the folders it is given; the caller
+//! checks what runs and makes the shortcut.
 
 use std::ffi::OsString;
 use std::fs;
@@ -147,6 +147,65 @@ impl Status {
             None => format!("{NAME} is not installed."),
         }
     }
+}
+
+/// Said before anything is removed: what `--profile` without `--yes` would take.
+pub fn would_remove(places: &Places) -> String {
+    format!(
+        "This removes the browser, and the profile with every bookmark, password and tab in it:\n  {}\nIt can't \
+         be undone. Add --yes to do it.",
+        places.profile.display()
+    )
+}
+
+/// Removes the browser and its shortcut, and its profile when asked. The program folder moves aside before it is
+/// deleted, so a half-deleted one never sits in its place.
+pub fn remove(places: &Places, with_profile: bool) -> Result<String, Refused> {
+    let check = "uninstall";
+    let profile = &places.profile;
+    // A link would lead the removal somewhere else.
+    if with_profile && fs::symlink_metadata(profile).is_ok_and(|m| !m.is_dir()) {
+        return Err(Refused::new(
+            check,
+            format!("{} is not a folder", profile.display()),
+        ));
+    }
+    let old = beside(&places.program, ".old");
+    // An old build a failed install left aside is the browser too.
+    let stranded = fs::symlink_metadata(&old).is_ok();
+    gone(&old).map_err(refuse(check, "clearing an earlier run's folder"))?;
+    let had = fs::symlink_metadata(&places.program).is_ok() || stranded;
+    if fs::symlink_metadata(&places.program).is_ok() {
+        fs::rename(&places.program, &old)
+            .map_err(refuse(check, "moving the program folder aside"))?;
+    }
+    let link = fs::symlink_metadata(&places.shortcut).is_ok();
+    if link {
+        fs::remove_file(&places.shortcut).map_err(refuse(check, "removing the shortcut"))?;
+    }
+    // A browser that just quit can hold its files a moment longer.
+    let mut deleted = gone(&old);
+    for _ in 0..10 {
+        if deleted.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        deleted = gone(&old);
+    }
+    deleted.map_err(refuse(check, "removing the program folder"))?;
+    let mine = with_profile && profile.exists();
+    if mine {
+        fs::remove_dir_all(profile).map_err(refuse(check, "removing the profile"))?;
+    }
+    Ok(match (had || link, mine) {
+        (false, false) => format!("{NAME} is not installed."),
+        (false, true) => format!("{NAME} is not installed. Its profile was removed."),
+        (true, false) => format!(
+            "{NAME} was removed. Your profile stays in {}.",
+            profile.display()
+        ),
+        (true, true) => format!("{NAME} and its profile were removed."),
+    })
 }
 
 /// Prints the line or the refusal, with `after` added to a refusal; the exit code.
@@ -303,6 +362,62 @@ mod tests {
         );
         fs::remove_file(p.program.join("Polycarp Browser.exe")).unwrap();
         assert_eq!(status(&p).installed, None, "no launcher");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn uninstall_takes_the_browser_and_its_shortcut_and_leaves_the_profile() {
+        let dir = temp("uninstall");
+        let p = at(&dir);
+        let put = |p: &Places| {
+            fs::create_dir_all(p.program.parent().unwrap()).unwrap();
+            fs::rename(built(&dir, "1.0", "x"), &p.program).unwrap();
+            fs::create_dir_all(p.shortcut.parent().unwrap()).unwrap();
+            fs::write(&p.shortcut, "lnk").unwrap();
+            fs::create_dir_all(&p.profile).unwrap();
+            fs::write(p.profile.join("mine"), "x").unwrap();
+        };
+        put(&p);
+        let stays = format!(
+            "Polycarp Browser was removed. Your profile stays in {}.",
+            p.profile.display()
+        );
+        assert_eq!(remove(&p, false).unwrap(), stays);
+        assert!(
+            !p.program.exists() && !p.shortcut.exists() && !beside(&p.program, ".old").exists()
+        );
+        assert!(p.profile.join("mine").is_file());
+        assert_eq!(
+            remove(&p, false).unwrap(),
+            "Polycarp Browser is not installed."
+        );
+        put(&p);
+        assert_eq!(
+            remove(&p, true).unwrap(),
+            "Polycarp Browser and its profile were removed."
+        );
+        assert!(!p.program.exists() && !p.shortcut.exists() && !p.profile.exists());
+        assert!(would_remove(&p).contains(&p.profile.display().to_string()));
+        // A profile that is a link is refused before anything is removed, and what it leads to stays.
+        #[cfg(unix)]
+        {
+            let real = dir.join("elsewhere");
+            fs::create_dir_all(&real).unwrap();
+            fs::write(real.join("keep"), "x").unwrap();
+            fs::create_dir_all(p.profile.parent().unwrap()).unwrap();
+            std::os::unix::fs::symlink(&real, &p.profile).unwrap();
+            fs::create_dir_all(&p.program).unwrap();
+            assert_eq!(remove(&p, true).unwrap_err().check, "uninstall");
+            assert!(p.program.is_dir() && real.join("keep").is_file());
+            fs::remove_file(&p.profile).unwrap();
+            fs::remove_dir_all(&p.program).unwrap();
+        }
+        // Only an old build a failed install left aside: it is removed and said to be.
+        fs::create_dir_all(beside(&p.program, ".old").join("two")).unwrap();
+        assert!(remove(&p, false)
+            .unwrap()
+            .starts_with("Polycarp Browser was removed."));
+        assert!(!beside(&p.program, ".old").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 }
