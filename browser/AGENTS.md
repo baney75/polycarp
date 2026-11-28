@@ -21,7 +21,7 @@
   `install` then works as on Windows, in `$XDG_DATA_HOME/polycarp-browser` (else `~/.local/share/polycarp-browser`): it refuses
   while any `/proc/<pid>/exe` is inside it (never stopping one), swaps the build in through `.new` and `.old` beside it, writes
   `polycarp/installed.json` and a menu entry, `applications/polycarp-browser.desktop` (0644, its `Exec` path quoted, a path with
-  a line break or `%` refused).
+  a line break or `%` refused); `uninstall` keeps the profile unless `--profile --yes`.
 - The result is built on the person's machine, from scratch, beside the old one, and swapped in only after it starts headless on a
   fresh throwaway profile, deleted afterwards. The running browser is never replaced under the person. Nothing here needs admin rights.
 - No Helium binary, logo or non-free asset is committed or published, and Helium's name is never the product's name or brand.
