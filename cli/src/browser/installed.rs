@@ -1,6 +1,6 @@
-//! Polycarp Browser installed on Windows: where it goes, the swap that puts a new build in place, the record of what
-//! is installed, `status` and the file work of `uninstall`. Pure file work over the folders it is given; the caller
-//! checks what runs and makes the shortcut.
+//! Polycarp Browser installed on Windows and Linux: where it goes, the swap that puts a new build in place, the record
+//! of what is installed, `status` and the file work of `uninstall`. Pure file work over the folders it is given; the
+//! caller checks what runs and makes the menu item.
 
 use std::ffi::OsString;
 use std::fs;
@@ -15,16 +15,89 @@ use super::download::{refuse, Refused};
 pub const RECIPE: &str = "1";
 pub const NAME: &str = "Polycarp Browser";
 
-/// Where the browser, its profile and its shortcut go.
+/// The system whose rule says where things go. Each system's build names only its own.
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+pub enum System {
+    Windows,
+    Linux,
+}
+
+/// Where the browser, its profile and its menu item (a Start Menu `.lnk` or a `.desktop` entry) go.
 #[derive(Debug, PartialEq)]
 pub struct Places {
     pub program: PathBuf,
     pub profile: PathBuf,
     pub shortcut: PathBuf,
+    /// The launcher's name inside `program`.
+    pub launcher: &'static str,
 }
 
-/// The places, out of `LOCALAPPDATA` and `APPDATA`, each of which must be an absolute folder.
-pub fn places(env: &dyn Fn(&str) -> Option<OsString>) -> Result<Places, Refused> {
+/// The places by `system`'s rule.
+pub fn places(system: System, env: &dyn Fn(&str) -> Option<OsString>) -> Result<Places, Refused> {
+    match system {
+        System::Windows => windows(env),
+        System::Linux => linux(env),
+    }
+}
+
+/// An environment variable that holds an absolute folder.
+fn absolute(env: &dyn Fn(&str) -> Option<OsString>, name: &str) -> Option<PathBuf> {
+    let path = env(name).filter(|v| !v.is_empty()).map(PathBuf::from);
+    path.filter(|p| p.is_absolute())
+}
+
+/// Out of `XDG_DATA_HOME` and `XDG_CONFIG_HOME`, else `HOME`, as the launcher finds the profile.
+fn linux(env: &dyn Fn(&str) -> Option<OsString>) -> Result<Places, Refused> {
+    let under = |xdg: &str, rest: &str| {
+        let home = absolute(env, "HOME").map(|h| rest.split('/').fold(h, |p, f| p.join(f)));
+        let why = format!("neither {xdg} nor HOME is set to an absolute folder");
+        absolute(env, xdg)
+            .or(home)
+            .ok_or_else(|| Refused::new("place", why))
+    };
+    let (data, config) = (
+        under("XDG_DATA_HOME", ".local/share")?,
+        under("XDG_CONFIG_HOME", ".config")?,
+    );
+    let program = data.join("polycarp-browser");
+    entry(&program)?;
+    Ok(Places {
+        program,
+        profile: config.join("Polycarp").join("Browser"),
+        shortcut: data.join("applications").join("polycarp-browser.desktop"),
+        launcher: "polycarp-browser",
+    })
+}
+
+/// The desktop entry for the browser in `program`, its path quoted for `Exec` by the Desktop Entry spec: `"`, `` ` ``,
+/// `$` and `\` take a backslash inside the quotes, then every backslash is doubled for the string itself. A path a
+/// desktop entry can't hold (not UTF-8, a line break or a `%`) is refused. No icon yet: Helium's logo is not Polycarp's.
+pub fn entry(program: &Path) -> Result<String, Refused> {
+    let refused = || {
+        let why = format!("{} can't be named in a menu entry", program.display());
+        Refused::new("place", why)
+    };
+    let text = program.to_str().ok_or_else(refused)?;
+    if text.contains(['\n', '\r', '%']) {
+        return Err(refused());
+    }
+    let mut quoted = String::new();
+    for c in text.chars() {
+        if matches!(c, '"' | '`' | '$' | '\\') {
+            quoted.push('\\');
+        }
+        quoted.push(c);
+    }
+    let exec = quoted.replace('\\', "\\\\");
+    Ok(format!(
+        "[Desktop Entry]\nType=Application\nName={NAME}\nExec=\"{exec}/polycarp-browser\" %U\nTerminal=false\n\
+         Categories=Network;WebBrowser;\nStartupWMClass=polycarp-browser\n"
+    ))
+}
+
+/// Out of `LOCALAPPDATA` and `APPDATA`, each of which must be an absolute folder.
+fn windows(env: &dyn Fn(&str) -> Option<OsString>) -> Result<Places, Refused> {
     let folder = |name: &str| {
         let path = env(name).filter(|v| !v.is_empty()).map(PathBuf::from);
         let why = format!("{name} is not set to an absolute folder");
@@ -38,6 +111,7 @@ pub fn places(env: &dyn Fn(&str) -> Option<OsString>) -> Result<Places, Refused>
         program: local.join("Programs").join(NAME),
         profile: local.join("Polycarp").join("Browser"),
         shortcut: menu.join(format!("{NAME}.lnk")),
+        launcher: "Polycarp Browser.exe",
     })
 }
 
@@ -73,18 +147,29 @@ pub fn write_record(build: &Path, version: &str) -> Result<(), Refused> {
     fs::write(record(build), text).map_err(refuse("record", "writing installed.json"))
 }
 
-/// The Helium version installed in `program`, when its record and its launcher are both there.
-pub fn installed(program: &Path) -> Option<String> {
-    if !program.join(format!("{NAME}.exe")).is_file() {
+/// The Helium version installed, when its record and its launcher are both there.
+pub fn installed(places: &Places) -> Option<String> {
+    if !places.program.join(places.launcher).is_file() {
         return None;
     }
-    let text = fs::read(record(program)).ok()?;
+    let text = fs::read(record(&places.program)).ok()?;
     serde_json::from_slice::<Record>(&text)
         .ok()
         .map(|r| r.version)
 }
 
 pub type Move<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
+
+/// A rename, tried again for a while: a browser that just quit can hold its files a moment longer.
+pub fn moved(from: &Path, to: &Path) -> io::Result<()> {
+    for _ in 0..10 {
+        if fs::rename(from, to).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    fs::rename(from, to)
+}
 
 /// Puts `build` in place as `program`: it goes to `program.new` first, an old `program` to `program.old`, then
 /// `program.new` to `program`, and `program.old` is deleted. A failed move puts the old one back.
@@ -132,7 +217,7 @@ pub struct Status {
 
 pub fn status(places: &Places) -> Status {
     Status {
-        installed: installed(&places.program),
+        installed: installed(places),
         app: places.program.clone(),
     }
 }
@@ -236,16 +321,18 @@ mod tests {
         dir
     }
 
-    fn at(dir: &Path) -> Places {
+    const BOTH: [System; 2] = [System::Windows, System::Linux];
+
+    fn at(system: System, dir: &Path) -> Places {
         let env = |k: &str| Some(dir.join(k).into_os_string());
-        places(&env).unwrap()
+        places(system, &env).unwrap()
     }
 
-    /// A build of `version` holding `file`.
-    fn built(dir: &Path, version: &str, file: &str) -> PathBuf {
+    /// A build of `version` holding `file`, laid out for `p`.
+    fn built(dir: &Path, p: &Places, version: &str, file: &str) -> PathBuf {
         let build = dir.join(format!("build-{version}"));
         fs::create_dir_all(build.join("polycarp")).unwrap();
-        fs::write(build.join(format!("{NAME}.exe")), "launcher").unwrap();
+        fs::write(build.join(p.launcher), "launcher").unwrap();
         fs::write(build.join(file), version).unwrap();
         write_record(&build, version).unwrap();
         build
@@ -254,7 +341,7 @@ mod tests {
     #[test]
     fn places_come_from_absolute_folders_only() {
         let dir = temp("places");
-        let p = at(&dir);
+        let p = at(System::Windows, &dir);
         assert_eq!(
             p.program,
             dir.join("LOCALAPPDATA/Programs/Polycarp Browser")
@@ -262,6 +349,7 @@ mod tests {
         assert_eq!(p.profile, dir.join("LOCALAPPDATA/Polycarp/Browser"));
         let menu = "APPDATA/Microsoft/Windows/Start Menu/Programs/Polycarp Browser.lnk";
         assert_eq!(p.shortcut, dir.join(menu));
+        assert_eq!(p.launcher, "Polycarp Browser.exe");
         for (name, value) in [
             ("LOCALAPPDATA", None),
             ("APPDATA", Some("relative")),
@@ -271,7 +359,7 @@ mod tests {
                 true => value.map(OsString::from),
                 false => Some(dir.clone().into_os_string()),
             };
-            let e = places(&env).unwrap_err();
+            let e = places(System::Windows, &env).unwrap_err();
             assert_eq!(
                 (e.check, e.why),
                 ("place", format!("{name} is not set to an absolute folder"))
@@ -281,31 +369,116 @@ mod tests {
     }
 
     #[test]
+    fn linux_places_come_from_xdg_or_home() {
+        let dir = temp("linux-places");
+        let p = at(System::Linux, &dir);
+        assert_eq!(p.program, dir.join("XDG_DATA_HOME/polycarp-browser"));
+        assert_eq!(p.profile, dir.join("XDG_CONFIG_HOME/Polycarp/Browser"));
+        let menu = "XDG_DATA_HOME/applications/polycarp-browser.desktop";
+        assert_eq!(p.shortcut, dir.join(menu));
+        assert_eq!(p.launcher, "polycarp-browser");
+        // Unset, empty or relative XDG folders fall back to HOME, as the launcher's profile does.
+        for xdg in [None, Some(""), Some("relative")] {
+            let env = |k: &str| match k {
+                "HOME" => Some(dir.clone().into_os_string()),
+                _ => xdg.map(OsString::from),
+            };
+            let p = places(System::Linux, &env).unwrap();
+            assert_eq!(p.program, dir.join(".local/share/polycarp-browser"));
+            assert_eq!(p.profile, dir.join(".config/Polycarp/Browser"));
+            let menu = ".local/share/applications/polycarp-browser.desktop";
+            assert_eq!(p.shortcut, dir.join(menu));
+        }
+        for (name, home) in [("XDG_DATA_HOME", None), ("XDG_DATA_HOME", Some("rel"))] {
+            let env = |k: &str| (k == "HOME").then(|| home.map(OsString::from)).flatten();
+            let e = places(System::Linux, &env).unwrap_err();
+            let why = format!("neither {name} nor HOME is set to an absolute folder");
+            assert_eq!((e.check, e.why), ("place", why));
+        }
+        // Only the data folder set: the profile has no folder to go in.
+        let env = |k: &str| (k == "XDG_DATA_HOME").then(|| dir.clone().into_os_string());
+        let e = places(System::Linux, &env).unwrap_err();
+        let why = "neither XDG_CONFIG_HOME nor HOME is set to an absolute folder";
+        assert_eq!((e.check, e.why.as_str()), ("place", why));
+        for bad in ["a\nb", "a%b", "a\rb"] {
+            let env = |k: &str| Some(dir.join(bad).join(k).into_os_string());
+            assert_eq!(
+                places(System::Linux, &env).unwrap_err().check,
+                "place",
+                "{bad:?}"
+            );
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_desktop_entry_quotes_its_path() {
+        let text = |p: &str| entry(Path::new(p));
+        let want = "[Desktop Entry]\nType=Application\nName=Polycarp Browser\n\
+                    Exec=\"/home/a/.local/share/polycarp-browser/polycarp-browser\" %U\nTerminal=false\n\
+                    Categories=Network;WebBrowser;\nStartupWMClass=polycarp-browser\n";
+        assert_eq!(text("/home/a/.local/share/polycarp-browser").unwrap(), want);
+        let exec = |p: &str| {
+            let t = text(p).unwrap();
+            let line = t.lines().find(|l| l.starts_with("Exec=")).unwrap();
+            line.to_string()
+        };
+        assert_eq!(exec("/a b"), "Exec=\"/a b/polycarp-browser\" %U");
+        // Inside the quotes each takes a backslash; then the string doubles every backslash.
+        assert_eq!(exec("/a\"b"), r#"Exec="/a\\"b/polycarp-browser" %U"#);
+        assert_eq!(exec("/a`b"), r#"Exec="/a\\`b/polycarp-browser" %U"#);
+        assert_eq!(exec("/a$b"), r#"Exec="/a\\$b/polycarp-browser" %U"#);
+        assert_eq!(exec("/a\\b"), r#"Exec="/a\\\\b/polycarp-browser" %U"#);
+        for bad in ["/a\nb", "/a\rb", "/a%b", "/a%%U"] {
+            let e = text(bad).unwrap_err();
+            assert_eq!(e.check, "place", "{bad:?}");
+            assert!(
+                e.why.ends_with("can't be named in a menu entry"),
+                "{}",
+                e.why
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let odd = Path::new(std::ffi::OsStr::from_bytes(b"/a\xffb"));
+            assert_eq!(entry(odd).unwrap_err().check, "place");
+        }
+    }
+
+    #[test]
     fn a_swap_replaces_the_old_build_and_nothing_beside_it() {
-        let dir = temp("swap");
-        let p = at(&dir);
+        for system in BOTH {
+            swaps(system);
+        }
+    }
+
+    fn swaps(system: System) {
+        let dir = temp(&format!("swap-{system:?}"));
+        let p = at(system, &dir);
         fs::create_dir_all(&p.profile).unwrap();
         fs::write(p.profile.join("mine"), "x").unwrap();
         let mv = |a: &Path, b: &Path| fs::rename(a, b);
         fs::create_dir_all(p.program.parent().unwrap()).unwrap();
-        swap(&built(&dir, "1.0", "one"), &p.program, &mv).unwrap();
-        assert_eq!(installed(&p.program).as_deref(), Some("1.0"));
+        swap(&built(&dir, &p, "1.0", "one"), &p.program, &mv).unwrap();
+        assert_eq!(installed(&p).as_deref(), Some("1.0"));
         for stale in [".new", ".old"] {
             fs::create_dir_all(beside(&p.program, stale).join("left")).unwrap();
         }
-        swap(&built(&dir, "2.0", "two"), &p.program, &mv).unwrap();
-        assert_eq!(installed(&p.program).as_deref(), Some("2.0"));
+        swap(&built(&dir, &p, "2.0", "two"), &p.program, &mv).unwrap();
+        assert_eq!(installed(&p).as_deref(), Some("2.0"));
         assert!(p.program.join("two").is_file() && !p.program.join("one").exists());
         assert!(!beside(&p.program, ".new").exists() && !beside(&p.program, ".old").exists());
         assert!(p.profile.join("mine").is_file(), "the profile was touched");
-        let last = |a: &Path, b: &Path| match a.ends_with("Polycarp Browser.new") {
+        let new = beside(&p.program, ".new");
+        let last = |a: &Path, b: &Path| match a == new {
             true => Err(io::Error::other("held")),
             false => fs::rename(a, b),
         };
-        let e = swap(&built(&dir, "3.0", "three"), &p.program, &last).unwrap_err();
+        let e = swap(&built(&dir, &p, "3.0", "three"), &p.program, &last).unwrap_err();
         assert_eq!(e.check, "swap");
         assert_eq!(
-            installed(&p.program).as_deref(),
+            installed(&p).as_deref(),
             Some("2.0"),
             "the old build was not put back"
         );
@@ -315,25 +488,32 @@ mod tests {
             true => Err(io::Error::other("held")),
             false => fs::rename(a, b),
         };
-        let e = swap(&built(&dir, "3.0", "three"), &p.program, &held).unwrap_err();
+        let e = swap(&built(&dir, &p, "3.0", "three"), &p.program, &held).unwrap_err();
         assert_eq!(e.check, "stranded");
-        assert!(e.why.contains("Polycarp Browser.old"), "{}", e.why);
+        let old = beside(&p.program, ".old").display().to_string();
+        assert!(e.why.contains(&old), "{}", e.why);
         assert!(!p.program.exists() && beside(&p.program, ".old").join("two").is_file());
         // The next install puts that old build back before it clears anything, even when it then fails.
-        let no_new = |a: &Path, b: &Path| match b.ends_with("Polycarp Browser.new") {
+        let no_new = |a: &Path, b: &Path| match b == new {
             true => Err(io::Error::other("held")),
             false => fs::rename(a, b),
         };
-        let e = swap(&built(&dir, "4.0", "four"), &p.program, &no_new).unwrap_err();
+        let e = swap(&built(&dir, &p, "4.0", "four"), &p.program, &no_new).unwrap_err();
         assert_eq!(e.check, "swap");
-        assert_eq!(installed(&p.program).as_deref(), Some("2.0"));
+        assert_eq!(installed(&p).as_deref(), Some("2.0"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn status_says_what_is_installed() {
-        let dir = temp("status");
-        let p = at(&dir);
+        for system in BOTH {
+            states(system);
+        }
+    }
+
+    fn states(system: System) {
+        let dir = temp(&format!("status-{system:?}"));
+        let p = at(system, &dir);
         let s = status(&p);
         assert_eq!(s.text(), "Polycarp Browser is not installed.");
         let json = serde_json::to_value(&s).unwrap();
@@ -342,7 +522,7 @@ mod tests {
             serde_json::json!({"installed": null, "app": p.program})
         );
         fs::create_dir_all(p.program.parent().unwrap()).unwrap();
-        fs::rename(built(&dir, "0.22.5.1", "x"), &p.program).unwrap();
+        fs::rename(built(&dir, &p, "0.22.5.1", "x"), &p.program).unwrap();
         let s = status(&p);
         let want = format!(
             "Polycarp Browser (Helium 0.22.5.1) is installed in {}.",
@@ -360,18 +540,24 @@ mod tests {
             record,
             serde_json::json!({"version": "0.22.5.1", "recipe": RECIPE})
         );
-        fs::remove_file(p.program.join("Polycarp Browser.exe")).unwrap();
+        fs::remove_file(p.program.join(p.launcher)).unwrap();
         assert_eq!(status(&p).installed, None, "no launcher");
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn uninstall_takes_the_browser_and_its_shortcut_and_leaves_the_profile() {
-        let dir = temp("uninstall");
-        let p = at(&dir);
+        for system in BOTH {
+            uninstalls(system);
+        }
+    }
+
+    fn uninstalls(system: System) {
+        let dir = temp(&format!("uninstall-{system:?}"));
+        let p = at(system, &dir);
         let put = |p: &Places| {
             fs::create_dir_all(p.program.parent().unwrap()).unwrap();
-            fs::rename(built(&dir, "1.0", "x"), &p.program).unwrap();
+            fs::rename(built(&dir, p, "1.0", "x"), &p.program).unwrap();
             fs::create_dir_all(p.shortcut.parent().unwrap()).unwrap();
             fs::write(&p.shortcut, "lnk").unwrap();
             fs::create_dir_all(&p.profile).unwrap();
