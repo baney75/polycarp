@@ -128,7 +128,13 @@ final class InstallScriptTests: XCTestCase {
         }
         XCTAssertFalse(fm.fileExists(atPath: dest.path), "nothing was copied")
         let script = try read("scripts/install-app.sh")
-        XCTAssertLessThan(try index(of: "if [ \"$IN_PLACE\" = 0 ]; then\n  rm -rf \"$DEST\"", in: script), try index(of: #"cp -R "$APP" "$DEST""#, in: script))
+        let swapBlock = try index(of: "if [ \"$IN_PLACE\" = 0 ]; then\n  [ -n \"$TEST\" ] || bootout_polycarp_agents", in: script)
+        let dittoCopy = try index(of: #"ditto "$APP" "$STAGED""#, in: script)
+        let swapMove = try index(of: #"if ! mv "$STAGED" "$DEST"; then"#, in: script)
+        let reloadAfter = try index(of: "if [ -z \"$TEST\" ]; then\n  bootstrap_polycarp_agents", in: script)
+        XCTAssertLessThan(swapBlock, dittoCopy)
+        XCTAssertLessThan(dittoCopy, swapMove)
+        XCTAssertLessThan(swapMove, reloadAfter)
     }
 
     /// An ad-hoc or unsigned build never replaces an installed copy: that update would make macOS
@@ -160,7 +166,7 @@ final class InstallScriptTests: XCTestCase {
         let script = try read("scripts/install-app.sh")
         let guardAt = try index(of: "grep -q '^Authority='", in: script)
         XCTAssertLessThan(guardAt, try index(of: "to quit' >/dev/null", in: script))
-        XCTAssertLessThan(guardAt, try index(of: "rm -rf \"$DEST\"", in: script))
+        XCTAssertLessThan(guardAt, try index(of: #"if ! mv "$STAGED" "$DEST"; then"#, in: script))
     }
 
     /// One stream (docs/releases.md): with no tag named, the download and the source build are both the `nightly`
