@@ -1,7 +1,8 @@
-//! Polycarp Browser on Windows, step one: `polycarp browser install --dry-run` downloads Helium's newest Windows
-//! release, checks its sha256 and the signature on every program in it, builds Polycarp Browser from it in a work
-//! folder, starts that once with no window and a throwaway profile, and throws it all away. Nothing is installed.
-//! The rules are in `../browser/AGENTS.md`.
+//! Polycarp Browser on Windows: `polycarp browser install --dry-run` downloads Helium's newest Windows release,
+//! checks its sha256 and the signature on every program in it, builds Polycarp Browser from it in a work folder,
+//! starts that once with no window and a throwaway profile, and throws it all away. `install` does the same, then
+//! puts the build in place with a Start Menu shortcut, and `status` says what is installed. The rules are in
+//! `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -28,9 +29,14 @@ mod portable;
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/rename.rs"]
 mod rename;
+// Where it is installed and the file work of installing it; tested on every system.
+#[cfg_attr(not(windows), allow(dead_code))]
+#[path = "browser/windows_install.rs"]
+mod windows_install;
 
-use download::{fetch, is_link, print, refuse, Refused};
+use download::{fetch, is_link, refuse, Refused};
 use listing::Release;
+use windows_install::{places, say};
 
 #[cfg(windows)]
 const FEED: &str = "https://api.github.com/repos/imputnet/helium-windows/releases/latest";
@@ -48,35 +54,66 @@ const VERBS: [&str; 7] = [
     "uninstall",
     "finish",
 ];
-const ONLY: &str = "polycarp browser: only `install --dry-run` works on Windows so far.";
+const ONLY: &str =
+    "polycarp browser: on Windows only `install`, `install --dry-run` and `status [--json]` work so far.";
+const USAGE: &str = "polycarp browser on Windows:
+  install                    build Polycarp Browser from Helium's newest release and install it
+  install --dry-run          download, check, build and start it once, then throw it all away
+  status [--json]            say what is installed";
+const NOTHING: &str = " Nothing was installed.";
 
 /// None when these arguments are not a browser command.
 pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> Option<i32> {
+    answer(args, home, cache, &|k| std::env::var_os(k))
+}
+
+/// `run`, with the environment it reads the places and the parts from.
+fn answer(
+    args: &[OsString],
+    home: Option<PathBuf>,
+    cache: Option<PathBuf>,
+    env: &dyn Fn(&str) -> Option<OsString>,
+) -> Option<i32> {
     let verb = args.first().map_or(Some("--help"), |a| a.to_str())?;
     if ["--help", "-h", "help"].contains(&verb) {
-        println!("{ONLY}");
+        println!("{USAGE}");
         return Some(0);
     }
     if !VERBS.contains(&verb) {
         return None;
     }
-    if verb != "install" || args.len() != 2 || args[1] != "--dry-run" {
-        eprintln!("{ONLY}");
-        return Some(2);
-    }
-    let (Some(_), Some(cache)) = (home, cache) else {
-        eprintln!("polycarp browser: no home folder");
-        return Some(1);
+    let mut rest: Vec<&str> = args[1..].iter().map(|a| a.to_str().unwrap_or("")).collect();
+    rest.sort_unstable();
+    let code = match (verb, rest.as_slice()) {
+        ("install", [] | ["--dry-run"]) => {
+            let (Some(_), Some(cache)) = (home, cache) else {
+                eprintln!("polycarp browser: no home folder");
+                return Some(1);
+            };
+            let dir = cache.join("browser");
+            let done = with_parts(env(portable::RESOURCES), |parts| match rest.is_empty() {
+                true => system::install(&dir, &parts, &places(env)?),
+                false => system::dry_run(&dir, &parts),
+            });
+            let missing = matches!(&done, Err(r) if ["shortcut", "stranded"].contains(&r.check));
+            say(done, if missing { "" } else { NOTHING })
+        }
+        ("status", [] | ["--json"]) => {
+            let status = places(env).map(|p| windows_install::status(&p));
+            say(
+                status.map(|s| match rest.is_empty() {
+                    true => s.text(),
+                    false => serde_json::to_string_pretty(&s).unwrap_or_default(),
+                }),
+                "",
+            )
+        }
+        _ => {
+            eprintln!("{ONLY}");
+            2
+        }
     };
-    let resources = std::env::var_os(portable::RESOURCES);
-    #[cfg(windows)]
-    let done = with_parts(resources, |parts| dry_run(&cache.join("browser"), &parts));
-    #[cfg(not(windows))]
-    let done = with_parts(resources, |_| {
-        let why = format!("{} is not Windows", cache.display());
-        Err(Refused::new("system", why))
-    });
-    Some(print(done))
+    Some(code)
 }
 
 /// Runs `go` only once the parts are all there, so a refusal for them comes before any download.
@@ -224,6 +261,7 @@ fn others(name: &str) -> bool {
 mod system {
     use super::*;
     use std::process::{Command, Stdio};
+    use windows_install::{Places, NAME};
 
     /// Lists each program's own signature. The folder arrives in an environment variable, never in the script's text.
     ///
@@ -399,7 +437,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     /// throws the work folder away whatever happened. The version and the number of programs checked.
     pub fn checked(
         dir: &Path,
-        then: impl FnOnce(&Path, &Path) -> Result<(), Refused>,
+        then: impl FnOnce(&Path, &Path, &str) -> Result<(), Refused>,
     ) -> Result<(String, usize), Refused> {
         let (release, arch, zip) = download(dir)?;
         let work = dir.join("work");
@@ -409,7 +447,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         fs::create_dir(&work).map_err(refuse("work folder", "making it"))?;
         let done = unpack(&zip, &work, &release, arch).and_then(|folder| {
             let n = signatures(&folder)?;
-            then(&folder, &work).map(|()| n)
+            then(&folder, &work, &release.version).map(|()| n)
         });
         stop_inside(&work.join("build"));
         // A browser that just quit can hold its files a moment longer.
@@ -429,12 +467,101 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     /// Builds Polycarp Browser from the checked release and starts it once, all inside the work folder, which then
     /// goes.
     pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
-        let (version, n) = checked(dir, |folder, work| started(folder, work, parts))?;
+        let (version, n) = checked(dir, |folder, work, _| started(folder, work, parts))?;
         Ok(format!(
             "Helium {version} was downloaded and passed its checks: the sha256 GitHub lists, and imput LLC's \
              signature on all {n} programs in it. Polycarp Browser was built from it and started once without a \
              window, showing its own new tab. Nothing was installed."
         ))
+    }
+
+    /// The dry run, then the build goes in place, with Local Studio's part added after the start, and gets its
+    /// shortcut. Nothing changes while the browser runs.
+    pub fn install(
+        dir: &Path,
+        parts: &portable::Parts,
+        places: &Places,
+    ) -> Result<String, Refused> {
+        // Set once the new build is in place, so a later failure doesn't read as nothing installed.
+        let placed = std::cell::RefCell::new(None);
+        let done = checked(dir, |folder, work, version| {
+            started(folder, work, parts)?;
+            not_running(&places.program)?;
+            let build = work.join("build");
+            if parts.local_studio.join("manifest.json").is_file() {
+                portable::copy(
+                    &parts.local_studio,
+                    &build.join("polycarp").join("local-studio"),
+                )?;
+            }
+            windows_install::write_record(&build, version)?;
+            if let Some(parent) = places.program.parent() {
+                fs::create_dir_all(parent).map_err(refuse("swap", "making the Programs folder"))?;
+            }
+            windows_install::swap(&build, &places.program, &moved)?;
+            *placed.borrow_mut() = Some(version.to_string());
+            Ok(())
+        });
+        let version = match (done, placed.take()) {
+            (Ok((version, _)), _) => version,
+            (Err(r), Some(version)) => {
+                eprintln!(
+                    "polycarp browser: the {} check failed after the install: {}.",
+                    r.check, r.why
+                );
+                version
+            }
+            (Err(r), None) => return Err(r),
+        };
+        shortcut(places)?;
+        Ok(format!(
+            "{NAME} (Helium {version}) is installed in {}, with a Start Menu shortcut. Your profile is in {}.",
+            places.program.display(),
+            places.profile.display()
+        ))
+    }
+
+    /// A rename, tried again for a while: a browser that just quit can hold its files a moment longer.
+    fn moved(from: &Path, to: &Path) -> std::io::Result<()> {
+        for _ in 0..10 {
+            if fs::rename(from, to).is_ok() {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        fs::rename(from, to)
+    }
+
+    /// Creates or replaces the Start Menu shortcut. Every path arrives in an environment variable.
+    fn shortcut(places: &Places) -> Result<(), Refused> {
+        let missing = |why: String| {
+            let at = places.program.display();
+            Refused::new(
+                "shortcut",
+                format!(
+                    "{why}; {NAME} is installed in {at}, but its Start Menu shortcut is missing"
+                ),
+            )
+        };
+        if let Some(menu) = places.shortcut.parent() {
+            fs::create_dir_all(menu).map_err(|e| missing(format!("making its folder: {e}")))?;
+        }
+        let script = "$ErrorActionPreference = 'Stop'; $s = (New-Object -ComObject WScript.Shell).CreateShortcut(\
+                      $env:POLYCARP_LNK); $s.TargetPath = $env:POLYCARP_TARGET; $s.WorkingDirectory = \
+                      $env:POLYCARP_DIR; $s.Save()";
+        let mut ps = Command::new(system32(r"WindowsPowerShell\v1.0\powershell.exe"));
+        ps.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        ps.env("POLYCARP_LNK", &places.shortcut)
+            .env(
+                "POLYCARP_TARGET",
+                places.program.join(format!("{NAME}.exe")),
+            )
+            .env("POLYCARP_DIR", &places.program);
+        must("shortcut", ps).map_err(|e| missing(e.why))?;
+        match places.shortcut.is_file() {
+            true => Ok(()),
+            false => Err(missing("PowerShell made no shortcut".into())),
+        }
     }
 
     /// Builds in `work\build` and starts that once with its home in `work\home`.
@@ -505,19 +632,38 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         ))
     }
 
-    /// Stops every process whose program is inside `folder`, best effort. The folder arrives in an environment
-    /// variable, never in the script's text.
-    fn stop_inside(folder: &Path) {
+    /// PowerShell that lists the processes whose program is inside `folder`, then does `then` with them. The folder
+    /// arrives in an environment variable, never in the script's text.
+    fn inside(folder: &Path, then: &str) -> Command {
         // Its long name, as a process's path gives it: TEMP on a runner is an 8.3 name such as RUNNER~1.
         let long = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
         let text = long.to_string_lossy();
         let folder = Path::new(text.strip_prefix(r"\\?\").unwrap_or(&text));
-        let script = "$b = $env:POLYCARP_BUILD_DIR.TrimEnd('\\') + '\\'; Get-Process | Where-Object { $_.Path -and \
-                      $_.Path.StartsWith($b, [System.StringComparison]::OrdinalIgnoreCase) } | \
-                      Stop-Process -Force -ErrorAction SilentlyContinue";
+        let script = format!(
+            "$b = $env:POLYCARP_BUILD_DIR.TrimEnd('\\') + '\\'; Get-Process | Where-Object {{ $_.Path -and \
+             $_.Path.StartsWith($b, [System.StringComparison]::OrdinalIgnoreCase) }} | {then}"
+        );
         let mut ps = Command::new(system32(r"WindowsPowerShell\v1.0\powershell.exe"));
-        ps.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        ps.args(["-NoProfile", "-NonInteractive", "-Command", &script]);
         ps.env("POLYCARP_BUILD_DIR", folder);
+        ps
+    }
+
+    /// A refusal when any process runs from inside `folder`; nothing is stopped.
+    fn not_running(folder: &Path) -> Result<(), Refused> {
+        let said = must("running", inside(folder, "ForEach-Object { $_.Path }"))?;
+        match said.trim().is_empty() {
+            true => Ok(()),
+            false => Err(Refused::new(
+                "running",
+                "Polycarp Browser is open; quit it and run this again",
+            )),
+        }
+    }
+
+    /// Stops every process whose program is inside `folder`, best effort.
+    fn stop_inside(folder: &Path) {
+        let mut ps = inside(folder, "Stop-Process -Force -ErrorAction SilentlyContinue");
         let _ = ps
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -526,8 +672,27 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     }
 }
 
-#[cfg(windows)]
-use system::dry_run;
+/// Off Windows nothing here runs a program: each step that would is refused.
+#[cfg(not(windows))]
+mod system {
+    use super::*;
+
+    fn not_windows() -> Result<String, Refused> {
+        Err(Refused::new("system", "this is not Windows"))
+    }
+
+    pub fn dry_run(_: &Path, _: &portable::Parts) -> Result<String, Refused> {
+        not_windows()
+    }
+
+    pub fn install(
+        _: &Path,
+        _: &portable::Parts,
+        _: &windows_install::Places,
+    ) -> Result<String, Refused> {
+        not_windows()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -762,27 +927,34 @@ mod tests {
     }
 
     #[test]
-    fn only_install_dry_run_is_answered() {
+    fn install_and_status_are_answered_and_nothing_else() {
         #[cfg(target_os = "macos")]
         assert_eq!(VERBS, crate::browser::VERBS);
+        let dir = temp("verbs");
+        // Only temp folders, and no parts, so `install` stops before any download.
+        let env = |k: &str| (k != portable::RESOURCES).then(|| dir.join(k).into_os_string());
         let run_ = |a: &[&str], home: Option<PathBuf>| {
-            run(
-                &a.iter().map(OsString::from).collect::<Vec<_>>(),
-                home.clone(),
-                home,
-            )
+            let args: Vec<OsString> = a.iter().map(OsString::from).collect();
+            answer(&args, home.clone(), home, &env)
         };
-        let home = Some(PathBuf::from("/nowhere"));
-        assert_eq!(run_(&["serve"], home.clone()), None);
-        for asked in [
-            &["install"][..],
-            &["update"],
-            &["install", "--dry-run", "--yes"],
-            &["status"],
+        let home = Some(dir.clone());
+        assert_eq!(run(&["serve".into()], None, None), None);
+        assert_eq!(run_(&["--help"], home.clone()), Some(0));
+        for (asked, code) in [
+            (&["install"][..], 1),
+            (&["install", "--dry-run"], 1),
+            (&["status"], 0),
+            (&["status", "--json"], 0),
+            (&["update"], 2),
+            (&["install", "--dry-run", "--yes"], 2),
+            (&["status", "--yes"], 2),
+            (&["uninstall"], 2),
+            (&["open"], 2),
         ] {
-            assert_eq!(run_(asked, home.clone()), Some(2), "{asked:?}");
+            assert_eq!(run_(asked, home.clone()), Some(code), "{asked:?}");
         }
         assert_eq!(run_(&["install", "--dry-run"], None), Some(1));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -808,7 +980,7 @@ mod tests {
         let cache = temp("live");
         let dir = cache.join("browser");
         let parts = portable::parts(std::env::var_os(portable::RESOURCES)).unwrap();
-        let (_, n) = system::checked(&dir, |folder, work| {
+        let (_, n) = system::checked(&dir, |folder, work, _| {
             system::started(folder, work, &parts)?;
             let build = work.join("build");
             assert!(build.join("Polycarp Browser.exe").is_file());
@@ -840,5 +1012,29 @@ mod tests {
             "{why}"
         );
         fs::remove_dir_all(&cache).unwrap();
+    }
+
+    /// A full install into the folders CI points `LOCALAPPDATA` and `APPDATA` at, never a person's, then its status.
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn the_real_release_installs() {
+        let env = |k: &str| std::env::var_os(k);
+        let local = PathBuf::from(env("LOCALAPPDATA").unwrap());
+        assert!(
+            local.ends_with("la"),
+            "LOCALAPPDATA is not CI's temp folder"
+        );
+        let p = windows_install::places(&env).unwrap();
+        let parts = portable::parts(env(portable::RESOURCES)).unwrap();
+        let line = system::install(&local.join("cache"), &parts, &p).unwrap();
+        assert!(line.contains("with a Start Menu shortcut"), "{line}");
+        assert!(p.program.join("Polycarp Browser.exe").is_file() && p.shortcut.is_file());
+        let studio = parts.local_studio.join("manifest.json").is_file();
+        let built_in = p.program.join("polycarp/local-studio/manifest.json");
+        assert_eq!(built_in.is_file(), studio);
+        let status = windows_install::status(&p);
+        assert!(status.installed.is_some(), "{}", status.text());
+        assert!(!p.profile.exists(), "install made the profile");
     }
 }

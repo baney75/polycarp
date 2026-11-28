@@ -94,8 +94,16 @@ place for any profile), puts Polycarp's name in the browser's text and adds
 Polycarp's launcher and extension. Then it starts that build once with no window and a throwaway profile in the same
 folder, with no network and without Local Studio, and the start must show Polycarp's own new tab within 3 minutes; any of
 its processes still running are stopped. Then it deletes it all. Nothing is installed. The build needs Polycarp's parts: run `browser/scripts/build-parts-windows.sh DEST` from a checkout and set
-`POLYCARP_BROWSER_RESOURCES` to `DEST`. Every other `polycarp browser` command on Windows says that only
-`install --dry-run` works there so far. Installing the browser on Windows comes later.
+`POLYCARP_BROWSER_RESOURCES` to `DEST`.
+
+`polycarp browser install` does all of that, then installs the build. It adds Local Studio's part (left out of the start), and
+refuses, changing nothing, while Polycarp Browser is open. The new build goes in beside the old one and is swapped in, so a
+failed install leaves the old one as it was. The browser goes in `%LOCALAPPDATA%\Programs\Polycarp Browser`, with a Start Menu
+shortcut, `Polycarp Browser`, and your profile is `%LOCALAPPDATA%\Polycarp\Browser`, which install never touches. No admin
+rights are needed. Each install builds the newest release again, even when it is already installed; updates on Windows come
+later. `polycarp browser status` (or `status --json`) says which Helium release is installed. Until `uninstall` comes to
+Windows, remove the browser by quitting it and deleting that folder and the shortcut. Every other `polycarp browser` command on
+Windows says what works there so far.
 
 ## On Linux
 
