@@ -31,12 +31,14 @@ impl Refused {
 #[allow(dead_code)]
 pub const TOKEN: &str = "POLYCARP_GITHUB_TOKEN";
 
-/// The header curl reads from its input (`--header @-`), so the token is in no argument, file or log. Only a token
-/// of letters, digits and `_`, as GitHub's are, so it can't add a line of its own; anything else sends none.
+/// The header curl reads from its input (`--header @-`), so the token is in no argument, file or log. Only a bearer
+/// token as RFC 6750 spells one (letters, digits and `-._~+/`, then any `=`), so it can't add a line of its own;
+/// anything else sends none. GitHub's tokens have grown past 255 bytes, so up to 4096 are taken.
 pub fn token_header(token: Option<std::ffi::OsString>) -> Option<String> {
     let token = token?.into_string().ok()?;
-    let plain = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let ok = (1..=255).contains(&token.len()) && token.bytes().all(plain);
+    let body = token.trim_end_matches('=');
+    let plain = |b: u8| b.is_ascii_alphanumeric() || b"-._~+/".contains(&b);
+    let ok = (1..=4096).contains(&token.len()) && !body.is_empty() && body.bytes().all(plain);
     ok.then(|| format!("Authorization: Bearer {token}\n"))
 }
 
@@ -171,10 +173,23 @@ mod token_tests {
             Some("Authorization: Bearer ghs_A1b2\n".into())
         );
         assert_eq!(token_header(None), None);
-        for bad in ["", "a b", "a\nX-Evil: 1", "a\r", "tok:en", "ünï"] {
+        for good in ["ghs_a.b-c~d+e/f==", &"a".repeat(4096)] {
+            let want = format!("Authorization: Bearer {good}\n");
+            assert_eq!(header(good), Some(want), "{good:?}");
+        }
+        for bad in [
+            "",
+            "=",
+            "a b",
+            "a\nX-Evil: 1",
+            "a\r",
+            "tok:en",
+            "a=b",
+            "ünï",
+        ] {
             assert_eq!(header(bad), None, "{bad:?}");
         }
-        assert_eq!(header(&"a".repeat(256)), None);
+        assert_eq!(header(&"a".repeat(4097)), None);
         #[cfg(unix)]
         {
             use std::os::unix::ffi::OsStringExt;
