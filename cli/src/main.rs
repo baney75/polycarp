@@ -24,6 +24,7 @@ mod mcp;
 mod retire;
 mod sync;
 mod theme;
+mod toolchain;
 mod update;
 mod version;
 

@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds Polycarp.app (universal: Apple silicon and Intel) into ./build.
 #   scripts/bundle.sh            release build
-#   scripts/bundle.sh --install  also copy to ~/Applications and start it
+#   scripts/bundle.sh --check    also check that it starts on this Mac (the installers run this, then install it)
+#   scripts/bundle.sh --install  check it, then copy it to ~/Applications and start it
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source scripts/product.env
@@ -122,6 +123,12 @@ if [ "$POLYCARP_TERMINAL" = 1 ]; then
 fi
 echo "built $APP ($FULL_VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"), terminal $([ "$POLYCARP_TERMINAL" = 1 ] && echo built || echo "not built"))"
 
+# An SDK newer than this macOS can link symbols the system lacks, and the app then crashes at launch. Before anything
+# is quit or replaced, the build's own polycarp checks every import from the system (cli/src/toolchain.rs) and names
+# the missing symbols and the Xcode to build with. A build only made here (no flag, release.sh, CI) is not checked.
+if [ "${1:-}" = "--install" ] || [ "${1:-}" = "--check" ]; then
+  "$APP/Contents/Resources/bin/polycarp" update --check-build "$APP/Contents/MacOS/$EXECUTABLE" || exit 1
+fi
 if [ "${1:-}" = "--install" ]; then
   scripts/install-app.sh "$APP"
 fi
