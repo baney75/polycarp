@@ -223,7 +223,7 @@ fn others(name: &str) -> bool {
 #[cfg(windows)]
 mod system {
     use super::*;
-    use std::process::Command;
+    use std::process::{Command, Stdio};
 
     /// Lists each program's own signature. The folder arrives in an environment variable, never in the script's text.
     ///
@@ -439,7 +439,13 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
 
     /// Builds in `work\build` and starts that once with its home in `work\home`.
     pub fn started(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<(), Refused> {
-        let launcher = portable::build(folder, &work.join("build"), parts)?;
+        // Local Studio is left out of the build that is started: its extension could reach the person's own helper,
+        // which Chromium finds through the registry, not through any folder this start moves.
+        let parts = portable::Parts {
+            local_studio: work.join("no-local-studio"),
+            ..parts.clone()
+        };
+        let launcher = portable::build(folder, &work.join("build"), &parts)?;
         let home = work.join("home");
         let start = portable::start(&launcher, &home);
         portable::make_home(&start, &home)?;
@@ -502,6 +508,10 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     /// Stops every process whose program is inside `folder`, best effort. The folder arrives in an environment
     /// variable, never in the script's text.
     fn stop_inside(folder: &Path) {
+        // Its long name, as a process's path gives it: TEMP on a runner is an 8.3 name such as RUNNER~1.
+        let long = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+        let text = long.to_string_lossy();
+        let folder = Path::new(text.strip_prefix(r"\\?\").unwrap_or(&text));
         let script = "$b = $env:POLYCARP_BUILD_DIR.TrimEnd('\\') + '\\'; Get-Process | Where-Object { $_.Path -and \
                       $_.Path.StartsWith($b, [System.StringComparison]::OrdinalIgnoreCase) } | \
                       Stop-Process -Force -ErrorAction SilentlyContinue";

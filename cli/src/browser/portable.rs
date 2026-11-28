@@ -23,7 +23,7 @@ pub const PREFS: &str =
 pub const PAGE: &str = "Search or type an address";
 
 /// What the build is made from, out of `POLYCARP_BROWSER_RESOURCES`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Parts {
     pub changes: PathBuf,
     pub launcher: PathBuf,

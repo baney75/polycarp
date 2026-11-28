@@ -92,7 +92,7 @@ carries a valid Authenticode signature from imput LLC, Helium's maker. Then it b
 removes Helium's updater, turns Helium's update checks off for the first profile (with the updater gone, no update can be put in
 place for any profile), puts Polycarp's name in the browser's text and adds
 Polycarp's launcher and extension. Then it starts that build once with no window and a throwaway profile in the same
-folder, with no network and none of your folders, and the start must show Polycarp's own new tab within 3 minutes; any of
+folder, with no network and without Local Studio, and the start must show Polycarp's own new tab within 3 minutes; any of
 its processes still running are stopped. Then it deletes it all. Nothing is installed. The build needs Polycarp's parts: run `browser/scripts/build-parts-windows.sh DEST` from a checkout and set
 `POLYCARP_BROWSER_RESOURCES` to `DEST`. Every other `polycarp browser` command on Windows says that only
 `install --dry-run` works there so far. Installing the browser on Windows comes later.
