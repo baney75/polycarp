@@ -487,6 +487,14 @@ fn not_running(proc: &Path, program: &Path) -> Result<(), Refused> {
     }
 }
 
+/// Removes the browser while nothing under `proc` runs from its folder or from a stranded `.old` beside it.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn uninstall_from(proc: &Path, places: &Places, with_profile: bool) -> Result<String, Refused> {
+    not_running(proc, &places.program)?;
+    not_running(proc, &installed::beside(&places.program, ".old"))?;
+    installed::remove(places, with_profile)
+}
+
 /// Writes the desktop entry whole, through a file beside it, readable by all (0644).
 #[cfg(unix)]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -951,8 +959,7 @@ mod system {
 
     /// Removes the browser while it is not running.
     pub fn uninstall(places: &Places, with_profile: bool) -> Result<String, Refused> {
-        not_running(Path::new("/proc"), &places.program)?;
-        installed::remove(places, with_profile)
+        uninstall_from(Path::new("/proc"), places, with_profile)
     }
 }
 
@@ -1492,7 +1499,24 @@ mod tests {
         entry("12", PathBuf::from("/usr/bin/bash"));
         assert_eq!(not_running(&proc, &program), Ok(()));
         assert_eq!(not_running(&proc, &root.join("none")), Ok(()));
+        // Uninstall also refuses while a browser runs from a stranded `.old`, and removes nothing.
+        let p = places(&|k| match k {
+            "XDG_DATA_HOME" => Some(root.join("data").into_os_string()),
+            "XDG_CONFIG_HOME" | "HOME" => Some(root.join("config").into_os_string()),
+            _ => None,
+        })
+        .unwrap();
+        assert_eq!(p.program, program);
+        let e = uninstall_from(&proc, &p, false).unwrap_err();
+        assert_eq!(e.check, "running");
+        assert!(
+            program.is_dir(),
+            "it removed the program under a running browser"
+        );
         entry("13", program.join("helium"));
+        let e = uninstall_from(&proc, &p, false).unwrap_err();
+        assert_eq!(e.check, "running");
+        assert!(program.is_dir());
         let e = not_running(&proc, &root.join("link/polycarp-browser")).unwrap_err();
         assert_eq!(e.check, "running");
         assert_eq!(
