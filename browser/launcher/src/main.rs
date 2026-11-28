@@ -326,7 +326,10 @@ mod tests {
     fn local_studio_is_loaded_only_when_the_app_has_it_inside() {
         let contents = std::env::temp_dir().join(format!("launcher-ls-{}", std::process::id()));
         let me = contents.join("MacOS").join("Polycarp Browser");
-        let folder = contents.join("Resources/polycarp/local-studio");
+        let folder = contents
+            .join("Resources")
+            .join("polycarp")
+            .join("local-studio");
         assert_eq!(mac_layout(&me).local_studio_root, folder);
         std::fs::create_dir_all(&folder).unwrap();
         assert_eq!(local_studio(&mac_layout(&me).local_studio_root), None);
@@ -386,8 +389,14 @@ mod tests {
             ["--load-extension=/a/ext,/b", "x"]
         );
         // Elsewhere a slash starts a path, not a switch.
+        let given = ["/user-data-dir=/mine"].iter().map(OsString::from);
+        let elsewhere = arguments_as(false, vec!["/a/ext".into()], Some("/p".into()), given);
+        let elsewhere: Vec<String> = elsewhere
+            .into_iter()
+            .map(|a| a.into_string().unwrap())
+            .collect();
         assert_eq!(
-            with(Some("/p"), &["/user-data-dir=/mine"]),
+            elsewhere,
             [
                 "--load-extension=/a/ext",
                 "--user-data-dir=/p",
