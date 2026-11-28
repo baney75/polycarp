@@ -249,5 +249,123 @@
     }
    }
   ]
+ },
+ {
+  "name": "a link clicked in another app is user caused and takes you to the browser's workspace",
+  "rules": [
+   "R-F4",
+   "R-F2"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "open",
+    "window": "browser",
+    "pid": 1,
+    "app": "browser"
+   },
+   {
+    "do": "switch",
+    "n": 2
+   },
+   {
+    "do": "open",
+    "window": "chat",
+    "pid": 2,
+    "app": "chat"
+   },
+   {
+    "do": "activate",
+    "window": "browser",
+    "cause": "user",
+    "effects": [
+     {
+      "do": "show_workspace",
+      "monitor": "A",
+      "workspace": 1
+     },
+     {
+      "do": "focus_window",
+      "window": "browser"
+     }
+    ],
+    "expect": {
+     "monitors": {
+      "A": {
+       "current": 1
+      }
+     },
+     "active": "browser"
+    }
+   }
+  ]
+ },
+ {
+  "name": "applying the workspace you were just taken to again keeps the browser in front",
+  "rules": [
+   "R-F5"
+  ],
+  "steps": [
+   {
+    "do": "monitor_added",
+    "monitor": "A"
+   },
+   {
+    "do": "open",
+    "window": "browser",
+    "pid": 1,
+    "app": "browser"
+   },
+   {
+    "do": "switch",
+    "n": 2
+   },
+   {
+    "do": "open",
+    "window": "chat",
+    "pid": 2,
+    "app": "chat"
+   },
+   {
+    "do": "activate",
+    "window": "browser",
+    "cause": "user",
+    "effects": [
+     {
+      "do": "show_workspace",
+      "monitor": "A",
+      "workspace": 1
+     },
+     {
+      "do": "focus_window",
+      "window": "browser"
+     }
+    ],
+    "expect": {
+     "monitors": {
+      "A": {
+       "current": 1
+      }
+     },
+     "active": "browser"
+    }
+   },
+   {
+    "do": "switch",
+    "n": 1,
+    "effects": [],
+    "expect": {
+     "monitors": {
+      "A": {
+       "current": 1
+      }
+     },
+     "active": "browser"
+    }
+   }
+  ]
  }
 ]
