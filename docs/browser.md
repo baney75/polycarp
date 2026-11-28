@@ -111,10 +111,13 @@ removes the browser and its shortcut and keeps your profile; `uninstall --profil
 [helium-linux](https://github.com/imputnet/helium-linux) for your processor (x86_64 or arm64) into Polycarp's cache: the
 `.tar.xz` and its `.asc` signature. It checks that each has the SHA-256 GitHub lists, then has `gpg`, with a keyring of its
 own that holds only Helium's signing key, check the signature: it must be good and made by the key
-`BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`. Only then does it unpack the tarball into a private folder, check that it
-is laid out as Helium's, and delete the unpacked copy and the keyring. Nothing is installed and nothing from the release is
-run. Every other `polycarp browser` command on Linux says that only `install --dry-run` works there so far. Making and
-installing the browser on Linux comes later.
+`BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`. Only then does it unpack the tarball into a private folder and check that it
+is laid out as Helium's. Then it builds Polycarp Browser from that copy: it turns Helium's update checks off for the first profile
+(the Linux release has no updater program to remove), puts Polycarp's name in the browser's text and adds Polycarp's launcher,
+`polycarp-browser`, and extension. Then it deletes it all, the keyring too. Nothing is installed and nothing from the release is
+run. The build needs Polycarp's parts: run `browser/scripts/build-parts-linux.sh DEST` from a checkout and set
+`POLYCARP_BROWSER_RESOURCES` to `DEST`; without them it stops before downloading. Every other `polycarp browser` command on
+Linux says that only `install --dry-run` works there so far. Starting and installing the browser on Linux come later.
 
 ## What is different from Helium
 

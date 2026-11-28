@@ -21,26 +21,5 @@ MADE=$BUILD/release/polycarp-browser-launcher
 cp "$MADE" "$DEST/make-browser/launcher.exe"
 cp "$HERE/changes.toml" "$HERE/LICENSE" "$DEST/make-browser/"
 
-EXT=$HERE/../spaces/extension
-if command -v rsync >/dev/null && command -v python3 >/dev/null; then
-  "$EXT/scripts/stage.sh" "$DEST/extension" >/dev/null
-else
-  # Windows runners have no rsync, which stage.sh needs, so Python copies the tree leaving out what stage.sh's rsync does:
-  # /tests, /scripts, /docs and /*.md at the top, and dev-*, dot files and *.map anywhere.
-  PY=$(command -v python3 || command -v python)
-  "$PY" -I - "$EXT" "$DEST/extension" <<'PY'
-import fnmatch, shutil, sys
-src, dest = sys.argv[1], sys.argv[2]
-def skip(folder, names):
-    top = folder == src
-    out = set()
-    for n in names:
-        if top and (n in ("tests", "scripts", "docs") or n.endswith(".md")):
-            out.add(n)
-        elif fnmatch.fnmatch(n, "dev-*") or n.startswith(".") or n.endswith(".map"):
-            out.add(n)
-    return out
-shutil.copytree(src, dest, ignore=skip)
-PY
-fi
+"$HERE/scripts/stage-extension.sh" "$DEST/extension"
 echo "parts in $DEST"
