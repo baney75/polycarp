@@ -17,9 +17,11 @@ use std::path::{Path, PathBuf};
 pub const SERVICE: &str = "Polycarp Sync";
 
 /// errSecInteractionNotAllowed: the Keychain would have to ask, and asking is turned off.
+#[cfg(target_os = "macos")]
 pub const INTERACTION_NOT_ALLOWED: i32 = -25308;
 /// errSecAuthFailed. With asking turned off no password is ever entered, so this is how macOS 27 answers a read whose
 /// access list does not name this `polycarp` (seen on Donovan's Mac, 2026-11-28): the Keychain wanted to ask.
+#[cfg(target_os = "macos")]
 pub const AUTH_FAILED: i32 = -25293;
 
 /// Whether reading the key may put a system prompt on screen.
