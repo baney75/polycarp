@@ -347,6 +347,8 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         input: Option<String>,
     ) -> Result<String, Refused> {
         let mut command = Command::new(system32("curl.exe"));
+        // The token reaches curl only on its input, never in its environment.
+        command.env_remove(download::TOKEN);
         let options =
             "-q --fail --silent --show-error --location --proto =https --proto-redir =https \
                        --tlsv1.2 --retry 2 --connect-timeout 20 --user-agent polycarp-browser \

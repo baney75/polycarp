@@ -373,6 +373,8 @@ mod system {
         input: Option<String>,
     ) -> Result<String, Refused> {
         let mut command = Command::new(first(check, &["/usr/bin/curl", "/bin/curl"])?);
+        // The token reaches curl only on its input, never in its environment.
+        command.env_remove(download::TOKEN);
         let options =
             "-q --fail --silent --show-error --location --proto =https --proto-redir =https \
                        --tlsv1.2 --retry 2 --connect-timeout 20 --user-agent polycarp-browser";
