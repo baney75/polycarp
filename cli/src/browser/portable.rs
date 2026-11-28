@@ -1,5 +1,5 @@
-//! Polycarp Browser as a folder beside Helium's program, the way Windows (and Linux, later) lay it out: what is built
-//! from a checked release, and the headless start that proves it. Pure file work and data; the caller runs programs.
+//! Polycarp Browser as a folder beside Helium's program, the way Windows and Linux lay it out: what is built from a
+//! checked release, and the headless start that proves it. Pure file work and data; the caller runs programs.
 
 use std::ffi::OsString;
 use std::fs;
@@ -11,12 +11,45 @@ use super::rename::{rename_paks, Rename};
 use super::{is_link, refuse, Refused};
 
 pub const RESOURCES: &str = "POLYCARP_BROWSER_RESOURCES";
-/// Helium's own updater, beside `chrome.exe` in the zip.
-const UPDATER: &str = "helium_update_helper.exe";
-/// Read by Chromium on a profile's first run from the folder of `chrome.exe` (`InitialPrefsPath` in
-/// chrome/browser/first_run/first_run_internal_win.cc). `helium.services.browser_updates` is Helium's
-/// `kHeliumUpdateFetchingEnabled`, a profile pref that defaults to true (imputnet/helium,
-/// patches/helium/core/add-updater-preference.patch).
+
+/// What differs between Helium's Windows zip and its Linux tarball, and what Polycarp adds to each.
+#[derive(Debug)]
+pub struct Layout {
+    /// Helium's own program; `initial_preferences` goes beside it.
+    program: &'static str,
+    /// The launcher's name among the parts, in `make-browser/`.
+    part: &'static str,
+    /// The launcher's name in the build, from the product's name in `changes.toml`.
+    launcher: fn(&str) -> String,
+    /// Helium's own updater, which must be there to remove; the Linux tarball has none.
+    updater: Option<&'static str>,
+    /// What makes the parts, named in a refusal.
+    script: &'static str,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+pub const WINDOWS: Layout = Layout {
+    program: "chrome.exe",
+    part: "launcher.exe",
+    launcher: |name| format!("{name}.exe"),
+    updater: Some("helium_update_helper.exe"),
+    script: "browser/scripts/build-parts-windows.sh",
+};
+
+/// The 0.22.5.1 tarball: `helium`, the `helium-wrapper` script that execs it, and no updater program.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub const LINUX: Layout = Layout {
+    program: "helium",
+    part: "launcher",
+    launcher: |_| "polycarp-browser".into(),
+    updater: None,
+    script: "browser/scripts/build-parts-linux.sh",
+};
+
+/// Read by Chromium on a profile's first run from the folder of the running program (`InitialPrefsPath` in
+/// chrome/browser/first_run/first_run_internal_win.cc and first_run_internal_linux.cc, `DIR_EXE`, so beside `helium`,
+/// not its wrapper). `helium.services.browser_updates` is Helium's `kHeliumUpdateFetchingEnabled`, a profile pref that
+/// defaults to true (imputnet/helium, patches/helium/core/add-updater-preference.patch).
 pub const PREFS: &str =
     r#"{"helium":{"completed_onboarding":true,"services":{"browser_updates":false}}}"#;
 /// Something only Polycarp's new tab page says, the same as the Mac's.
@@ -30,11 +63,12 @@ pub struct Parts {
     pub license: PathBuf,
     pub extension: PathBuf,
     pub local_studio: PathBuf,
+    pub layout: &'static Layout,
 }
 
 /// The parts, or a refusal naming what is missing. Nothing is downloaded before this passes.
-pub fn parts(root: Option<OsString>) -> Result<Parts, Refused> {
-    let make = "browser/scripts/build-parts-windows.sh DEST makes them";
+pub fn parts(root: Option<OsString>, layout: &'static Layout) -> Result<Parts, Refused> {
+    let make = format!("{} DEST makes them", layout.script);
     let root = root.filter(|r| !r.is_empty()).map(PathBuf::from);
     let Some(root) = root.filter(|r| r.is_absolute()) else {
         let why = format!("{RESOURCES} is not set to an absolute folder; {make}");
@@ -42,10 +76,11 @@ pub fn parts(root: Option<OsString>) -> Result<Parts, Refused> {
     };
     let found = Parts {
         changes: root.join("make-browser").join("changes.toml"),
-        launcher: root.join("make-browser").join("launcher.exe"),
+        launcher: root.join("make-browser").join(layout.part),
         license: root.join("make-browser").join("LICENSE"),
         extension: root.join("extension"),
         local_studio: root.join("local-studio-extension"),
+        layout,
     };
     let needed = [
         &found.changes,
@@ -79,21 +114,30 @@ struct Keep {
 }
 
 /// Makes Polycarp Browser in `build` from Helium's checked folder, which is moved there. Its signatures were checked
-/// first; only the updater goes and only the text packs change. The launcher's path.
+/// first; only the updater, where there is one, goes and only the text packs change. The launcher's path.
 pub fn build(helium: &Path, build: &Path, parts: &Parts) -> Result<PathBuf, Refused> {
     let text =
         fs::read_to_string(&parts.changes).map_err(refuse("parts", "reading changes.toml"))?;
     let names: Names =
         toml::from_str(&text).map_err(|e| Refused::new("parts", format!("changes.toml: {e}")))?;
+    let layout = parts.layout;
     fs::rename(helium, build).map_err(refuse("change", "moving the release"))?;
-    let updater = build.join(UPDATER);
-    if !fs::symlink_metadata(&updater).is_ok_and(|m| m.is_file()) {
+    let plain = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
+    if !plain(&build.join(layout.program)) {
         return Err(Refused::new(
-            "updater",
-            "Helium's updater was not where expected",
+            "change",
+            "Helium's program was not where expected",
         ));
     }
-    fs::remove_file(&updater).map_err(refuse("updater", "removing it"))?;
+    if let Some(updater) = layout.updater.map(|u| build.join(u)) {
+        if !plain(&updater) {
+            return Err(Refused::new(
+                "updater",
+                "Helium's updater was not where expected",
+            ));
+        }
+        fs::remove_file(&updater).map_err(refuse("updater", "removing it"))?;
+    }
     fs::write(build.join("initial_preferences"), PREFS)
         .map_err(refuse("updater", "turning it off"))?;
     let locales = fs::read_dir(build.join("locales")).into_iter().flatten();
@@ -109,9 +153,15 @@ pub fn build(helium: &Path, build: &Path, parts: &Parts) -> Result<PathBuf, Refu
     };
     let english = |f: &Path| f.file_name().is_some_and(|n| n == "en-US.pak");
     rename_paks(&paks, &english, &rename)?;
-    let launcher = build.join(format!("{}.exe", names.to.name));
+    let launcher = build.join((layout.launcher)(&names.to.name));
     fs::copy(&parts.launcher, &launcher)
         .map_err(refuse("built-in pages", "putting the launcher in"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755))
+            .map_err(refuse("built-in pages", "making the launcher runnable"))?;
+    }
     let ours = build.join("polycarp");
     let extension = ours.join("extension");
     copy(&parts.extension, &extension)?;
@@ -224,37 +274,58 @@ pub mod tests {
     use super::*;
 
     pub fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("polycarp-pt-{name}-{}", std::process::id()));
+        // Windows and Linux each load this file, so their tests run side by side in one process.
+        let from = module_path!().split("::").nth(1).unwrap_or("");
+        let dir =
+            std::env::temp_dir().join(format!("polycarp-pt-{from}-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         dir
     }
 
     /// Made-up parts: the real `changes.toml`, a launcher and an extension.
-    fn made_parts(root: &Path) -> Parts {
+    fn made_parts(root: &Path, layout: &'static Layout) -> Parts {
         fs::create_dir_all(root.join("make-browser")).unwrap();
         fs::create_dir_all(root.join("extension/newtab")).unwrap();
         let changes = include_str!("../../../browser/changes.toml");
         fs::write(root.join("make-browser/changes.toml"), changes).unwrap();
-        fs::write(root.join("make-browser/launcher.exe"), "a launcher").unwrap();
+        let launcher = root.join("make-browser").join(layout.part);
+        fs::write(launcher, "a launcher").unwrap();
         fs::write(root.join("make-browser/LICENSE"), "GPL").unwrap();
         fs::write(root.join("extension/manifest.json"), "{}").unwrap();
         fs::write(root.join("extension/newtab/newtab.html"), "page").unwrap();
-        parts(Some(root.into())).unwrap()
+        parts(Some(root.into()), layout).unwrap()
     }
 
-    /// Helium's Windows folder in small, laid out as the 0.22.5.1 zip is.
-    fn made_helium(dir: &Path) -> PathBuf {
-        let top = dir.join("helium_0.22.5.1_x64-windows");
+    const UPDATER: &str = "helium_update_helper.exe";
+    /// Helium's Linux files, kept by the build as they are.
+    const LINUX_FILES: [&str; 4] = ["helium", "helium-wrapper", "libEGL.so", "resources.pak"];
+
+    /// Helium's folder in small, laid out as the 0.22.5.1 Windows zip or Linux tarball is.
+    fn made_helium(dir: &Path, layout: &Layout) -> PathBuf {
+        let linux = layout.updater.is_none();
+        let top = dir.join(match linux {
+            true => "helium-0.22.5.1-x86_64_linux",
+            false => "helium_0.22.5.1_x64-windows",
+        });
         fs::create_dir_all(top.join("locales")).unwrap();
-        for f in [
+        let windows = [
             "chrome.exe",
             UPDATER,
             "0.22.5.1.manifest",
             "chrome.dll",
             "resources.pak",
-        ] {
+        ];
+        for f in if linux {
+            &LINUX_FILES[..]
+        } else {
+            &windows[..]
+        } {
             fs::write(top.join(f), format!("bytes of {f}")).unwrap();
+        }
+        #[cfg(unix)]
+        if linux {
+            std::os::unix::fs::symlink("helium", top.join("chrome")).unwrap();
         }
         let texts = [(1, "About Helium"), (2, "The Helium Authors")];
         fs::write(top.join("locales/en-US.pak"), pak::made_up(&texts)).unwrap();
@@ -273,13 +344,19 @@ pub mod tests {
 
     #[test]
     fn parts_that_are_not_there_are_refused() {
-        let root = temp("parts");
-        let good = made_parts(&root);
-        let why = |r: Option<OsString>| parts(r).unwrap_err();
+        refused_parts(&WINDOWS, "windows");
+        refused_parts(&LINUX, "linux");
+    }
+
+    fn refused_parts(layout: &'static Layout, script: &str) {
+        let root = temp(&format!("parts-{script}"));
+        let good = made_parts(&root, layout);
+        let why = |r: Option<OsString>| parts(r, layout).unwrap_err();
         for r in [None, Some("".into()), Some("relative/parts".into())] {
             let e = why(r);
             assert_eq!(e.check, "parts");
-            assert!(e.why.contains("build-parts-windows.sh"), "{}", e.why);
+            let named = format!("browser/scripts/build-parts-{script}.sh DEST makes them");
+            assert!(e.why.ends_with(&named), "{}", e.why);
         }
         for gone in [
             &good.launcher,
@@ -300,8 +377,8 @@ pub mod tests {
     #[test]
     fn the_build_changes_only_the_updater_the_text_and_what_polycarp_adds() {
         let dir = temp("build");
-        let parts = made_parts(&dir.join("parts"));
-        let helium = made_helium(&dir);
+        let parts = made_parts(&dir.join("parts"), &WINDOWS);
+        let helium = made_helium(&dir, &WINDOWS);
         let untouched = [
             "chrome.exe",
             "0.22.5.1.manifest",
@@ -349,16 +426,93 @@ pub mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Linux keeps every file of Helium's, wrapper included, and gets `initial_preferences` beside `helium`.
+    #[test]
+    fn the_linux_build_keeps_helium_and_adds_prefs_and_a_runnable_launcher() {
+        let dir = temp("build-linux");
+        let parts = made_parts(&dir.join("parts"), &LINUX);
+        let helium = made_helium(&dir, &LINUX);
+        let before: Vec<_> = LINUX_FILES
+            .iter()
+            .map(|f| digest(&helium.join(f)).unwrap())
+            .collect();
+        let out = dir.join("build");
+        let launcher = build(&helium, &out, &parts).unwrap();
+        let after: Vec<_> = LINUX_FILES
+            .iter()
+            .map(|f| digest(&out.join(f)).unwrap())
+            .collect();
+        assert_eq!(before, after);
+        let mut names: Vec<String> = fs::read_dir(&out)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        let mut want = vec![
+            "initial_preferences",
+            "locales",
+            "polycarp",
+            "polycarp-browser",
+        ];
+        want.extend(LINUX_FILES);
+        #[cfg(unix)]
+        want.push("chrome");
+        want.sort();
+        assert_eq!(names, want);
+        assert_eq!(
+            fs::read_to_string(out.join("initial_preferences")).unwrap(),
+            PREFS
+        );
+        assert_eq!(
+            texts(&out.join("locales/en-US.pak")),
+            ["About Polycarp Browser", "The Helium Authors"]
+        );
+        assert_eq!(launcher, out.join("polycarp-browser"));
+        assert_eq!(fs::read(&launcher).unwrap(), b"a launcher");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(&launcher).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o755);
+        }
+        let ext = out.join("polycarp/extension");
+        assert!(ext.join("builtin.txt").is_file());
+        assert!(ext.join("newtab/newtab.html").is_file());
+        assert_eq!(fs::read(out.join("polycarp/LICENSE")).unwrap(), b"GPL");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_release_or_extension_that_is_off_is_refused() {
         type Spoil = fn(&Path, &Parts);
-        let cases: [(Spoil, &str); 3] = [
-            (|h, _| fs::remove_file(h.join(UPDATER)).unwrap(), "updater"),
+        let cases: [(&'static Layout, Spoil, &str); 6] = [
             (
+                &WINDOWS,
+                |h, _| fs::remove_file(h.join(UPDATER)).unwrap(),
+                "updater",
+            ),
+            (
+                &WINDOWS,
+                |h, _| fs::remove_file(h.join("chrome.exe")).unwrap(),
+                "change",
+            ),
+            (
+                &LINUX,
+                |h, _| fs::remove_file(h.join("helium")).unwrap(),
+                "change",
+            ),
+            (
+                &LINUX,
                 |h, _| fs::remove_file(h.join("locales/en-US.pak")).unwrap(),
                 "change",
             ),
             (
+                &WINDOWS,
+                |h, _| fs::remove_file(h.join("locales/en-US.pak")).unwrap(),
+                "change",
+            ),
+            (
+                &WINDOWS,
                 |h, _| fs::write(h.join("locales/de.pak"), "x").unwrap(),
                 "change",
             ),
@@ -366,17 +520,21 @@ pub mod tests {
         #[cfg(unix)]
         let cases = [
             &cases[..],
-            &[(
-                (|_, p| std::os::unix::fs::symlink("/etc/hosts", p.extension.join("out")).unwrap())
-                    as Spoil,
-                "built-in pages",
-            )],
+            &[&WINDOWS, &LINUX].map(|layout| {
+                (
+                    layout,
+                    (|_, p| {
+                        std::os::unix::fs::symlink("/etc/hosts", p.extension.join("out")).unwrap()
+                    }) as Spoil,
+                    "built-in pages",
+                )
+            }),
         ]
         .concat();
-        for (i, (spoil, check)) in cases.iter().enumerate() {
+        for (i, (layout, spoil, check)) in cases.iter().enumerate() {
             let dir = temp(&format!("spoil{i}"));
-            let parts = made_parts(&dir.join("parts"));
-            let helium = made_helium(&dir);
+            let parts = made_parts(&dir.join("parts"), layout);
+            let helium = made_helium(&dir, layout);
             spoil(&helium, &parts);
             let e = build(&helium, &dir.join("build"), &parts).unwrap_err();
             assert_eq!(e.check, *check, "case {i}: {}", e.why);

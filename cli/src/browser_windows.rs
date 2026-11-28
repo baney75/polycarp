@@ -20,10 +20,11 @@ mod listing;
 #[path = "browser/download.rs"]
 mod download;
 
-// The text packs and their renaming, shared with the Mac, and the folder build, shared with Linux later.
+// The text packs and their renaming, shared with the Mac, and the folder build, shared with Linux.
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/pak.rs"]
 mod pak;
+#[allow(clippy::duplicate_mod)]
 #[path = "browser/portable.rs"]
 mod portable;
 #[allow(clippy::duplicate_mod)]
@@ -133,7 +134,7 @@ fn with_parts(
     resources: Option<OsString>,
     go: impl FnOnce(portable::Parts) -> Result<String, Refused>,
 ) -> Result<String, Refused> {
-    go(portable::parts(resources)?)
+    go(portable::parts(resources, &portable::WINDOWS)?)
 }
 
 /// Helium's name for this processor.
@@ -1013,7 +1014,8 @@ mod tests {
     fn the_real_release_passes_and_a_changed_program_is_refused() {
         let cache = temp("live");
         let dir = cache.join("browser");
-        let parts = portable::parts(std::env::var_os(portable::RESOURCES)).unwrap();
+        let parts =
+            portable::parts(std::env::var_os(portable::RESOURCES), &portable::WINDOWS).unwrap();
         let (_, n) = system::checked(&dir, |folder, work, _| {
             system::started(folder, work, &parts)?;
             let build = work.join("build");
@@ -1061,7 +1063,7 @@ mod tests {
             "LOCALAPPDATA is not CI's temp folder"
         );
         let p = windows_install::places(&env).unwrap();
-        let parts = portable::parts(env(portable::RESOURCES)).unwrap();
+        let parts = portable::parts(env(portable::RESOURCES), &portable::WINDOWS).unwrap();
         let line = system::install(&local.join("cache"), &parts, &p).unwrap();
         assert!(line.contains("with a Start Menu shortcut"), "{line}");
         assert!(p.program.join("Polycarp Browser.exe").is_file() && p.shortcut.is_file());

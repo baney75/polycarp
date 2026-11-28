@@ -12,7 +12,10 @@
   must show Polycarp's new tab within 180 s; whatever still runs from the build is stopped and the work folder deleted. `install` then adds Local Studio's part, refuses while anything runs from `%LOCALAPPDATA%\Programs\Polycarp Browser`, and swaps the build in through `Polycarp Browser.new` and `.old` beside it, writing `polycarp\installed.json` and a Start Menu shortcut; `uninstall` keeps the profile unless `--profile --yes`. On Linux the source is a
   published `imputnet/helium-linux` release tarball with the sha256 GitHub's listing gives, and its detached OpenPGP signature
   must be valid from the pinned key `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`; nothing from it is unpacked, run or
-  installed before that.
+  installed before that. Its dry run then builds Polycarp Browser in a work folder as on Windows (parts made by
+  `scripts/build-parts-linux.sh`): the tarball has no updater program, `initial_preferences` goes beside `helium`, not its
+  wrapper, the launcher is `polycarp-browser` (mode 0755) beside `helium-wrapper`, and the work folder is deleted; nothing
+  from the build is started yet.
 - The result is built on the person's machine, from scratch, beside the old one, and swapped in only after it starts headless on a
   fresh throwaway profile, deleted afterwards. The running browser is never replaced under the person. Nothing here needs admin rights.
 - No Helium binary, logo or non-free asset is committed or published, and Helium's name is never the product's name or brand.
