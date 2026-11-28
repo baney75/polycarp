@@ -101,9 +101,9 @@ refuses, changing nothing, while Polycarp Browser is open. The new build goes in
 failed install leaves the old one as it was. The browser goes in `%LOCALAPPDATA%\Programs\Polycarp Browser`, with a Start Menu
 shortcut, `Polycarp Browser`, and your profile is `%LOCALAPPDATA%\Polycarp\Browser`, which install never touches. No admin
 rights are needed. Each install builds the newest release again, even when it is already installed; updates on Windows come
-later. `polycarp browser status` (or `status --json`) says which Helium release is installed. Until `uninstall` comes to
-Windows, remove the browser by quitting it and deleting that folder and the shortcut. Every other `polycarp browser` command on
-Windows says what works there so far.
+later. `polycarp browser status` (or `status --json`) says which Helium release is installed. `polycarp browser uninstall`
+removes the browser and its shortcut and keeps your profile; `uninstall --profile --yes` removes the profile too, and without
+`--yes` it only lists what would go. Every other `polycarp browser` command on Windows says what works there so far.
 
 ## On Linux
 
