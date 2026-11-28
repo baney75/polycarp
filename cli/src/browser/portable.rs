@@ -26,6 +26,7 @@ pub const PREFS: &str =
 pub struct Parts {
     pub changes: PathBuf,
     pub launcher: PathBuf,
+    pub license: PathBuf,
     pub extension: PathBuf,
     pub local_studio: PathBuf,
 }
@@ -41,12 +42,14 @@ pub fn parts(root: Option<OsString>) -> Result<Parts, Refused> {
     let found = Parts {
         changes: root.join("make-browser").join("changes.toml"),
         launcher: root.join("make-browser").join("launcher.exe"),
+        license: root.join("make-browser").join("LICENSE"),
         extension: root.join("extension"),
         local_studio: root.join("local-studio-extension"),
     };
     let needed = [
         &found.changes,
         &found.launcher,
+        &found.license,
         &found.extension.join("manifest.json"),
     ];
     if let Some(missing) = needed.iter().find(|p| !p.is_file()) {
@@ -119,6 +122,9 @@ pub fn build(helium: &Path, build: &Path, parts: &Parts) -> Result<PathBuf, Refu
     }
     fs::write(extension.join("builtin.txt"), "Polycarp Browser\n")
         .map_err(refuse("built-in pages", "marking it"))?;
+    // The launcher and the extension are GPL: their license goes with them, as in the Mac app.
+    fs::copy(&parts.license, ours.join("LICENSE"))
+        .map_err(refuse("built-in pages", "putting the license in"))?;
     if parts.local_studio.join("manifest.json").is_file() {
         copy(&parts.local_studio, &ours.join("local-studio"))?;
     }
@@ -164,6 +170,7 @@ pub mod tests {
         let changes = include_str!("../../../browser/changes.toml");
         fs::write(root.join("make-browser/changes.toml"), changes).unwrap();
         fs::write(root.join("make-browser/launcher.exe"), "a launcher").unwrap();
+        fs::write(root.join("make-browser/LICENSE"), "GPL").unwrap();
         fs::write(root.join("extension/manifest.json"), "{}").unwrap();
         fs::write(root.join("extension/newtab/newtab.html"), "page").unwrap();
         parts(Some(root.into())).unwrap()
@@ -209,6 +216,7 @@ pub mod tests {
         }
         for gone in [
             &good.launcher,
+            &good.license,
             &good.changes,
             &good.extension.join("manifest.json"),
         ] {
@@ -266,6 +274,7 @@ pub mod tests {
             "Polycarp Browser\n"
         );
         assert!(ext.join("newtab/newtab.html").is_file());
+        assert_eq!(fs::read(out.join("polycarp/LICENSE")).unwrap(), b"GPL");
         assert!(
             !out.join("polycarp/local-studio").exists(),
             "no Local Studio part"

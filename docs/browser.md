@@ -89,7 +89,8 @@ is signed ad hoc and the command says so: macOS then asks for permissions and sa
 [helium-windows](https://github.com/imputnet/helium-windows) for your processor (x64 or arm64) into Polycarp's cache, checks
 that the zip has the SHA-256 GitHub lists, unpacks it into a private folder and checks that every `.exe` and `.dll` in it
 carries a valid Authenticode signature from imput LLC, Helium's maker. Then it builds Polycarp Browser from that copy: it
-removes Helium's updater, turns update checks off for new profiles, puts Polycarp's name in the browser's text and adds
+removes Helium's updater, turns Helium's update checks off for the first profile (with the updater gone, no update can be put in
+place for any profile), puts Polycarp's name in the browser's text and adds
 Polycarp's launcher and extension. Then it deletes it all. Nothing is installed and nothing from the release is run. The
 build needs Polycarp's parts: run `browser/scripts/build-parts-windows.sh DEST` from a checkout and set
 `POLYCARP_BROWSER_RESOURCES` to `DEST`. Every other `polycarp browser` command on Windows says that only
