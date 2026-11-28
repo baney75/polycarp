@@ -45,6 +45,14 @@ public struct AppSpec: Equatable, Sendable, Codable {
 /// The apps BaneySpaces wraps without being told. Anything else can be added by bundle ID in
 /// `~/.config/baneyspaces/session.json`, and the default browser joins automatically.
 public enum Catalog {
+    /// A browser: one of the known ones or the default browser. Brought forward with no window here, it is
+    /// opening a link in a window it already has, so following it waits for no new window (R-F4).
+    public static func isBrowser(_ bundleID: String?, defaultBrowser: String?) -> Bool {
+        guard let bundleID, !bundleID.isEmpty else { return false }
+        if bundleID == defaultBrowser { return true }
+        return known.contains { $0.bundleID == bundleID && $0.role == .browser }
+    }
+
     public static let known: [AppSpec] = [
         AppSpec(bundleID: "com.mitchellh.ghostty", name: "Ghostty", role: .terminal, adapter: .ghostty),
         AppSpec(bundleID: "com.apple.Terminal", name: "Terminal", role: .terminal, adapter: .terminalApp),

@@ -1453,6 +1453,15 @@ final class Spaces {
             }
             return
         }
+        // A browser brought forward with nothing of it here is opening a link in a window it already has
+        // (R-F4): go there at once, without the new-window wait below. A window it opens later still lands
+        // where you are by then.
+        if Catalog.isBrowser(NSRunningApplication(processIdentifier: pid)?.bundleIdentifier,
+                             defaultBrowser: Self.defaultBrowserID()) {
+            following += 1
+            Trace.log("followFocus at once: \(w.appName) is a browser")
+            return followAway(w, to: n, pid: pid)
+        }
         // An app opening a new window (a global New Window key, a file opened in it) comes
         // forward before the window exists, still focused on its window elsewhere: Ghostty's
         // came 54 ms after it activated. Give the window that long to show up here before
@@ -1524,6 +1533,12 @@ final class Spaces {
     /// it to its workspace. Long enough for an app to make a window after activating, short
     /// enough that a Dock click on an app elsewhere still feels immediate.
     private static let newWindowGrace: TimeInterval = 0.2
+    /// The app that opens https links, by bundle ID.
+    private static func defaultBrowserID() -> String? {
+        guard let url = URL(string: "https://example.com"),
+              let app = NSWorkspace.shared.urlForApplication(toOpen: url) else { return nil }
+        return Bundle(url: app)?.bundleIdentifier
+    }
     /// Counts followFocus calls; one waiting out `newWindowGrace` stands down for a newer one.
     private var following = 0
 

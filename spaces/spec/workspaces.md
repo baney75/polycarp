@@ -113,6 +113,11 @@ the display you are on. If it already moved the compositor's focus, the front wi
 The result is `refuse_follow` with reason `not_user_caused`. An activation BaneySpaces asked for itself, to bring a workspace's
 window to the front, counts as not user caused too, even when it lands after the next switch.
 
+### R-F4 A browser opening a link takes you there at once
+A browser (a known one or the default browser) that comes forward with no window on the workspace you are on, as it
+does when another app opens a link, takes you to its window's workspace at once: there is no wait for a new window
+here. One ⌘Tab then picks the window you left.
+
 ### R-F3 Windows outside the scheme are ignored
 The model tracks only windows on BaneySpaces workspaces. Others (a platform's own scratchpad, a
 workspace the user keeps outside the nine) are left alone.
