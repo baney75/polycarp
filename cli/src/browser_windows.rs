@@ -3,11 +3,8 @@
 //! nothing from the release is run. The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
-use std::fs::{self, File};
-use std::io::{self, Read};
+use std::fs;
 use std::path::{Path, PathBuf};
-
-use sha2::{Digest, Sha256};
 
 // One copy of the listing code serves the Mac and Windows, so a test build loads it twice on purpose. Windows does
 // not read every field.
@@ -16,6 +13,12 @@ use sha2::{Digest, Sha256};
 #[path = "browser/listing.rs"]
 mod listing;
 
+// The download and refusal code, shared with Linux.
+#[allow(clippy::duplicate_mod)]
+#[path = "browser/download.rs"]
+mod download;
+
+use download::{fetch, is_link, print, refuse, Refused};
 use listing::Release;
 
 #[cfg(windows)]
@@ -35,26 +38,6 @@ const VERBS: [&str; 7] = [
     "finish",
 ];
 const ONLY: &str = "polycarp browser: only `install --dry-run` works on Windows so far.";
-
-/// Why nothing was installed: the check that failed, and what it found.
-#[derive(Debug, PartialEq)]
-pub struct Refused {
-    pub check: &'static str,
-    pub why: String,
-}
-
-impl Refused {
-    fn new(check: &'static str, why: impl Into<String>) -> Refused {
-        Refused {
-            check,
-            why: why.into(),
-        }
-    }
-}
-
-fn refuse<'a>(check: &'static str, doing: &'a str) -> impl FnOnce(io::Error) -> Refused + 'a {
-    move |e| Refused::new(check, format!("{doing}: {e}"))
-}
 
 /// None when these arguments are not a browser command.
 pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> Option<i32> {
@@ -84,22 +67,6 @@ pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> 
     Some(print(done))
 }
 
-fn print(done: Result<String, Refused>) -> i32 {
-    match done {
-        Ok(line) => {
-            println!("{line}");
-            0
-        }
-        Err(r) => {
-            eprintln!(
-                "polycarp browser: the {} check failed: {}. Nothing was installed.",
-                r.check, r.why
-            );
-            1
-        }
-    }
-}
-
 /// Helium's name for this processor.
 fn arch_name(arch: &str) -> Result<&'static str, Refused> {
     match arch {
@@ -112,63 +79,6 @@ fn arch_name(arch: &str) -> Result<&'static str, Refused> {
 fn parse(json: &str, arch: &str) -> Result<Release, Refused> {
     let name = |version: &str| format!("helium_{version}_{arch}-windows.zip");
     listing::parse(json, DOWNLOADS, name).map_err(|why| Refused::new("release", why))
-}
-
-/// The zip with the release's own digest, downloaded by `download` unless the folder already has it.
-fn fetch(
-    release: &Release,
-    dir: &Path,
-    download: &dyn Fn(&Path) -> Result<(), Refused>,
-) -> Result<PathBuf, Refused> {
-    let zip = dir.join(&release.name);
-    if !digest(&zip).is_ok_and(|d| d == release.sha256) {
-        let part = dir.join(format!("{}.part", release.name));
-        let _ = fs::remove_file(&part);
-        download(&part)?;
-        let got = digest(&part).map_err(refuse("digest", "reading the download"))?;
-        if got != release.sha256 {
-            let _ = fs::remove_file(&part);
-            let why = format!("{} does not match the release's sha256", release.name);
-            return Err(Refused::new("digest", why));
-        }
-        fs::rename(&part, &zip).map_err(refuse("download", "keeping it"))?;
-    }
-    // Zips of other releases, and halves of them.
-    for other in fs::read_dir(dir).into_iter().flatten().flatten() {
-        let name = other.file_name().to_string_lossy().into_owned();
-        if name.starts_with("helium_") && name.contains(".zip") && name != release.name {
-            let _ = fs::remove_file(other.path());
-        }
-    }
-    Ok(zip)
-}
-
-fn digest(path: &Path) -> io::Result<String> {
-    if !fs::symlink_metadata(path)?.is_file() {
-        return Err(io::Error::other("not a plain file"));
-    }
-    let mut file = File::open(path)?;
-    let mut hash = Sha256::new();
-    let mut buffer = vec![0; 1 << 20];
-    loop {
-        let n = file.read(&mut buffer)?;
-        if n == 0 {
-            return Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect());
-        }
-        hash.update(&buffer[..n]);
-    }
-}
-
-/// A link, or on Windows any reparse point such as a junction.
-fn is_link(meta: &fs::Metadata) -> bool {
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 {
-            return true;
-        }
-    }
-    meta.file_type().is_symlink()
 }
 
 /// The unpacked folder, when the work folder holds exactly Helium's one folder with its program and manifest.
@@ -283,6 +193,11 @@ fn judge(said: &str, root: &Path, walked: &[PathBuf]) -> Result<usize, Refused> 
         return Err(Refused::new("signature", why));
     }
     Ok(seen.len())
+}
+
+/// Zips of other Windows releases, and halves of them.
+fn others(name: &str) -> bool {
+    name.starts_with("helium_") && name.contains(".zip")
 }
 
 #[cfg(windows)]
@@ -440,7 +355,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
             ];
             curl("download", 1800, &more).map(drop)
         };
-        let zip = fetch(&release, dir, &get)?;
+        let zip = fetch(&release, dir, &get, &others)?;
         Ok((release, arch, zip))
     }
 
@@ -469,6 +384,7 @@ use system::dry_run;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
 
     const VERSION: &str = "0.22.5.1";
 
@@ -561,8 +477,8 @@ mod tests {
             count.set(count.get() + 1);
             fs::write(part, body).map_err(refuse("download", "writing"))
         };
-        let zip = fetch(&release, &dir, &get).unwrap();
-        fetch(&release, &dir, &get).unwrap();
+        let zip = fetch(&release, &dir, &get, &others).unwrap();
+        fetch(&release, &dir, &get, &others).unwrap();
         assert_eq!(count.get(), 1, "a good cached zip was downloaded again");
         let left: Vec<_> = fs::read_dir(&dir)
             .unwrap()
@@ -570,11 +486,14 @@ mod tests {
             .collect();
         assert_eq!(left, std::slice::from_ref(&zip), "older zips are not kept");
         fs::write(&zip, "changed after it was downloaded").unwrap();
-        fetch(&release, &dir, &get).unwrap();
+        fetch(&release, &dir, &get, &others).unwrap();
         assert_eq!(count.get(), 2);
         release.sha256 = "00".repeat(32);
         fs::remove_file(&zip).unwrap();
-        assert_eq!(fetch(&release, &dir, &get).unwrap_err().check, "digest");
+        assert_eq!(
+            fetch(&release, &dir, &get, &others).unwrap_err().check,
+            "digest"
+        );
         assert_eq!(
             fs::read_dir(&dir).unwrap().count(),
             0,
