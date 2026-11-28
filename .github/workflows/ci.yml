@@ -93,14 +93,17 @@ jobs:
           env -u POLYCARP_GITHUB_TOKEN ../browser/scripts/build-parts-windows.sh "$POLYCARP_BROWSER_RESOURCES"
           cargo test --bin polycarp -- --ignored --exact --test-threads 1 browser_windows::tests::the_real_release_passes_and_a_changed_program_is_refused browser_windows::tests::the_real_release_installs_and_uninstalls | tee "$RUNNER_TEMP/helium-windows.log"
           grep -q "test result: ok. 2 passed" "$RUNNER_TEMP/helium-windows.log"
-      # Downloads Helium's real Linux release, checks its sha256 and OpenPGP signature and builds Polycarp Browser from it with the
-      # parts made here, then refuses a copy with one byte changed.
+      # Downloads Helium's real Linux release, checks its sha256 and OpenPGP signature, builds Polycarp Browser from it with the
+      # parts made here and starts it once headless, then refuses a copy with one byte changed.
       # The workflow's own token goes to the release listing only, so a shared runner's address isn't rate limited.
+      # The start runs under Chromium's own sandbox, which needs unprivileged user namespaces; Ubuntu 24.04's AppArmor
+      # restricts them, so the runner allows them here. Polycarp never passes --no-sandbox.
       - if: runner.os == 'Linux'
         env:
           POLYCARP_BROWSER_RESOURCES: ${{ runner.temp }}/parts
           POLYCARP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           env -u POLYCARP_GITHUB_TOKEN ../browser/scripts/build-parts-linux.sh "$RUNNER_TEMP/parts"
           cargo test --bin polycarp -- --ignored --exact browser_linux::tests::the_real_release_passes_and_a_changed_tarball_is_refused | tee "$RUNNER_TEMP/helium-linux.log"
           grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/helium-linux.log"

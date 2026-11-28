@@ -1,7 +1,7 @@
 //! Polycarp Browser on Linux, so far: `polycarp browser install --dry-run` downloads Helium's newest Linux
 //! release, checks its sha256 and its OpenPGP signature against Helium's pinned key, and only then unpacks it into
-//! a private folder, checks the layout, builds Polycarp Browser from it there and throws it all away. Nothing is
-//! installed and nothing from the release is run. The rules are in `../browser/AGENTS.md`.
+//! a private folder, checks the layout, builds Polycarp Browser from it there, starts that once headless with a
+//! throwaway home and throws it all away. Nothing is installed. The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -18,7 +18,7 @@ mod listing;
 #[path = "browser/download.rs"]
 mod download;
 
-// The text packs and their renaming and the folder build, shared with Windows. The headless start comes later.
+// The text packs and their renaming, the folder build and the headless start, shared with Windows.
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/pak.rs"]
 mod pak;
@@ -214,9 +214,29 @@ fn spaced(fingerprint: &str) -> String {
 fn done_line(version: &str, n: usize) -> String {
     format!(
         "Helium {version} was downloaded and passed its checks: the sha256 GitHub lists, and Helium's OpenPGP \
-         signature from key {}. Polycarp Browser was built from its {n} files and deleted. Nothing was installed.",
+         signature from key {}. Polycarp Browser was built from its {n} files, started once without a window, showing its own new \
+         tab, and deleted. Nothing was installed.",
         spaced(FINGERPRINT)
     )
+}
+
+/// The processes under `proc` (Linux's `/proc`) whose program, `<pid>/exe`, resolves inside `build`. A process
+/// whose program was deleted reads as `<path> (deleted)`, still inside. Ones that can't be read are skipped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn inside_build(proc: &Path, build: &Path) -> Vec<i32> {
+    let Ok(entries) = fs::read_dir(proc) else {
+        return Vec::new();
+    };
+    let mut pids: Vec<i32> = entries
+        .flatten()
+        .filter_map(|e| {
+            let pid: i32 = e.file_name().to_str()?.parse().ok()?;
+            let exe = fs::read_link(e.path().join("exe")).ok()?;
+            (pid > 0 && exe.starts_with(build)).then_some(pid)
+        })
+        .collect();
+    pids.sort_unstable();
+    pids
 }
 
 /// The unpacked folder and its number of plain files, when the work folder holds exactly Helium's one folder with its
@@ -498,23 +518,112 @@ mod system {
         laid_out(work, &release.version, arch)
     }
 
-    /// Builds Polycarp Browser in `work/build` from Helium's checked folder and checks what it made.
-    pub fn built(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<(), Refused> {
+    /// Builds Polycarp Browser in `work/build` from Helium's checked folder and checks what it made. The launcher.
+    pub fn built(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<PathBuf, Refused> {
         let build = work.join("build");
         let launcher = portable::build(folder, &build, parts)?;
-        made(&build, &launcher)
+        made(&build, &launcher)?;
+        Ok(launcher)
     }
 
-    /// Downloads and checks the newest release in `dir`, builds Polycarp Browser from it, then throws it all away.
+    /// Builds in `work/build` and starts that once with its home in `work/home`, under Chromium's own sandbox.
+    pub fn started(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<(), Refused> {
+        // Local Studio is left out of the build that is started, as on Windows: its extension could reach the
+        // person's own helper.
+        let parts = portable::Parts {
+            local_studio: work.join("no-local-studio"),
+            ..parts.clone()
+        };
+        let launcher = built(folder, work, &parts)?;
+        let home = work.join("home");
+        let start = portable::start(&launcher, &home, parts.layout);
+        portable::make_home(&start, &home)?;
+        let (out, err) = run_for(&start, std::time::Duration::from_secs(180))?;
+        portable::judge(&out, &err)
+    }
+
+    /// Reads a pipe to its end on a thread of its own.
+    fn drain<R: std::io::Read + Send + 'static>(
+        pipe: Option<R>,
+    ) -> std::thread::JoinHandle<String> {
+        std::thread::spawn(move || {
+            let mut text = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut text);
+            }
+            String::from_utf8_lossy(&text).into_owned()
+        })
+    }
+
+    /// Runs the start, killed when it takes longer than `limit`; what it wrote to stdout and stderr.
+    fn run_for(
+        start: &portable::Start,
+        limit: std::time::Duration,
+    ) -> Result<(String, String), Refused> {
+        let mut command = Command::new(&start.program);
+        command.args(&start.args).envs(start.env.iter().cloned());
+        for name in start.unset {
+            command.env_remove(name);
+        }
+        let mut child = command
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(refuse("start", "running it"))?;
+        let out = drain(child.stdout.take());
+        let err = drain(child.stderr.take());
+        let began = std::time::Instant::now();
+        while child
+            .try_wait()
+            .map_err(refuse("start", "waiting for it"))?
+            .is_none()
+        {
+            if began.elapsed() > limit {
+                let _ = child.kill();
+                let _ = child.wait();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        // Its own helpers may hold the pipes open; they are this build's, so they are stopped.
+        stop_inside(start.program.parent().unwrap_or(&start.program));
+        Ok((
+            out.join().unwrap_or_default(),
+            err.join().unwrap_or_default(),
+        ))
+    }
+
+    /// Stops every process whose program is inside `folder` with SIGKILL, best effort.
+    fn stop_inside(folder: &Path) {
+        // `/proc/<pid>/exe` gives the real path, so the folder is compared by its real path too.
+        let real = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+        for pid in inside_build(Path::new("/proc"), &real) {
+            // SAFETY: kill(2) takes plain integers and touches no memory of ours.
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+    }
+
+    /// Downloads and checks the newest release in `dir`, builds Polycarp Browser from it and starts it once, then
+    /// throws it all away.
     pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
         let got = download(dir)?;
         signature(dir, &got.tarball, &got.asc)?;
         let work = dir.join("work");
         let checked = fresh("work folder", &work).and_then(|()| {
             let (folder, n) = unpack(&got.tarball, &work, &got.release, got.arch)?;
-            built(&folder, &work, parts).map(|()| n)
+            started(&folder, &work, parts).map(|()| n)
         });
-        let _ = clear(&work);
+        stop_inside(&work.join("build"));
+        // A browser that just quit can hold its files a moment longer.
+        for _ in 0..10 {
+            if clear(&work).is_ok() && fs::symlink_metadata(&work).is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         let n = checked?;
         if fs::symlink_metadata(&work).is_ok() {
             return Err(Refused::new("work folder", "it could not be deleted"));
@@ -675,7 +784,8 @@ mod tests {
             done_line(VERSION, 292),
             "Helium 0.22.5.1 was downloaded and passed its checks: the sha256 GitHub lists, and Helium's OpenPGP \
              signature from key BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E. Polycarp Browser was built from \
-             its 292 files and deleted. Nothing was installed."
+             its 292 files, started once without a window, showing its own new tab, and deleted. Nothing was \
+             installed."
         );
     }
 
@@ -1036,9 +1146,47 @@ mod tests {
         fs::remove_dir_all(&build).unwrap();
     }
 
-    /// The real release, downloaded into a temp cache: it passes and is built from the parts CI made, its text says
-    /// Polycarp Browser, and a copy of the tarball with one changed byte is refused at the signature check, before
-    /// anything is unpacked.
+    /// A fake `/proc`: only numbered entries whose `exe` resolves inside the build count, a deleted program included.
+    #[cfg(unix)]
+    #[test]
+    fn only_processes_running_from_the_build_are_picked() {
+        use std::os::unix::fs::symlink;
+        let root = temp("proc");
+        let (proc, build) = (root.join("proc"), root.join("work/build"));
+        let entry = |name: &str, exe: Option<PathBuf>| {
+            let at = proc.join(name);
+            fs::create_dir_all(&at).unwrap();
+            if let Some(exe) = exe {
+                symlink(exe, at.join("exe")).unwrap();
+            }
+        };
+        entry("101", Some(build.join("helium")));
+        entry("7", Some(build.join("lib/chrome_crashpad_handler")));
+        entry("202", Some(PathBuf::from("/usr/bin/bash")));
+        entry("303", Some(root.join("work/build-old/helium")));
+        entry("404", Some(root.join("work/home/helium")));
+        entry("505", None);
+        entry(
+            "606",
+            Some(PathBuf::from(format!(
+                "{} (deleted)",
+                build.join("helium").display()
+            ))),
+        );
+        entry("self", Some(build.join("helium")));
+        entry("thread-self", Some(build.join("helium")));
+        entry("0", Some(build.join("helium")));
+        entry("-1", Some(build.join("helium")));
+        fs::write(proc.join("42"), "a file, not a process").unwrap();
+        symlink(&proc, proc.join("777")).unwrap();
+        assert_eq!(inside_build(&proc, &build), [7, 101, 606]);
+        assert!(inside_build(&root.join("none"), &build).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The real release, downloaded into a temp cache: it passes, is built from the parts CI made and started once
+    /// headless, showing Polycarp's new tab, its text says Polycarp Browser, and a copy of the tarball with one
+    /// changed byte is refused at the signature check, before anything is unpacked.
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore]
@@ -1054,6 +1202,10 @@ mod tests {
             .and_then(|r| r.split(' ').next())
             .and_then(|n| n.parse::<usize>().ok());
         assert!(n.is_some_and(|n| n >= 200), "{line}");
+        assert!(
+            line.contains("started once without a window, showing its own new tab"),
+            "{line}"
+        );
         assert!(!dir.join("work").exists(), "the unpacked copy was kept");
         assert!(!dir.join("gnupg").exists(), "the keyring folder was kept");
         let got = system::download(&dir).unwrap();
