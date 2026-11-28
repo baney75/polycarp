@@ -1,7 +1,7 @@
 //! Polycarp Browser on Linux, so far: `polycarp browser install --dry-run` downloads Helium's newest Linux
 //! release, checks its sha256 and its OpenPGP signature against Helium's pinned key, and only then unpacks it into
-//! a private folder, checks the layout, builds Polycarp Browser from it there and throws it all away. Nothing is
-//! installed and nothing from the release is run. The rules are in `../browser/AGENTS.md`.
+//! a private folder, checks the layout, builds Polycarp Browser from it there, starts that once headless with a
+//! throwaway home and throws it all away. Nothing is installed. The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -18,7 +18,7 @@ mod listing;
 #[path = "browser/download.rs"]
 mod download;
 
-// The text packs and their renaming and the folder build, shared with Windows. The headless start comes later.
+// The text packs and their renaming, the folder build and the headless start, shared with Windows.
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/pak.rs"]
 mod pak;
@@ -214,9 +214,193 @@ fn spaced(fingerprint: &str) -> String {
 fn done_line(version: &str, n: usize) -> String {
     format!(
         "Helium {version} was downloaded and passed its checks: the sha256 GitHub lists, and Helium's OpenPGP \
-         signature from key {}. Polycarp Browser was built from its {n} files and deleted. Nothing was installed.",
+         signature from key {}. Polycarp Browser was built from its {n} files, started once without a window, showing its own new \
+         tab, and deleted. Nothing was installed.",
         spaced(FINGERPRINT)
     )
+}
+
+/// How long the headless start may take.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+/// Ubuntu 23.10 and later set this to 1, which keeps Chromium's sandbox from starting for a browser with no AppArmor
+/// profile of its own.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const USERNS: &str = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+
+fn no_sandbox() -> Refused {
+    Refused::new(
+        "sandbox",
+        "Ubuntu's AppArmor stops unprivileged user namespaces, which Chromium's sandbox needs, so Polycarp Browser \
+         can't start here. Polycarp never turns the sandbox off, so on this system the dry run can't check the \
+         start",
+    )
+}
+
+/// A refusal when `path` (the AppArmor switch in `USERNS`) reads 1. A missing file, 0 or anything else goes ahead.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn sandbox_allowed(path: &Path) -> Result<(), Refused> {
+    match fs::read_to_string(path) {
+        Ok(text) if text.trim() == "1" => Err(no_sandbox()),
+        _ => Ok(()),
+    }
+}
+
+/// What one headless start wrote, and whether it ran past its limit and was killed.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct Ran {
+    out: String,
+    err: String,
+    timed_out: bool,
+}
+
+/// The start passes only when it finished in time and showed Polycarp's new tab; a sandbox that could not start is
+/// said so, with the remedy.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn judge_start(ran: &Ran, limit: std::time::Duration) -> Result<(), Refused> {
+    let shown = portable::judge(&ran.out, &ran.err);
+    if shown.is_ok() && !ran.timed_out {
+        return Ok(());
+    }
+    if ran.err.contains("No usable sandbox") {
+        return Err(no_sandbox());
+    }
+    if ran.timed_out {
+        let last = ran.err.lines().map(str::trim).rfind(|l| !l.is_empty());
+        let why = format!(
+            "it did not finish within {} s ({})",
+            limit.as_secs(),
+            last.unwrap_or("no output")
+        );
+        return Err(Refused::new("start", why));
+    }
+    shown
+}
+
+/// Reads a pipe to its end on a thread of its own and sends what it read.
+#[cfg(unix)]
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::sync::mpsc::Receiver<String> {
+    let (send, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = Vec::new();
+        if let Some(mut p) = pipe {
+            let _ = p.read_to_end(&mut text);
+        }
+        let _ = send.send(String::from_utf8_lossy(&text).into_owned());
+    });
+    got
+}
+
+/// Runs the start in a process group of its own, killed with the whole group when it takes longer than `limit`.
+/// Afterwards the group and everything running from the build are stopped, so no helper holds its pipes, and the
+/// pipes are read for at most the time left plus 5 s.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn run_for(
+    start: &portable::Start,
+    build: &Path,
+    limit: std::time::Duration,
+) -> Result<Ran, Refused> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(&start.program);
+    command.args(&start.args).envs(start.env.iter().cloned());
+    for name in start.unset {
+        command.env_remove(name);
+    }
+    let mut child = command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(refuse("start", "running it"))?;
+    let group = child.id() as i32;
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let began = std::time::Instant::now();
+    let (mut timed_out, mut failed) = (false, None);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if began.elapsed() > limit => {
+                timed_out = true;
+                break;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(200)),
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        }
+    }
+    // SAFETY: killpg(2) takes plain integers and touches no memory of ours. The group is the start's own.
+    unsafe {
+        libc::killpg(group, libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    stop_inside(build);
+    if let Some(e) = failed {
+        return Err(refuse("start", "waiting for it")(e));
+    }
+    let wait = limit.saturating_sub(began.elapsed()) + std::time::Duration::from_secs(5);
+    let until = std::time::Instant::now() + wait;
+    let read = |got: std::sync::mpsc::Receiver<String>| {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        got.recv_timeout(left).unwrap_or_default()
+    };
+    Ok(Ran {
+        out: read(out),
+        err: read(err),
+        timed_out,
+    })
+}
+
+/// Stops every process whose program is inside `folder` with SIGKILL, best effort.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn stop_inside(folder: &Path) {
+    // `/proc/<pid>/exe` gives the real path, so the folder is compared by its real path too.
+    let real = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    if !sweepable(&real) {
+        return;
+    }
+    for pid in inside_build(Path::new("/proc"), &real) {
+        // SAFETY: kill(2) takes plain integers and touches no memory of ours.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+/// Only a work folder's own `build` is ever swept, never a system folder a program happens to sit in.
+fn sweepable(real: &Path) -> bool {
+    real.file_name().is_some_and(|n| n == "build")
+        && real
+            .parent()
+            .and_then(Path::file_name)
+            .is_some_and(|n| n == "work")
+}
+
+/// The processes under `proc` (Linux's `/proc`) whose program, `<pid>/exe`, resolves inside `build`. A process
+/// whose program was deleted reads as `<path> (deleted)`, still inside. Ones that can't be read are skipped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn inside_build(proc: &Path, build: &Path) -> Vec<i32> {
+    let Ok(entries) = fs::read_dir(proc) else {
+        return Vec::new();
+    };
+    let mut pids: Vec<i32> = entries
+        .flatten()
+        .filter_map(|e| {
+            let pid: i32 = e.file_name().to_str()?.parse().ok()?;
+            let exe = fs::read_link(e.path().join("exe")).ok()?;
+            (pid > 0 && exe.starts_with(build)).then_some(pid)
+        })
+        .collect();
+    pids.sort_unstable();
+    pids
 }
 
 /// The unpacked folder and its number of plain files, when the work folder holds exactly Helium's one folder with its
@@ -498,23 +682,50 @@ mod system {
         laid_out(work, &release.version, arch)
     }
 
-    /// Builds Polycarp Browser in `work/build` from Helium's checked folder and checks what it made.
-    pub fn built(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<(), Refused> {
+    /// Builds Polycarp Browser in `work/build` from Helium's checked folder and checks what it made. The launcher.
+    pub fn built(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<PathBuf, Refused> {
         let build = work.join("build");
         let launcher = portable::build(folder, &build, parts)?;
-        made(&build, &launcher)
+        made(&build, &launcher)?;
+        Ok(launcher)
     }
 
-    /// Downloads and checks the newest release in `dir`, builds Polycarp Browser from it, then throws it all away.
+    /// Builds in `work/build` and starts that once with its home in `work/home`, under Chromium's own sandbox.
+    pub fn started(folder: &Path, work: &Path, parts: &portable::Parts) -> Result<(), Refused> {
+        // Local Studio is left out of the build that is started, as on Windows: its extension could reach the
+        // person's own helper.
+        let parts = portable::Parts {
+            local_studio: work.join("no-local-studio"),
+            ..parts.clone()
+        };
+        let launcher = built(folder, work, &parts)?;
+        let home = work.join("home");
+        let start = portable::start(&launcher, &home, parts.layout);
+        portable::make_home(&start, &home)?;
+        let ran = run_for(&start, &work.join("build"), LIMIT)?;
+        judge_start(&ran, LIMIT)
+    }
+
+    /// Downloads and checks the newest release in `dir`, builds Polycarp Browser from it and starts it once, then
+    /// throws it all away.
     pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
+        // Nothing is downloaded or run when the browser's sandbox could not start here.
+        sandbox_allowed(Path::new(USERNS))?;
         let got = download(dir)?;
         signature(dir, &got.tarball, &got.asc)?;
         let work = dir.join("work");
         let checked = fresh("work folder", &work).and_then(|()| {
             let (folder, n) = unpack(&got.tarball, &work, &got.release, got.arch)?;
-            built(&folder, &work, parts).map(|()| n)
+            started(&folder, &work, parts).map(|()| n)
         });
-        let _ = clear(&work);
+        stop_inside(&work.join("build"));
+        // A browser that just quit can hold its files a moment longer.
+        for _ in 0..10 {
+            if clear(&work).is_ok() && fs::symlink_metadata(&work).is_err() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
         let n = checked?;
         if fs::symlink_metadata(&work).is_ok() {
             return Err(Refused::new("work folder", "it could not be deleted"));
@@ -675,7 +886,8 @@ mod tests {
             done_line(VERSION, 292),
             "Helium 0.22.5.1 was downloaded and passed its checks: the sha256 GitHub lists, and Helium's OpenPGP \
              signature from key BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E. Polycarp Browser was built from \
-             its 292 files and deleted. Nothing was installed."
+             its 292 files, started once without a window, showing its own new tab, and deleted. Nothing was \
+             installed."
         );
     }
 
@@ -1036,9 +1248,181 @@ mod tests {
         fs::remove_dir_all(&build).unwrap();
     }
 
-    /// The real release, downloaded into a temp cache: it passes and is built from the parts CI made, its text says
-    /// Polycarp Browser, and a copy of the tarball with one changed byte is refused at the signature check, before
-    /// anything is unpacked.
+    #[test]
+    fn a_sandbox_ubuntu_s_apparmor_stops_is_refused_before_anything_runs() {
+        let dir = temp("userns");
+        let switch = dir.join("apparmor_restrict_unprivileged_userns");
+        assert_eq!(sandbox_allowed(&switch), Ok(()), "no such switch");
+        for (text, allowed) in [("0\n", true), ("1\n", false), ("1", false), ("", true)] {
+            fs::write(&switch, text).unwrap();
+            let got = sandbox_allowed(&switch);
+            assert_eq!(got.is_ok(), allowed, "{text:?}");
+            if let Err(e) = got {
+                assert_eq!(e.check, "sandbox");
+                assert!(e
+                    .why
+                    .starts_with("Ubuntu's AppArmor stops unprivileged user namespaces"));
+                assert!(e.why.contains("Polycarp never turns the sandbox off"));
+                // It names no profile or system-wide switch to change: neither is Polycarp's to ask for.
+                assert!(
+                    !e.why.contains("sysctl") && !e.why.contains("profile"),
+                    "{}",
+                    e.why
+                );
+            }
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_start_must_finish_in_time_and_a_missing_sandbox_is_named() {
+        let ran = |out: &str, err: &str, timed_out| Ran {
+            out: out.into(),
+            err: err.into(),
+            timed_out,
+        };
+        let limit = std::time::Duration::from_secs(180);
+        let page = format!("<html>{}</html>", portable::PAGE);
+        assert_eq!(judge_start(&ran(&page, "", false), limit), Ok(()));
+        let why = |r: Ran| judge_start(&r, limit).map_err(|e| (e.check, e.why));
+        let sandbox =
+            "[1:1:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox! Update your kernel";
+        assert_eq!(why(ran("", sandbox, false)).unwrap_err().0, "sandbox");
+        assert_eq!(why(ran("", sandbox, true)).unwrap_err().0, "sandbox");
+        assert_eq!(
+            why(ran(&page, "first\nstill going\n", true)),
+            Err((
+                "start",
+                "it did not finish within 180 s (still going)".into()
+            ))
+        );
+        assert_eq!(
+            why(ran("", "", true)),
+            Err(("start", "it did not finish within 180 s (no output)".into()))
+        );
+        assert_eq!(
+            why(ran("", "ERROR: no GPU\n", false)),
+            Err(("start", "it showed nothing (ERROR: no GPU)".into()))
+        );
+    }
+
+    /// A fake start, `/bin/sh` reading a script from a temp folder.
+    #[cfg(unix)]
+    fn fake(name: &str, script: &str) -> (PathBuf, portable::Start) {
+        let dir = temp(name);
+        fs::write(dir.join("start.sh"), script).unwrap();
+        let start = portable::Start {
+            program: PathBuf::from("/bin/sh"),
+            args: vec![dir.join("start.sh").into()],
+            env: Vec::new(),
+            unset: &[],
+        };
+        (dir, start)
+    }
+
+    /// The sweep after a start takes only a work folder's `build`: a start whose program is `/bin/sh` must never
+    /// sweep `/usr/bin`.
+    #[test]
+    fn only_a_work_folders_build_is_swept() {
+        for (path, ok) in [
+            ("/usr/bin", false),
+            ("/bin", false),
+            ("/", false),
+            ("/tmp/x/build", false),
+            ("/tmp/x/work", false),
+            ("/tmp/x/work/build", true),
+        ] {
+            assert_eq!(sweepable(Path::new(path)), ok, "{path}");
+        }
+    }
+
+    /// A helper left behind holding stdout ends with the start's process group, so the pipes close at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_holding_the_pipes_does_not_hold_the_start() {
+        let (dir, start) = fake("hold", "sleep 60 &\necho shown\necho said >&2\nexit 0\n");
+        let began = std::time::Instant::now();
+        let ran = run_for(
+            &start,
+            &dir.join("work/build"),
+            std::time::Duration::from_secs(20),
+        )
+        .unwrap();
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            began.elapsed()
+        );
+        assert_eq!(
+            (ran.out.as_str(), ran.err.as_str(), ran.timed_out),
+            ("shown\n", "said\n", false)
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A start that runs past its limit is killed with its group and refused with its last line.
+    #[cfg(unix)]
+    #[test]
+    fn a_start_past_its_limit_is_killed_and_refused() {
+        let (dir, start) = fake("slow", "echo waiting >&2\nsleep 60\n");
+        let began = std::time::Instant::now();
+        let limit = std::time::Duration::from_secs(1);
+        let ran = run_for(&start, &dir.join("work/build"), limit).unwrap();
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(8),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(ran.timed_out);
+        let e = judge_start(&ran, limit).unwrap_err();
+        assert_eq!(
+            (e.check, e.why.as_str()),
+            ("start", "it did not finish within 1 s (waiting)")
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fake `/proc`: only numbered entries whose `exe` resolves inside the build count, a deleted program included.
+    #[cfg(unix)]
+    #[test]
+    fn only_processes_running_from_the_build_are_picked() {
+        use std::os::unix::fs::symlink;
+        let root = temp("proc");
+        let (proc, build) = (root.join("proc"), root.join("work/build"));
+        let entry = |name: &str, exe: Option<PathBuf>| {
+            let at = proc.join(name);
+            fs::create_dir_all(&at).unwrap();
+            if let Some(exe) = exe {
+                symlink(exe, at.join("exe")).unwrap();
+            }
+        };
+        entry("101", Some(build.join("helium")));
+        entry("7", Some(build.join("lib/chrome_crashpad_handler")));
+        entry("202", Some(PathBuf::from("/usr/bin/bash")));
+        entry("303", Some(root.join("work/build-old/helium")));
+        entry("404", Some(root.join("work/home/helium")));
+        entry("505", None);
+        entry(
+            "606",
+            Some(PathBuf::from(format!(
+                "{} (deleted)",
+                build.join("helium").display()
+            ))),
+        );
+        entry("self", Some(build.join("helium")));
+        entry("thread-self", Some(build.join("helium")));
+        entry("0", Some(build.join("helium")));
+        entry("-1", Some(build.join("helium")));
+        fs::write(proc.join("42"), "a file, not a process").unwrap();
+        symlink(&proc, proc.join("777")).unwrap();
+        assert_eq!(inside_build(&proc, &build), [7, 101, 606]);
+        assert!(inside_build(&root.join("none"), &build).is_empty());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The real release, downloaded into a temp cache: it passes, is built from the parts CI made and started once
+    /// headless, showing Polycarp's new tab, its text says Polycarp Browser, and a copy of the tarball with one
+    /// changed byte is refused at the signature check, before anything is unpacked.
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore]
@@ -1054,6 +1438,10 @@ mod tests {
             .and_then(|r| r.split(' ').next())
             .and_then(|n| n.parse::<usize>().ok());
         assert!(n.is_some_and(|n| n >= 200), "{line}");
+        assert!(
+            line.contains("started once without a window, showing its own new tab"),
+            "{line}"
+        );
         assert!(!dir.join("work").exists(), "the unpacked copy was kept");
         assert!(!dir.join("gnupg").exists(), "the keyring folder was kept");
         let got = system::download(&dir).unwrap();

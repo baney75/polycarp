@@ -593,7 +593,7 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         };
         let launcher = portable::build(folder, &work.join("build"), &parts)?;
         let home = work.join("home");
-        let start = portable::start(&launcher, &home);
+        let start = portable::start(&launcher, &home, parts.layout);
         portable::make_home(&start, &home)?;
         let (out, err) = run_for(&start, std::time::Duration::from_secs(180))?;
         portable::judge(&out, &err)

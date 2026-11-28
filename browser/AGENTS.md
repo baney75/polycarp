@@ -14,8 +14,10 @@
   must be valid from the pinned key `BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E`; nothing from it is unpacked, run or
   installed before that. Its dry run then builds Polycarp Browser in a work folder as on Windows (parts made by
   `scripts/build-parts-linux.sh`): the tarball has no updater program, `initial_preferences` goes beside `helium`, not its
-  wrapper, the launcher is `polycarp-browser` (mode 0755) beside `helium-wrapper`, and the work folder is deleted; nothing
-  from the build is started yet.
+  wrapper, and the launcher is `polycarp-browser` (mode 0755) beside `helium-wrapper`. It is then started once headless as on
+  Windows, under Chromium's own sandbox (never `--no-sandbox`), with `--password-store=basic`, `HOME`, the `XDG_*` folders and
+  `TMPDIR` inside the work folder, and `POLYCARP_GITHUB_TOKEN`, `DISPLAY`, `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` taken
+  out of its environment; every process whose `/proc/<pid>/exe` is inside the build is then stopped and the work folder deleted.
 - The result is built on the person's machine, from scratch, beside the old one, and swapped in only after it starts headless on a
   fresh throwaway profile, deleted afterwards. The running browser is never replaced under the person. Nothing here needs admin rights.
 - No Helium binary, logo or non-free asset is committed or published, and Helium's name is never the product's name or brand.

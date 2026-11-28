@@ -25,6 +25,12 @@ pub struct Layout {
     updater: Option<&'static str>,
     /// What makes the parts, named in a refusal.
     script: &'static str,
+    /// The headless start's per-user folders, all inside its home.
+    env: fn(&Path) -> Vec<(&'static str, PathBuf)>,
+    /// Taken out of the environment the start inherits.
+    unset: &'static [&'static str],
+    /// Switches the start adds after the fixed ones.
+    switches: &'static [&'static str],
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -34,6 +40,19 @@ pub const WINDOWS: Layout = Layout {
     launcher: |name| format!("{name}.exe"),
     updater: Some("helium_update_helper.exe"),
     script: "browser/scripts/build-parts-windows.sh",
+    env: |home| {
+        let local = home.join("AppData").join("Local");
+        vec![
+            ("LOCALAPPDATA", local.clone()),
+            ("APPDATA", home.join("AppData").join("Roaming")),
+            ("USERPROFILE", home.to_path_buf()),
+            ("TEMP", local.join("Temp")),
+            ("TMP", local.join("Temp")),
+        ]
+    },
+    // Polycarp's own GitHub token never reaches the browser.
+    unset: &[super::download::TOKEN],
+    switches: &[],
 };
 
 /// The 0.22.5.1 tarball: `helium`, the `helium-wrapper` script that execs it, and no updater program.
@@ -44,6 +63,27 @@ pub const LINUX: Layout = Layout {
     launcher: |_| "polycarp-browser".into(),
     updater: None,
     script: "browser/scripts/build-parts-linux.sh",
+    env: |home| {
+        vec![
+            ("HOME", home.to_path_buf()),
+            ("XDG_CONFIG_HOME", home.join(".config")),
+            ("XDG_CACHE_HOME", home.join(".cache")),
+            ("XDG_DATA_HOME", home.join(".local").join("share")),
+            ("XDG_STATE_HOME", home.join(".local").join("state")),
+            ("TMPDIR", home.join("tmp")),
+            // Without it the session bus, Wayland and audio sockets in the person's `/run/user/<uid>` stay in reach.
+            ("XDG_RUNTIME_DIR", home.join("run")),
+        ]
+    },
+    // No display, Wayland or session bus to reach, so nothing of the person's session.
+    unset: &[
+        super::download::TOKEN,
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "DBUS_SESSION_BUS_ADDRESS",
+    ],
+    // Saved passwords stay in the profile, never in a desktop keyring.
+    switches: &["--password-store=basic"],
 };
 
 /// Read by Chromium on a profile's first run from the folder of the running program (`InitialPrefsPath` in
@@ -208,33 +248,25 @@ pub struct Start {
     pub args: Vec<OsString>,
     pub env: Vec<(&'static str, PathBuf)>,
     /// Taken out of the environment it inherits.
-    pub unset: [&'static str; 1],
+    pub unset: &'static [&'static str],
 }
 
-pub fn start(launcher: &Path, home: &Path) -> Start {
+pub fn start(launcher: &Path, home: &Path, layout: &Layout) -> Start {
     let fixed = "--headless --no-first-run --disable-background-networking --host-resolver-rules=MAP@*@~NOTFOUND \
                  --allow-chrome-scheme-url --timeout=20000 --virtual-time-budget=4000 --dump-dom";
     let mut args: Vec<OsString> = fixed
         .split_whitespace()
         .map(|a| a.replace('@', " ").into())
         .collect();
+    args.extend(layout.switches.iter().map(OsString::from));
     let mut profile = OsString::from("--user-data-dir=");
     profile.push(home.join("profile"));
     args.extend([profile, "chrome://newtab".into()]);
-    let local = home.join("AppData").join("Local");
-    let env = vec![
-        ("LOCALAPPDATA", local.clone()),
-        ("APPDATA", home.join("AppData").join("Roaming")),
-        ("USERPROFILE", home.to_path_buf()),
-        ("TEMP", local.join("Temp")),
-        ("TMP", local.join("Temp")),
-    ];
     Start {
         program: launcher.to_path_buf(),
         args,
-        env,
-        // Polycarp's own GitHub token never reaches the browser.
-        unset: [super::download::TOKEN],
+        env: (layout.env)(home),
+        unset: layout.unset,
     }
 }
 
@@ -249,6 +281,13 @@ pub fn make_home(start: &Start, home: &Path) -> Result<(), Refused> {
         .chain([first.as_path()]);
     for folder in folders {
         fs::create_dir_all(folder).map_err(refuse("start", "making its home"))?;
+    }
+    // The runtime folder is private to its owner, as `/run/user/<uid>` is.
+    #[cfg(unix)]
+    for (_, folder) in start.env.iter().filter(|(n, _)| *n == "XDG_RUNTIME_DIR") {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o700))
+            .map_err(refuse("start", "making its runtime folder"))?;
     }
     fs::write(first.join("Preferences"), PREFS).map_err(refuse("start", "making its profile"))
 }
@@ -566,7 +605,7 @@ pub mod tests {
     fn the_start_runs_away_from_everything_of_the_persons() {
         let work = temp("start");
         let home = work.join("home");
-        let s = start(&work.join("build/Polycarp Browser.exe"), &home);
+        let s = start(&work.join("build/Polycarp Browser.exe"), &home, &WINDOWS);
         assert_eq!(s.program, work.join("build/Polycarp Browser.exe"));
         let args: Vec<String> = s
             .args
@@ -603,6 +642,73 @@ pub mod tests {
             fs::read_to_string(home.join("profile/Default/Preferences")).unwrap(),
             PREFS
         );
+        fs::remove_dir_all(&work).unwrap();
+    }
+
+    /// Linux: the same switches plus a basic password store, HOME and every XDG folder inside the home, and no
+    /// display, Wayland or session bus to reach.
+    #[test]
+    fn the_linux_start_reaches_no_session_and_no_keyring() {
+        let work = temp("start-linux");
+        let home = work.join("home");
+        let s = start(&work.join("build/polycarp-browser"), &home, &LINUX);
+        assert_eq!(s.program, work.join("build/polycarp-browser"));
+        let args: Vec<String> = s
+            .args
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let profile = format!("--user-data-dir={}", home.join("profile").display());
+        let want = [
+            "--headless",
+            "--no-first-run",
+            "--disable-background-networking",
+            "--host-resolver-rules=MAP * ~NOTFOUND",
+            "--allow-chrome-scheme-url",
+            "--timeout=20000",
+            "--virtual-time-budget=4000",
+            "--dump-dom",
+            "--password-store=basic",
+            &profile,
+            "chrome://newtab",
+        ];
+        assert_eq!(args, want);
+        assert!(!args.iter().any(|a| a.contains("remote-debugging")
+            || a.contains("no-sandbox")
+            || a.contains("mock-keychain")));
+        let env: Vec<(&str, PathBuf)> = s.env.clone();
+        let want_env = [
+            ("HOME", home.clone()),
+            ("XDG_CONFIG_HOME", home.join(".config")),
+            ("XDG_CACHE_HOME", home.join(".cache")),
+            ("XDG_DATA_HOME", home.join(".local/share")),
+            ("XDG_STATE_HOME", home.join(".local/state")),
+            ("TMPDIR", home.join("tmp")),
+            ("XDG_RUNTIME_DIR", home.join("run")),
+        ];
+        assert_eq!(env, want_env);
+        assert!(s.env.iter().all(|(_, p)| p.starts_with(&home)));
+        assert_eq!(
+            s.unset,
+            [
+                "POLYCARP_GITHUB_TOKEN",
+                "DISPLAY",
+                "WAYLAND_DISPLAY",
+                "DBUS_SESSION_BUS_ADDRESS"
+            ]
+        );
+        make_home(&s, &home).unwrap();
+        assert!(s.env.iter().all(|(_, p)| p.is_dir()));
+        assert_eq!(
+            fs::read_to_string(home.join("profile/Default/Preferences")).unwrap(),
+            PREFS
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(home.join("run")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
         fs::remove_dir_all(&work).unwrap();
     }
 }
