@@ -1,7 +1,8 @@
-//! Polycarp Browser on Linux, so far: `polycarp browser install --dry-run` downloads Helium's newest Linux
-//! release, checks its sha256 and its OpenPGP signature against Helium's pinned key, and only then unpacks it into
-//! a private folder, checks the layout, builds Polycarp Browser from it there, starts that once headless with a
-//! throwaway home and throws it all away. Nothing is installed. The rules are in `../browser/AGENTS.md`.
+//! Polycarp Browser on Linux: `polycarp browser install --dry-run` downloads Helium's newest Linux release, checks
+//! its sha256 and its OpenPGP signature against Helium's pinned key, and only then unpacks it into a private folder,
+//! checks the layout, builds Polycarp Browser from it there, starts that once headless with a throwaway home and
+//! throws it all away. `install` does the same, then puts the build in place with a menu entry; `status` reads it.
+//! The rules are in `../browser/AGENTS.md`.
 
 use std::ffi::OsString;
 use std::fs;
@@ -29,8 +30,15 @@ mod portable;
 #[allow(clippy::duplicate_mod)]
 #[path = "browser/rename.rs"]
 mod rename;
+// Where it is installed and the file work of installing and removing it, shared with Windows.
+#[allow(clippy::duplicate_mod)]
+// `remove` and `would_remove` are for `uninstall`, which comes next on Linux.
+#[allow(dead_code)]
+#[path = "browser/installed.rs"]
+mod installed;
 
-use download::{fetch, is_link, print, refuse, Refused};
+use download::{fetch, is_link, refuse, Refused};
+use installed::{say, Places, System};
 use listing::Release;
 
 #[cfg(target_os = "linux")]
@@ -51,35 +59,69 @@ const VERBS: [&str; 7] = [
     "uninstall",
     "finish",
 ];
-const ONLY: &str = "polycarp browser: only `install --dry-run` works on Linux so far.";
+const ONLY: &str =
+    "polycarp browser: on Linux only `install`, `install --dry-run` and `status [--json]` work so far.";
+const USAGE: &str = "polycarp browser on Linux:
+  install                    build Polycarp Browser from Helium's newest release and install it
+  install --dry-run          download, check, build and start it once, then throw it all away
+  status [--json]            say what is installed";
+const NOTHING: &str = " Nothing was installed.";
 
 /// None when these arguments are not a browser command.
 pub fn run(args: &[OsString], home: Option<PathBuf>, cache: Option<PathBuf>) -> Option<i32> {
+    answer(args, home, cache, &|k| std::env::var_os(k))
+}
+
+/// The places by Linux's rule.
+fn places(env: &dyn Fn(&str) -> Option<OsString>) -> Result<Places, Refused> {
+    installed::places(System::Linux, env)
+}
+
+/// `run`, with the environment it reads the places and the parts from.
+fn answer(
+    args: &[OsString],
+    home: Option<PathBuf>,
+    cache: Option<PathBuf>,
+    env: &dyn Fn(&str) -> Option<OsString>,
+) -> Option<i32> {
     let verb = args.first().map_or(Some("--help"), |a| a.to_str())?;
     if ["--help", "-h", "help"].contains(&verb) {
-        println!("{ONLY}");
+        println!("{USAGE}");
         return Some(0);
     }
     if !VERBS.contains(&verb) {
         return None;
     }
-    if verb != "install" || args.len() != 2 || args[1] != "--dry-run" {
-        eprintln!("{ONLY}");
-        return Some(2);
-    }
-    let (Some(_), Some(cache)) = (home, cache) else {
-        eprintln!("polycarp browser: no home folder");
-        return Some(1);
+    let mut rest: Vec<&str> = args[1..].iter().map(|a| a.to_str().unwrap_or("")).collect();
+    rest.sort_unstable();
+    let code = match (verb, rest.as_slice()) {
+        ("install", [] | ["--dry-run"]) => {
+            let (Some(_), Some(cache)) = (home, cache) else {
+                eprintln!("polycarp browser: no home folder");
+                return Some(1);
+            };
+            let dir = cache.join("browser");
+            let done = with_parts(env(portable::RESOURCES), |parts| match rest.is_empty() {
+                true => system::install(&dir, &parts, &places(env)?),
+                false => system::dry_run(&dir, &parts),
+            });
+            let missing = matches!(&done, Err(r) if ["shortcut", "stranded"].contains(&r.check));
+            say(done, if missing { "" } else { NOTHING })
+        }
+        ("status", []) => say(places(env).map(|p| installed::status(&p).text()), ""),
+        ("status", ["--json"]) => {
+            let status = places(env).map(|p| installed::status(&p));
+            let json = |s| {
+                serde_json::to_string_pretty(&s).map_err(|e| Refused::new("status", e.to_string()))
+            };
+            say(status.and_then(json), "")
+        }
+        _ => {
+            eprintln!("{ONLY}");
+            2
+        }
     };
-    let resources = std::env::var_os(portable::RESOURCES);
-    #[cfg(target_os = "linux")]
-    let done = with_parts(resources, |parts| dry_run(&cache.join("browser"), &parts));
-    #[cfg(not(target_os = "linux"))]
-    let done = with_parts(resources, |_| {
-        let why = format!("{} is not Linux", cache.display());
-        Err(Refused::new("system", why))
-    });
-    Some(print(done))
+    Some(code)
 }
 
 /// Runs `go` only once the parts are all there, so a refusal for them comes before any download.
@@ -403,6 +445,53 @@ fn inside_build(proc: &Path, build: &Path) -> Vec<i32> {
     pids
 }
 
+/// A refusal when any process under `proc` runs from inside `program`, by its real path; nothing is stopped.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn not_running(proc: &Path, program: &Path) -> Result<(), Refused> {
+    let real = fs::canonicalize(program).unwrap_or_else(|_| program.to_path_buf());
+    match inside_build(proc, &real).is_empty() {
+        true => Ok(()),
+        false => Err(Refused::new(
+            "running",
+            "Polycarp Browser is open; quit it and run this again",
+        )),
+    }
+}
+
+/// Writes the desktop entry whole, through a file beside it, readable by all (0644).
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn write_entry(places: &Places) -> Result<(), Refused> {
+    use std::io::Write;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let missing = |why: String| {
+        let at = places.program.display();
+        let why = format!(
+            "{why}; {} is installed in {at}, but its menu entry is missing",
+            installed::NAME
+        );
+        Refused::new("shortcut", why)
+    };
+    let text = installed::entry(&places.program).map_err(|e| missing(e.why))?;
+    if let Some(menu) = places.shortcut.parent() {
+        fs::create_dir_all(menu).map_err(|e| missing(format!("making its folder: {e}")))?;
+    }
+    let part = installed::beside(&places.shortcut, ".part");
+    let _ = fs::remove_file(&part);
+    let written = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o644)
+        .open(&part)
+        .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()))
+        .and_then(|()| fs::set_permissions(&part, fs::Permissions::from_mode(0o644)))
+        .and_then(|()| fs::rename(&part, &places.shortcut));
+    written.map_err(|e| {
+        let _ = fs::remove_file(&part);
+        missing(format!("writing it: {e}"))
+    })
+}
+
 /// The unpacked folder and its number of plain files, when the work folder holds exactly Helium's one folder with its
 /// program and wrapper, and nothing in it is anything but a folder, a plain file or a link to a plain file beside it.
 fn laid_out(work: &Path, version: &str, arch: &str) -> Result<(PathBuf, usize), Refused> {
@@ -706,9 +795,12 @@ mod system {
         judge_start(&ran, LIMIT)
     }
 
-    /// Downloads and checks the newest release in `dir`, builds Polycarp Browser from it and starts it once, then
-    /// throws it all away.
-    pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
+    /// Downloads and checks the newest release in `dir`, hands the checked folder, the work folder and the version
+    /// to `then`, and throws the work folder away whatever happened. The version and the number of files.
+    pub fn checked(
+        dir: &Path,
+        then: impl FnOnce(&Path, &Path, &str) -> Result<(), Refused>,
+    ) -> Result<(String, usize), Refused> {
         // Nothing is downloaded or run when the browser's sandbox could not start here.
         sandbox_allowed(Path::new(USERNS))?;
         let got = download(dir)?;
@@ -716,7 +808,7 @@ mod system {
         let work = dir.join("work");
         let checked = fresh("work folder", &work).and_then(|()| {
             let (folder, n) = unpack(&got.tarball, &work, &got.release, got.arch)?;
-            started(&folder, &work, parts).map(|()| n)
+            then(&folder, &work, &got.release.version).map(|()| n)
         });
         stop_inside(&work.join("build"));
         // A browser that just quit can hold its files a moment longer.
@@ -730,12 +822,81 @@ mod system {
         if fs::symlink_metadata(&work).is_ok() {
             return Err(Refused::new("work folder", "it could not be deleted"));
         }
-        Ok(done_line(&got.release.version, n))
+        Ok((got.release.version, n))
+    }
+
+    /// Builds Polycarp Browser from the checked release and starts it once, all inside the work folder, which then
+    /// goes.
+    pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
+        let (version, n) = checked(dir, |folder, work, _| started(folder, work, parts))?;
+        Ok(done_line(&version, n))
+    }
+
+    /// The dry run, then the build goes in place, with Local Studio's part added after the start, and gets its
+    /// menu entry. Nothing changes while the browser runs.
+    pub fn install(
+        dir: &Path,
+        parts: &portable::Parts,
+        places: &Places,
+    ) -> Result<String, Refused> {
+        // Set once the new build is in place, so a later failure doesn't read as nothing installed.
+        let placed = std::cell::RefCell::new(None);
+        let done = checked(dir, |folder, work, version| {
+            started(folder, work, parts)?;
+            not_running(Path::new("/proc"), &places.program)?;
+            let build = work.join("build");
+            if parts.local_studio.join("manifest.json").is_file() {
+                portable::copy(
+                    &parts.local_studio,
+                    &build.join("polycarp").join("local-studio"),
+                )?;
+            }
+            installed::write_record(&build, version)?;
+            if let Some(parent) = places.program.parent() {
+                fs::create_dir_all(parent).map_err(refuse("swap", "making the data folder"))?;
+            }
+            installed::swap(&build, &places.program, &installed::moved)?;
+            *placed.borrow_mut() = Some(version.to_string());
+            Ok(())
+        });
+        let version = match (done, placed.take()) {
+            (Ok((version, _)), _) => version,
+            (Err(r), Some(version)) => {
+                eprintln!(
+                    "polycarp browser: the {} check failed after the install: {}.",
+                    r.check, r.why
+                );
+                version
+            }
+            (Err(r), None) => return Err(r),
+        };
+        write_entry(places)?;
+        Ok(format!(
+            "{} (Helium {version}) is installed in {}, with a menu entry. Your profile is in {}.",
+            installed::NAME,
+            places.program.display(),
+            places.profile.display()
+        ))
     }
 }
 
-#[cfg(target_os = "linux")]
-use system::dry_run;
+/// Off Linux nothing here runs a program: each step that would is refused.
+#[cfg(not(target_os = "linux"))]
+mod system {
+    use super::*;
+
+    fn not_linux() -> Result<String, Refused> {
+        Err(Refused::new("system", "this is not Linux"))
+    }
+
+    pub fn dry_run(_: &Path, _: &portable::Parts) -> Result<String, Refused> {
+        not_linux()
+    }
+
+    pub fn install(_: &Path, _: &portable::Parts, _: &Places) -> Result<String, Refused> {
+        not_linux()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -1177,30 +1338,101 @@ mod tests {
     }
 
     #[test]
-    fn only_install_dry_run_is_answered() {
+    fn install_and_status_are_answered_and_nothing_else() {
         #[cfg(target_os = "macos")]
         assert_eq!(VERBS, crate::browser::VERBS);
+        let dir = temp("verbs");
+        let p = places(&|k| Some(dir.join(k).into_os_string())).unwrap();
+        fs::create_dir_all(&p.profile).unwrap();
+        // Only temp folders, and no parts, so `install` stops before any download.
+        let env = |k: &str| (k != portable::RESOURCES).then(|| dir.join(k).into_os_string());
         let run_ = |a: &[&str], home: Option<PathBuf>| {
-            run(
-                &a.iter().map(OsString::from).collect::<Vec<_>>(),
-                home.clone(),
-                home,
-            )
+            let args: Vec<OsString> = a.iter().map(OsString::from).collect();
+            answer(&args, home.clone(), home, &env)
         };
-        let home = Some(PathBuf::from("/nowhere"));
+        let home = Some(dir.clone());
+        assert_eq!(run(&["serve".into()], None, None), None);
         assert_eq!(run_(&[], home.clone()), Some(0));
         assert_eq!(run_(&["--help"], home.clone()), Some(0));
-        assert_eq!(run_(&["serve"], home.clone()), None);
-        for asked in [
-            &["install"][..],
-            &["update"],
-            &["install", "--dry-run", "--yes"],
-            &["status"],
+        for (asked, code) in [
+            (&["install"][..], 1),
+            (&["install", "--dry-run"], 1),
+            (&["status"], 0),
+            (&["status", "--json"], 0),
+            (&["uninstall", "--profile"], 2),
+            (&["uninstall"], 2),
+            (&["update"], 2),
+            (&["install", "--dry-run", "--yes"], 2),
+            (&["status", "--yes"], 2),
+            (&["uninstall", "--yes"], 2),
+            (&["open"], 2),
         ] {
-            assert_eq!(run_(asked, home.clone()), Some(2), "{asked:?}");
+            assert_eq!(run_(asked, home.clone()), Some(code), "{asked:?}");
         }
+        assert!(p.profile.is_dir(), "`uninstall --profile` removed it");
         assert_eq!(run_(&["install", "--dry-run"], None), Some(1));
-        assert!(ONLY.ends_with("works on Linux so far."));
+        assert!(ONLY.ends_with("work so far."));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fake `/proc` with one process inside the program folder and one beside it: only the first refuses, and it
+    /// is found by the folder's real path. Nothing is stopped.
+    #[cfg(unix)]
+    #[test]
+    fn install_refuses_while_the_browser_runs() {
+        use std::os::unix::fs::symlink;
+        let root = fs::canonicalize(temp("running")).unwrap();
+        let (proc, program) = (root.join("proc"), root.join("data/polycarp-browser"));
+        fs::create_dir_all(&program).unwrap();
+        symlink(root.join("data"), root.join("link")).unwrap();
+        let entry = |name: &str, exe: PathBuf| {
+            fs::create_dir_all(proc.join(name)).unwrap();
+            symlink(exe, proc.join(name).join("exe")).unwrap();
+        };
+        entry("11", root.join("data/polycarp-browser.old/helium"));
+        entry("12", PathBuf::from("/usr/bin/bash"));
+        assert_eq!(not_running(&proc, &program), Ok(()));
+        assert_eq!(not_running(&proc, &root.join("none")), Ok(()));
+        entry("13", program.join("helium"));
+        let e = not_running(&proc, &root.join("link/polycarp-browser")).unwrap_err();
+        assert_eq!(e.check, "running");
+        assert_eq!(
+            e.why,
+            "Polycarp Browser is open; quit it and run this again"
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    /// The desktop entry is written whole, 0644, over an old one and a leftover part, in a folder it makes.
+    #[cfg(unix)]
+    #[test]
+    fn the_desktop_entry_is_written_whole_and_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp("entry");
+        let p = places(&|k| Some(dir.join(k).into_os_string())).unwrap();
+        write_entry(&p).unwrap();
+        let text = fs::read_to_string(&p.shortcut).unwrap();
+        assert_eq!(text, installed::entry(&p.program).unwrap());
+        let mode = fs::metadata(&p.shortcut).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o644);
+        fs::write(installed::beside(&p.shortcut, ".part"), "half").unwrap();
+        write_entry(&p).unwrap();
+        assert!(!fs::read_to_string(&p.shortcut).unwrap().contains("Icon="));
+        let left: Vec<_> = fs::read_dir(p.shortcut.parent().unwrap())
+            .unwrap()
+            .collect();
+        assert_eq!(left.len(), 1, "the part was left");
+        // A menu folder that is a file: check `shortcut`, saying the browser is installed.
+        fs::remove_dir_all(p.shortcut.parent().unwrap()).unwrap();
+        fs::write(p.shortcut.parent().unwrap(), "x").unwrap();
+        let e = write_entry(&p).unwrap_err();
+        assert_eq!(e.check, "shortcut");
+        assert!(
+            e.why.ends_with("but its menu entry is missing"),
+            "{}",
+            e.why
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -1467,5 +1699,31 @@ mod tests {
             "the keyring folder was kept"
         );
         fs::remove_dir_all(&cache).unwrap();
+    }
+
+    /// A full install into the folders CI points `HOME` and the `XDG_*` folders at, never a person's, then status.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn the_real_release_installs() {
+        let env = |k: &str| std::env::var_os(k);
+        let data = PathBuf::from(env("XDG_DATA_HOME").unwrap());
+        assert!(
+            data.ends_with("xd"),
+            "XDG_DATA_HOME is not CI's temp folder"
+        );
+        let p = places(&env).unwrap();
+        assert!(p.profile.starts_with(env("XDG_CONFIG_HOME").unwrap()));
+        let parts = portable::parts(env(portable::RESOURCES), &portable::LINUX).unwrap();
+        let line = system::install(&data.join("cache"), &parts, &p).unwrap();
+        assert!(line.contains("with a menu entry"), "{line}");
+        assert!(p.program.join("polycarp-browser").is_file() && p.shortcut.is_file());
+        assert!(p.program.join("polycarp/installed.json").is_file());
+        assert!(!p.profile.exists(), "the install made a profile");
+        let has_studio = parts.local_studio.join("manifest.json").is_file();
+        let studio = p.program.join("polycarp/local-studio/manifest.json");
+        assert_eq!(studio.is_file(), has_studio);
+        let status = installed::status(&p);
+        assert!(status.installed.is_some(), "{}", status.text());
     }
 }
