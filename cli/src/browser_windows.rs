@@ -688,14 +688,34 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The real release, downloaded into a temp cache: it passes, and one changed byte in chrome.exe is refused.
+    /// The real release, downloaded into a temp cache: it passes and is built from the parts CI made, and one changed
+    /// byte in chrome.exe is refused.
     #[cfg(windows)]
     #[test]
     #[ignore]
     fn the_real_release_passes_and_a_changed_program_is_refused() {
         let cache = temp("live");
         let dir = cache.join("browser");
-        let (_, n) = system::checked(&dir, |_, _| Ok(())).unwrap();
+        let parts = portable::parts(std::env::var_os(portable::RESOURCES)).unwrap();
+        let (_, n) = system::checked(&dir, |folder, work| {
+            let launcher = portable::build(folder, &work.join("build"), &parts)?;
+            let build = launcher.parent().unwrap();
+            assert!(
+                launcher.ends_with("Polycarp Browser.exe"),
+                "{}",
+                launcher.display()
+            );
+            assert!(!build.join("helium_update_helper.exe").exists());
+            assert_eq!(
+                fs::read_to_string(build.join("initial_preferences")).unwrap(),
+                portable::PREFS
+            );
+            let english = fs::read(build.join("locales/en-US.pak")).unwrap();
+            assert!(english.windows(16).any(|w| w == b"Polycarp Browser"));
+            assert!(build.join("polycarp/extension/builtin.txt").is_file());
+            Ok(())
+        })
+        .unwrap();
         assert!(n >= 16, "{n} programs");
         assert!(!dir.join("work").exists(), "the unpacked copy was kept");
         let (release, arch, zip) = system::download(&dir).unwrap();
