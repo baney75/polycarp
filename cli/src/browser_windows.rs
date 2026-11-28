@@ -95,7 +95,7 @@ fn answer(
                 true => system::install(&dir, &parts, &places(env)?),
                 false => system::dry_run(&dir, &parts),
             });
-            let missing = matches!(&done, Err(r) if r.check == "shortcut");
+            let missing = matches!(&done, Err(r) if ["shortcut", "stranded"].contains(&r.check));
             say(done, if missing { "" } else { NOTHING })
         }
         ("status", [] | ["--json"]) => {
@@ -482,7 +482,9 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         parts: &portable::Parts,
         places: &Places,
     ) -> Result<String, Refused> {
-        let (version, _) = checked(dir, |folder, work, version| {
+        // Set once the new build is in place, so a later failure doesn't read as nothing installed.
+        let placed = std::cell::RefCell::new(None);
+        let done = checked(dir, |folder, work, version| {
             started(folder, work, parts)?;
             not_running(&places.program)?;
             let build = work.join("build");
@@ -496,8 +498,21 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
             if let Some(parent) = places.program.parent() {
                 fs::create_dir_all(parent).map_err(refuse("swap", "making the Programs folder"))?;
             }
-            windows_install::swap(&build, &places.program, &moved)
-        })?;
+            windows_install::swap(&build, &places.program, &moved)?;
+            *placed.borrow_mut() = Some(version.to_string());
+            Ok(())
+        });
+        let version = match (done, placed.take()) {
+            (Ok((version, _)), _) => version,
+            (Err(r), Some(version)) => {
+                eprintln!(
+                    "polycarp browser: the {} check failed after the install: {}.",
+                    r.check, r.why
+                );
+                version
+            }
+            (Err(r), None) => return Err(r),
+        };
         shortcut(places)?;
         Ok(format!(
             "{NAME} (Helium {version}) is installed in {}, with a Start Menu shortcut. Your profile is in {}.",
@@ -531,7 +546,6 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
         if let Some(menu) = places.shortcut.parent() {
             fs::create_dir_all(menu).map_err(|e| missing(format!("making its folder: {e}")))?;
         }
-        let _ = fs::remove_file(&places.shortcut);
         let script = "$ErrorActionPreference = 'Stop'; $s = (New-Object -ComObject WScript.Shell).CreateShortcut(\
                       $env:POLYCARP_LNK); $s.TargetPath = $env:POLYCARP_TARGET; $s.WorkingDirectory = \
                       $env:POLYCARP_DIR; $s.Save()";

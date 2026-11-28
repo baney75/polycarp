@@ -90,6 +90,13 @@ pub type Move<'a> = &'a dyn Fn(&Path, &Path) -> io::Result<()>;
 /// `program.new` to `program`, and `program.old` is deleted. A failed move puts the old one back.
 pub fn swap(build: &Path, program: &Path, mv: Move) -> Result<(), Refused> {
     let (new, old) = (beside(program, ".new"), beside(program, ".old"));
+    // An old build an earlier run could not put back is the person's browser, not a leftover.
+    if fs::symlink_metadata(program).is_err() && fs::symlink_metadata(&old).is_ok() {
+        mv(&old, program).map_err(refuse(
+            "swap",
+            "putting back the old build an earlier run left",
+        ))?;
+    }
     for stale in [&new, &old] {
         gone(stale).map_err(refuse("swap", "clearing an earlier run's folder"))?;
     }
@@ -102,10 +109,15 @@ pub fn swap(build: &Path, program: &Path, mv: Move) -> Result<(), Refused> {
         }
     }
     if let Err(e) = mv(&new, program) {
-        if had {
-            let _ = mv(&old, program);
-        }
         let _ = gone(&new);
+        if had && mv(&old, program).is_err() {
+            let why = format!(
+                "moving the build in place: {e}, and the old build could not be put back; it is in {}, and the \
+                 next install puts it back first",
+                old.display()
+            );
+            return Err(Refused::new("stranded", why));
+        }
         return Err(refuse("swap", "moving the build in place")(e));
     }
     let _ = gone(&old);
@@ -239,6 +251,23 @@ mod tests {
             "the old build was not put back"
         );
         assert!(p.program.join("two").is_file());
+        // Nothing can be moved to the program folder: the old build is left aside and the refusal says where.
+        let held = |a: &Path, b: &Path| match b == p.program {
+            true => Err(io::Error::other("held")),
+            false => fs::rename(a, b),
+        };
+        let e = swap(&built(&dir, "3.0", "three"), &p.program, &held).unwrap_err();
+        assert_eq!(e.check, "stranded");
+        assert!(e.why.contains("Polycarp Browser.old"), "{}", e.why);
+        assert!(!p.program.exists() && beside(&p.program, ".old").join("two").is_file());
+        // The next install puts that old build back before it clears anything, even when it then fails.
+        let no_new = |a: &Path, b: &Path| match b.ends_with("Polycarp Browser.new") {
+            true => Err(io::Error::other("held")),
+            false => fs::rename(a, b),
+        };
+        let e = swap(&built(&dir, "4.0", "four"), &p.program, &no_new).unwrap_err();
+        assert_eq!(e.check, "swap");
+        assert_eq!(installed(&p.program).as_deref(), Some("2.0"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
