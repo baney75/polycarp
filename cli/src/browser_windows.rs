@@ -223,7 +223,7 @@ fn others(name: &str) -> bool {
 #[cfg(windows)]
 mod system {
     use super::*;
-    use std::process::{Command, Stdio};
+    use std::process::Command;
 
     /// Lists each program's own signature. The folder arrives in an environment variable, never in the script's text.
     ///
@@ -292,15 +292,27 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
     }
 
     /// Runs a program by its absolute path, which must succeed; its output.
-    fn must(check: &'static str, mut command: Command) -> Result<String, Refused> {
+    fn must(check: &'static str, command: Command) -> Result<String, Refused> {
+        must_fed(check, command, None)
+    }
+
+    /// Runs a program, which must succeed, with `input` as all it reads, or nothing; its output.
+    fn must_fed(
+        check: &'static str,
+        mut command: Command,
+        input: Option<String>,
+    ) -> Result<String, Refused> {
         let program = PathBuf::from(command.get_program());
         if !program.is_file() {
             let why = format!("{} is missing", program.display());
             return Err(Refused::new(check, why));
         }
-        let ran = command.stdin(Stdio::null()).output().map_err(|e| {
+        let cannot = |e: std::io::Error| {
             Refused::new(check, format!("{} could not run: {e}", program.display()))
-        })?;
+        };
+        // The token reaches only curl, and only on its input: no program run here has it in its environment.
+        command.env_remove(download::TOKEN);
+        let ran = download::run_fed(&mut command, input).map_err(cannot)?;
         if !ran.status.success() {
             let said = String::from_utf8_lossy(&ran.stderr);
             let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
@@ -312,7 +324,18 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
 
     /// `curl`, https only, without the person's own curl settings, as on the Mac.
     fn curl(check: &'static str, limit: u64, more: &[&std::ffi::OsStr]) -> Result<String, Refused> {
+        curl_fed(check, limit, more, None)
+    }
+
+    fn curl_fed(
+        check: &'static str,
+        limit: u64,
+        more: &[&std::ffi::OsStr],
+        input: Option<String>,
+    ) -> Result<String, Refused> {
         let mut command = Command::new(system32("curl.exe"));
+        // The token reaches curl only on its input, never in its environment.
+        command.env_remove(download::TOKEN);
         let options =
             "-q --fail --silent --show-error --location --proto =https --proto-redir =https \
                        --tlsv1.2 --retry 2 --connect-timeout 20 --user-agent polycarp-browser \
@@ -321,21 +344,14 @@ Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Extension -i
             .args(options.split_whitespace())
             .arg(limit.to_string())
             .args(more);
-        must(check, command)
+        must_fed(check, command, input)
     }
 
     fn newest(arch: &str) -> Result<Release, Refused> {
-        let accept = "Accept: application/vnd.github+json";
-        let said = curl(
-            "release",
-            60,
-            &[
-                "--header".as_ref(),
-                accept.as_ref(),
-                "--".as_ref(),
-                FEED.as_ref(),
-            ],
-        )?;
+        let header = download::feed_token();
+        let args = download::feed_args(FEED, header.is_some());
+        let more: Vec<&std::ffi::OsStr> = args.iter().map(std::ffi::OsStr::new).collect();
+        let said = curl_fed("release", 60, &more, header)?;
         parse(&said, arch)
     }
 

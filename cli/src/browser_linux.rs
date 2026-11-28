@@ -283,20 +283,37 @@ mod system {
     use super::*;
     use std::ffi::OsStr;
     use std::os::unix::fs::DirBuilderExt;
-    use std::process::{Command, Output, Stdio};
+    use std::process::{Command, Output};
 
     /// Runs a program by its absolute path, no shell, nothing on stdin; what it did, whatever its exit.
-    fn ran(check: &'static str, mut command: Command) -> Result<Output, Refused> {
+    fn ran(check: &'static str, command: Command) -> Result<Output, Refused> {
+        fed(check, command, None)
+    }
+
+    /// Runs a program with `input` as all it reads, or nothing.
+    fn fed(
+        check: &'static str,
+        mut command: Command,
+        input: Option<String>,
+    ) -> Result<Output, Refused> {
         let program = PathBuf::from(command.get_program());
-        command
-            .stdin(Stdio::null())
-            .output()
-            .map_err(|e| Refused::new(check, format!("{} could not run: {e}", program.display())))
+        let cannot = |e: std::io::Error| {
+            Refused::new(check, format!("{} could not run: {e}", program.display()))
+        };
+        download::run_fed(&mut command, input).map_err(cannot)
     }
 
     /// Runs a program, which must succeed; its output.
     fn must(check: &'static str, command: Command) -> Result<String, Refused> {
-        let out = ran(check, command)?;
+        must_fed(check, command, None)
+    }
+
+    fn must_fed(
+        check: &'static str,
+        command: Command,
+        input: Option<String>,
+    ) -> Result<String, Refused> {
+        let out = fed(check, command, input)?;
         if !out.status.success() {
             let said = String::from_utf8_lossy(&out.stderr);
             let last = said.lines().map(str::trim).rfind(|l| !l.is_empty());
@@ -332,7 +349,19 @@ mod system {
         bytes: u64,
         more: &[&OsStr],
     ) -> Result<String, Refused> {
+        curl_fed(check, seconds, bytes, more, None)
+    }
+
+    fn curl_fed(
+        check: &'static str,
+        seconds: u64,
+        bytes: u64,
+        more: &[&OsStr],
+        input: Option<String>,
+    ) -> Result<String, Refused> {
         let mut command = Command::new(first(check, &["/usr/bin/curl", "/bin/curl"])?);
+        // The token reaches curl only on its input, never in its environment.
+        command.env_remove(download::TOKEN);
         let options =
             "-q --fail --silent --show-error --location --proto =https --proto-redir =https \
                        --tlsv1.2 --retry 2 --connect-timeout 20 --user-agent polycarp-browser";
@@ -343,18 +372,14 @@ mod system {
             .arg("--max-time")
             .arg(seconds.to_string())
             .args(more);
-        must(check, command)
+        must_fed(check, command, input)
     }
 
     fn newest(arch: &str) -> Result<(Release, Release), Refused> {
-        let accept = "Accept: application/vnd.github+json";
-        let more: [&OsStr; 4] = [
-            "--header".as_ref(),
-            accept.as_ref(),
-            "--".as_ref(),
-            FEED.as_ref(),
-        ];
-        let said = curl("release", 60, 734_003_200, &more)?;
+        let header = download::feed_token();
+        let args = download::feed_args(FEED, header.is_some());
+        let more: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        let said = curl_fed("release", 60, 734_003_200, &more, header)?;
         parse(&said, arch)
     }
 

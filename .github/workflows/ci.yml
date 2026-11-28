@@ -84,12 +84,16 @@ jobs:
         shell: bash
         env:
           POLYCARP_BROWSER_RESOURCES: ${{ runner.temp }}/parts
+          POLYCARP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          ../browser/scripts/build-parts-windows.sh "$POLYCARP_BROWSER_RESOURCES"
+          env -u POLYCARP_GITHUB_TOKEN ../browser/scripts/build-parts-windows.sh "$POLYCARP_BROWSER_RESOURCES"
           cargo test --bin polycarp -- --ignored --exact browser_windows::tests::the_real_release_passes_and_a_changed_program_is_refused | tee "$RUNNER_TEMP/helium-windows.log"
           grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/helium-windows.log"
       # Downloads Helium's real Linux release and checks its sha256 and OpenPGP signature, then refuses a copy with one byte changed.
+      # The workflow's own token goes to the release listing only, so a shared runner's address isn't rate limited.
       - if: runner.os == 'Linux'
+        env:
+          POLYCARP_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cargo test --bin polycarp -- --ignored --exact browser_linux::tests::the_real_release_passes_and_a_changed_tarball_is_refused | tee "$RUNNER_TEMP/helium-linux.log"
           grep -q "test result: ok. 1 passed" "$RUNNER_TEMP/helium-linux.log"
