@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use super::pak;
 use super::rename::{rename_paks, Rename};
 use super::{is_link, refuse, Refused};
 
@@ -154,6 +153,7 @@ fn copy(from: &Path, to: &Path) -> Result<(), Refused> {
 #[cfg(test)]
 pub mod tests {
     use super::super::download::digest;
+    use super::super::pak;
     use super::*;
 
     pub fn temp(name: &str) -> PathBuf {
