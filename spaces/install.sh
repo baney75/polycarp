@@ -174,9 +174,10 @@ SRC="$WORK/baneyspaces/spaces"
 unset POLYCARP_RELEASE POLYCARP_CHANNEL
 if [ -f "$SRC/scripts/install-app.sh" ]; then
   # Build, then place the app with that build's own install step, which knows where to put it.
-  if ! { "$SRC/scripts/bundle.sh" && bash "$SRC/build/Polycarp.app/Contents/Resources/install-app.sh" "$SRC/build/Polycarp.app" </dev/null; } >"$LOG" 2>&1; then
+  # --check: the build must start on this Mac (an Xcode SDK newer than macOS can break it); an older checkout ignores it.
+  if ! { "$SRC/scripts/bundle.sh" --check && bash "$SRC/build/Polycarp.app/Contents/Resources/install-app.sh" "$SRC/build/Polycarp.app" </dev/null; } >"$LOG" 2>&1; then
     echo
-    grep -E "error:|Error|failed|still running" "$LOG" | head -20 || tail -20 "$LOG"
+    grep -E "error:|Error|failed|still running|^  (missing|built with|fix):" "$LOG" | head -20 || tail -20 "$LOG"
     fail "the build stopped. The full log is at $LOG"
   fi
 elif ! "$SRC/scripts/bundle.sh" --install >"$LOG" 2>&1; then

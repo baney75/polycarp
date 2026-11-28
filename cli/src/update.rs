@@ -72,6 +72,8 @@ pub struct Facts {
     pub skill_installed: bool,
     /// Input and output are a terminal, so the plan can be shown and confirmed.
     pub terminal: bool,
+    /// Which Xcode builds the app (`toolchain::choose`). A `Use` puts `DEVELOPER_DIR` on the build step.
+    pub toolchain: crate::toolchain::Choice,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -313,6 +315,12 @@ fn source_steps(
         // Run by the command this update just installed: only what comes after the install.
         return (summary, finish_steps(f), notes);
     }
+    match &f.toolchain {
+        crate::toolchain::Choice::Use { line, .. } | crate::toolchain::Choice::Warn { line } => {
+            notes.push(line.clone())
+        }
+        crate::toolchain::Choice::Keep => {}
+    }
     let mut steps = vec![Step::new(
         Role::Git,
         &format!("Fetch {NAME}"),
@@ -438,11 +446,16 @@ fn finish_steps(f: &Facts) -> Vec<Step> {
 
 fn mac_steps(f: &Facts, steps: &mut Vec<Step>) {
     let wt = &f.worktree;
-    let env: Vec<(String, String)> = if f.arm64 {
+    let mut env: Vec<(String, String)> = if f.arm64 {
         vec![("BANEYSPACES_ARM64_ONLY".to_string(), "1".to_string())]
     } else {
         Vec::new()
     };
+    // An Xcode whose SDK is not newer than macOS, when the selected one's is (src/toolchain.rs). bundle.sh's build
+    // check stops the install either way when the app would not start here.
+    if let crate::toolchain::Choice::Use { dir, .. } = &f.toolchain {
+        env.push(("DEVELOPER_DIR".to_string(), s(dir)));
+    }
     // What `make -C spaces install` does: bundle.sh builds the app with the command and the skill inside,
     // and install-app.sh quits the running app, swaps it, links the commands in ~/.local/bin (polycarp
     // among them), retires the old browser helper's launchd jobs and opens it again.
@@ -1036,6 +1049,10 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
                 }
             };
         }
+        // Run by bundle.sh --install and --check before anything is installed: the build's imports from the system resolve here (src/toolchain.rs).
+        Some("--check-build") => {
+            return crate::toolchain::check_build_command(&args[1..], device.home.as_deref());
+        }
         // Run by install-app.sh on every install: the old browser helper's launchd jobs go (src/retire.rs).
         Some("--retire-old-browser") => {
             return match device.home.as_deref() {
@@ -1120,6 +1137,13 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         arm64: cfg!(target_arch = "aarch64"),
         skill_installed: crate::version::installed_skill(&home).is_some(),
         terminal: std::io::stdin().is_terminal() && std::io::stdout().is_terminal(),
+        // Read only for a Mac source build that will build: a check or a release install builds nothing.
+        toolchain: match (&install, platform(), o.check || o.finish) {
+            (Install::Source { .. }, Platform::Mac, false) => {
+                crate::toolchain::choice_here(Some(&home))
+            }
+            _ => crate::toolchain::Choice::Keep,
+        },
         home: home.clone(),
         install,
     };
@@ -1174,6 +1198,16 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
             }
         }
     }
+    // The Xcode line is in the notes, which a plan run with --yes prints only at the end: say it before building.
+    if !ask {
+        match &facts.toolchain {
+            crate::toolchain::Choice::Use { line, .. }
+            | crate::toolchain::Choice::Warn { line } => {
+                println!("{line}")
+            }
+            crate::toolchain::Choice::Keep => {}
+        }
+    }
     let mut out = std::io::stdout();
     match execute(&steps, &mut runner, &mut out) {
         Outcome::UpToDate => 0,
@@ -1181,7 +1215,17 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         // The run that handed over prints the notes and the last line.
         Outcome::Done if o.check || o.finish => 0,
         Outcome::Done => {
-            for note in &notes {
+            // The Xcode line was printed before the steps ran.
+            let said = match &facts.toolchain {
+                crate::toolchain::Choice::Use { line, .. }
+                | crate::toolchain::Choice::Warn { line }
+                    if !ask =>
+                {
+                    Some(line)
+                }
+                _ => None,
+            };
+            for note in notes.iter().filter(|n| Some(*n) != said) {
                 println!("note: {note}");
             }
             // An older copy earlier on PATH would keep answering to `polycarp`: say so once.
@@ -1237,6 +1281,7 @@ mod tests {
             arm64: true,
             skill_installed: false,
             terminal: false,
+            toolchain: crate::toolchain::Choice::Keep,
         }
     }
 
@@ -1326,6 +1371,40 @@ mod tests {
             steps[5].argv,
             ["/home/u/.local/bin/polycarp-spaces", "skill", "install"]
         );
+    }
+
+    /// The selected Xcode's SDK is newer than macOS (2026-11-27): the build step gets the older Xcode, and the plan
+    /// says which in one note. Nothing else changes.
+    #[test]
+    fn a_newer_sdk_builds_with_the_xcode_that_fits_and_says_so() {
+        let beta = "/Applications/Xcode-beta.app/Contents/Developer";
+        let line = format!("Building with Xcode-beta.app (macOS SDK 27.0 (26A5378i), DEVELOPER_DIR={beta}): the selected Xcode.app has macOS SDK 27.2 (26B118), newer than this macOS 27.2 (26B5091g).");
+        let mut f = facts(Platform::Mac, source(Some(ORIGIN), false));
+        let before = commands(&steps_of(plan(&f, YES)));
+        f.toolchain = crate::toolchain::Choice::Use {
+            dir: PathBuf::from(beta),
+            line: line.clone(),
+        };
+        let Plan::Run { steps, notes, .. } = plan(&f, DRY) else {
+            panic!("refused")
+        };
+        assert_eq!(commands(&steps), before);
+        assert_eq!(
+            steps[4].env,
+            vec![
+                ("BANEYSPACES_ARM64_ONLY".to_string(), "1".to_string()),
+                ("DEVELOPER_DIR".to_string(), beta.to_string()),
+            ]
+        );
+        assert_eq!(notes.iter().filter(|n| **n == line).count(), 1);
+        assert!(render("s", &steps, &notes).contains(&format!("with DEVELOPER_DIR={beta}")));
+        // A warning is a note only; the build step's environment is unchanged.
+        f.toolchain = crate::toolchain::Choice::Warn { line: "w".into() };
+        let Plan::Run { steps, notes, .. } = plan(&f, DRY) else {
+            panic!("refused")
+        };
+        assert_eq!(steps[4].env.len(), 1);
+        assert!(notes.contains(&"w".to_string()));
     }
 
     #[test]
