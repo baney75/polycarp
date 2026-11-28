@@ -220,6 +220,153 @@ fn done_line(version: &str, n: usize) -> String {
     )
 }
 
+/// How long the headless start may take.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const LIMIT: std::time::Duration = std::time::Duration::from_secs(180);
+/// Ubuntu 23.10 and later set this to 1, which keeps Chromium's sandbox from starting for a browser with no AppArmor
+/// profile of its own.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+const USERNS: &str = "/proc/sys/kernel/apparmor_restrict_unprivileged_userns";
+
+fn no_sandbox() -> Refused {
+    Refused::new(
+        "sandbox",
+        "Ubuntu's AppArmor stops unprivileged user namespaces, which Chromium's sandbox needs, so Polycarp Browser \
+         can't start here. Polycarp never turns the sandbox off. An AppArmor profile for the browser or `sudo sysctl \
+         kernel.apparmor_restrict_unprivileged_userns=0` lets it start.",
+    )
+}
+
+/// A refusal when `path` (the AppArmor switch in `USERNS`) reads 1. A missing file, 0 or anything else goes ahead.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn sandbox_allowed(path: &Path) -> Result<(), Refused> {
+    match fs::read_to_string(path) {
+        Ok(text) if text.trim() == "1" => Err(no_sandbox()),
+        _ => Ok(()),
+    }
+}
+
+/// What one headless start wrote, and whether it ran past its limit and was killed.
+#[cfg_attr(not(unix), allow(dead_code))]
+struct Ran {
+    out: String,
+    err: String,
+    timed_out: bool,
+}
+
+/// The start passes only when it finished in time and showed Polycarp's new tab; a sandbox that could not start is
+/// said so, with the remedy.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn judge_start(ran: &Ran, limit: std::time::Duration) -> Result<(), Refused> {
+    let shown = portable::judge(&ran.out, &ran.err);
+    if shown.is_ok() && !ran.timed_out {
+        return Ok(());
+    }
+    if ran.err.contains("No usable sandbox") {
+        return Err(no_sandbox());
+    }
+    if ran.timed_out {
+        let last = ran.err.lines().map(str::trim).rfind(|l| !l.is_empty());
+        let why = format!(
+            "it did not finish within {} s ({})",
+            limit.as_secs(),
+            last.unwrap_or("no output")
+        );
+        return Err(Refused::new("start", why));
+    }
+    shown
+}
+
+/// Reads a pipe to its end on a thread of its own and sends what it read.
+#[cfg(unix)]
+fn drain<R: std::io::Read + Send + 'static>(pipe: Option<R>) -> std::sync::mpsc::Receiver<String> {
+    let (send, got) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut text = Vec::new();
+        if let Some(mut p) = pipe {
+            let _ = p.read_to_end(&mut text);
+        }
+        let _ = send.send(String::from_utf8_lossy(&text).into_owned());
+    });
+    got
+}
+
+/// Runs the start in a process group of its own, killed with the whole group when it takes longer than `limit`.
+/// Afterwards the group and everything running from the build are stopped, so no helper holds its pipes, and the
+/// pipes are read for at most the time left plus 5 s.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn run_for(start: &portable::Start, limit: std::time::Duration) -> Result<Ran, Refused> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    let mut command = Command::new(&start.program);
+    command.args(&start.args).envs(start.env.iter().cloned());
+    for name in start.unset {
+        command.env_remove(name);
+    }
+    let mut child = command
+        .process_group(0)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(refuse("start", "running it"))?;
+    let group = child.id() as i32;
+    let out = drain(child.stdout.take());
+    let err = drain(child.stderr.take());
+    let began = std::time::Instant::now();
+    let (mut timed_out, mut failed) = (false, None);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) if began.elapsed() > limit => {
+                timed_out = true;
+                break;
+            }
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(200)),
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        }
+    }
+    // SAFETY: killpg(2) takes plain integers and touches no memory of ours. The group is the start's own.
+    unsafe {
+        libc::killpg(group, libc::SIGKILL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    stop_inside(start.program.parent().unwrap_or(&start.program));
+    if let Some(e) = failed {
+        return Err(refuse("start", "waiting for it")(e));
+    }
+    let wait = limit.saturating_sub(began.elapsed()) + std::time::Duration::from_secs(5);
+    let until = std::time::Instant::now() + wait;
+    let read = |got: std::sync::mpsc::Receiver<String>| {
+        let left = until.saturating_duration_since(std::time::Instant::now());
+        got.recv_timeout(left).unwrap_or_default()
+    };
+    Ok(Ran {
+        out: read(out),
+        err: read(err),
+        timed_out,
+    })
+}
+
+/// Stops every process whose program is inside `folder` with SIGKILL, best effort.
+#[cfg(unix)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn stop_inside(folder: &Path) {
+    // `/proc/<pid>/exe` gives the real path, so the folder is compared by its real path too.
+    let real = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+    for pid in inside_build(Path::new("/proc"), &real) {
+        // SAFETY: kill(2) takes plain integers and touches no memory of ours.
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+}
+
 /// The processes under `proc` (Linux's `/proc`) whose program, `<pid>/exe`, resolves inside `build`. A process
 /// whose program was deleted reads as `<path> (deleted)`, still inside. Ones that can't be read are skipped.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
@@ -538,77 +685,15 @@ mod system {
         let home = work.join("home");
         let start = portable::start(&launcher, &home, parts.layout);
         portable::make_home(&start, &home)?;
-        let (out, err) = run_for(&start, std::time::Duration::from_secs(180))?;
-        portable::judge(&out, &err)
-    }
-
-    /// Reads a pipe to its end on a thread of its own.
-    fn drain<R: std::io::Read + Send + 'static>(
-        pipe: Option<R>,
-    ) -> std::thread::JoinHandle<String> {
-        std::thread::spawn(move || {
-            let mut text = Vec::new();
-            if let Some(mut p) = pipe {
-                let _ = p.read_to_end(&mut text);
-            }
-            String::from_utf8_lossy(&text).into_owned()
-        })
-    }
-
-    /// Runs the start, killed when it takes longer than `limit`; what it wrote to stdout and stderr.
-    fn run_for(
-        start: &portable::Start,
-        limit: std::time::Duration,
-    ) -> Result<(String, String), Refused> {
-        let mut command = Command::new(&start.program);
-        command.args(&start.args).envs(start.env.iter().cloned());
-        for name in start.unset {
-            command.env_remove(name);
-        }
-        let mut child = command
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(refuse("start", "running it"))?;
-        let out = drain(child.stdout.take());
-        let err = drain(child.stderr.take());
-        let began = std::time::Instant::now();
-        while child
-            .try_wait()
-            .map_err(refuse("start", "waiting for it"))?
-            .is_none()
-        {
-            if began.elapsed() > limit {
-                let _ = child.kill();
-                let _ = child.wait();
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
-        }
-        // Its own helpers may hold the pipes open; they are this build's, so they are stopped.
-        stop_inside(start.program.parent().unwrap_or(&start.program));
-        Ok((
-            out.join().unwrap_or_default(),
-            err.join().unwrap_or_default(),
-        ))
-    }
-
-    /// Stops every process whose program is inside `folder` with SIGKILL, best effort.
-    fn stop_inside(folder: &Path) {
-        // `/proc/<pid>/exe` gives the real path, so the folder is compared by its real path too.
-        let real = fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
-        for pid in inside_build(Path::new("/proc"), &real) {
-            // SAFETY: kill(2) takes plain integers and touches no memory of ours.
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-        }
+        let ran = run_for(&start, LIMIT)?;
+        judge_start(&ran, LIMIT)
     }
 
     /// Downloads and checks the newest release in `dir`, builds Polycarp Browser from it and starts it once, then
     /// throws it all away.
     pub fn dry_run(dir: &Path, parts: &portable::Parts) -> Result<String, Refused> {
+        // Nothing is downloaded or run when the browser's sandbox could not start here.
+        sandbox_allowed(Path::new(USERNS))?;
         let got = download(dir)?;
         signature(dir, &got.tarball, &got.asc)?;
         let work = dir.join("work");
@@ -1144,6 +1229,116 @@ mod tests {
         fs::write(extension.join("builtin.txt"), "Polycarp Browser\n").unwrap();
         assert_eq!(why(), Ok(()));
         fs::remove_dir_all(&build).unwrap();
+    }
+
+    #[test]
+    fn a_sandbox_ubuntu_s_apparmor_stops_is_refused_before_anything_runs() {
+        let dir = temp("userns");
+        let switch = dir.join("apparmor_restrict_unprivileged_userns");
+        assert_eq!(sandbox_allowed(&switch), Ok(()), "no such switch");
+        for (text, allowed) in [("0\n", true), ("1\n", false), ("1", false), ("", true)] {
+            fs::write(&switch, text).unwrap();
+            let got = sandbox_allowed(&switch);
+            assert_eq!(got.is_ok(), allowed, "{text:?}");
+            if let Err(e) = got {
+                assert_eq!(e.check, "sandbox");
+                assert!(e
+                    .why
+                    .starts_with("Ubuntu's AppArmor stops unprivileged user namespaces"));
+                assert!(e.why.contains("Polycarp never turns the sandbox off."));
+                assert!(e
+                    .why
+                    .contains("`sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0`"));
+            }
+        }
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_start_must_finish_in_time_and_a_missing_sandbox_is_named() {
+        let ran = |out: &str, err: &str, timed_out| Ran {
+            out: out.into(),
+            err: err.into(),
+            timed_out,
+        };
+        let limit = std::time::Duration::from_secs(180);
+        let page = format!("<html>{}</html>", portable::PAGE);
+        assert_eq!(judge_start(&ran(&page, "", false), limit), Ok(()));
+        let why = |r: Ran| judge_start(&r, limit).map_err(|e| (e.check, e.why));
+        let sandbox =
+            "[1:1:FATAL:zygote_host_impl_linux.cc(127)] No usable sandbox! Update your kernel";
+        assert_eq!(why(ran("", sandbox, false)).unwrap_err().0, "sandbox");
+        assert_eq!(why(ran("", sandbox, true)).unwrap_err().0, "sandbox");
+        assert_eq!(
+            why(ran(&page, "first\nstill going\n", true)),
+            Err((
+                "start",
+                "it did not finish within 180 s (still going)".into()
+            ))
+        );
+        assert_eq!(
+            why(ran("", "", true)),
+            Err(("start", "it did not finish within 180 s (no output)".into()))
+        );
+        assert_eq!(
+            why(ran("", "ERROR: no GPU\n", false)),
+            Err(("start", "it showed nothing (ERROR: no GPU)".into()))
+        );
+    }
+
+    /// A fake start, `/bin/sh` reading a script from a temp folder.
+    #[cfg(unix)]
+    fn fake(name: &str, script: &str) -> (PathBuf, portable::Start) {
+        let dir = temp(name);
+        fs::write(dir.join("start.sh"), script).unwrap();
+        let start = portable::Start {
+            program: PathBuf::from("/bin/sh"),
+            args: vec![dir.join("start.sh").into()],
+            env: Vec::new(),
+            unset: &[],
+        };
+        (dir, start)
+    }
+
+    /// A helper left behind holding stdout ends with the start's process group, so the pipes close at once.
+    #[cfg(unix)]
+    #[test]
+    fn a_helper_holding_the_pipes_does_not_hold_the_start() {
+        let (dir, start) = fake("hold", "sleep 60 &\necho shown\necho said >&2\nexit 0\n");
+        let began = std::time::Instant::now();
+        let ran = run_for(&start, std::time::Duration::from_secs(20)).unwrap();
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(5),
+            "{:?}",
+            began.elapsed()
+        );
+        assert_eq!(
+            (ran.out.as_str(), ran.err.as_str(), ran.timed_out),
+            ("shown\n", "said\n", false)
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A start that runs past its limit is killed with its group and refused with its last line.
+    #[cfg(unix)]
+    #[test]
+    fn a_start_past_its_limit_is_killed_and_refused() {
+        let (dir, start) = fake("slow", "echo waiting >&2\nsleep 60\n");
+        let began = std::time::Instant::now();
+        let limit = std::time::Duration::from_secs(1);
+        let ran = run_for(&start, limit).unwrap();
+        assert!(
+            began.elapsed() < std::time::Duration::from_secs(8),
+            "{:?}",
+            began.elapsed()
+        );
+        assert!(ran.timed_out);
+        let e = judge_start(&ran, limit).unwrap_err();
+        assert_eq!(
+            (e.check, e.why.as_str()),
+            ("start", "it did not finish within 1 s (waiting)")
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     /// A fake `/proc`: only numbered entries whose `exe` resolves inside the build count, a deleted program included.

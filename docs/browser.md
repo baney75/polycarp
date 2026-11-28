@@ -115,11 +115,15 @@ own that holds only Helium's signing key, check the signature: it must be good a
 is laid out as Helium's. Then it builds Polycarp Browser from that copy: it turns Helium's update checks off for the first profile
 (the Linux release has no updater program to remove), puts Polycarp's name in the browser's text and adds Polycarp's launcher,
 `polycarp-browser`, and extension. Then it starts the build once headless, without Local Studio's part, with a throwaway profile
-and `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `TMPDIR` all inside the work folder. It
+and `HOME`, `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR` and `TMPDIR` all inside the work
+folder. It
 takes `POLYCARP_GITHUB_TOKEN`, `DISPLAY`, `WAYLAND_DISPLAY` and `DBUS_SESSION_BUS_ADDRESS` out of its environment, so it reaches no
 session, passes `--password-store=basic`, so it never touches a desktop keyring, and opens no remote debugging. It runs under
 Chromium's own sandbox, which needs unprivileged user namespaces (Ubuntu 24.04's AppArmor restricts them; Polycarp never turns the
-sandbox off). The dumped page must be Polycarp's new tab within 180 s, or it refuses with check `start`. Whatever still runs from
+sandbox off). On Ubuntu 23.10 and later AppArmor does this by default
+(`kernel.apparmor_restrict_unprivileged_userns=1`), so the dry run refuses with check `sandbox` before it downloads anything, and
+says so when the browser reports no usable sandbox; an AppArmor profile for the browser or
+`sudo sysctl kernel.apparmor_restrict_unprivileged_userns=0` lets it start. The dumped page must be Polycarp's new tab within 180 s, or it refuses with check `start`. Whatever still runs from
 the build is then stopped, and it deletes it all, the keyring too. Nothing is installed. The build needs Polycarp's parts: run `browser/scripts/build-parts-linux.sh DEST` from a checkout and set
 `POLYCARP_BROWSER_RESOURCES` to `DEST`; without them it stops before downloading. Every other `polycarp browser` command on
 Linux says that only `install --dry-run` works there so far. Installing the browser on Linux comes later.

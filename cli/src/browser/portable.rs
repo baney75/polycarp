@@ -71,6 +71,8 @@ pub const LINUX: Layout = Layout {
             ("XDG_DATA_HOME", home.join(".local").join("share")),
             ("XDG_STATE_HOME", home.join(".local").join("state")),
             ("TMPDIR", home.join("tmp")),
+            // Without it the session bus, Wayland and audio sockets in the person's `/run/user/<uid>` stay in reach.
+            ("XDG_RUNTIME_DIR", home.join("run")),
         ]
     },
     // No display, Wayland or session bus to reach, so nothing of the person's session.
@@ -279,6 +281,13 @@ pub fn make_home(start: &Start, home: &Path) -> Result<(), Refused> {
         .chain([first.as_path()]);
     for folder in folders {
         fs::create_dir_all(folder).map_err(refuse("start", "making its home"))?;
+    }
+    // The runtime folder is private to its owner, as `/run/user/<uid>` is.
+    #[cfg(unix)]
+    for (_, folder) in start.env.iter().filter(|(n, _)| *n == "XDG_RUNTIME_DIR") {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(folder, fs::Permissions::from_mode(0o700))
+            .map_err(refuse("start", "making its runtime folder"))?;
     }
     fs::write(first.join("Preferences"), PREFS).map_err(refuse("start", "making its profile"))
 }
@@ -675,6 +684,7 @@ pub mod tests {
             ("XDG_DATA_HOME", home.join(".local/share")),
             ("XDG_STATE_HOME", home.join(".local/state")),
             ("TMPDIR", home.join("tmp")),
+            ("XDG_RUNTIME_DIR", home.join("run")),
         ];
         assert_eq!(env, want_env);
         assert!(s.env.iter().all(|(_, p)| p.starts_with(&home)));
@@ -693,6 +703,12 @@ pub mod tests {
             fs::read_to_string(home.join("profile/Default/Preferences")).unwrap(),
             PREFS
         );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(home.join("run")).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
         fs::remove_dir_all(&work).unwrap();
     }
 }
