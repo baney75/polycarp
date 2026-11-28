@@ -1,13 +1,13 @@
 //! The `polycarp sync` command. Each run reads the relay first and changes nothing here until the relay answered and
 //! every bundle checked out, so an unreachable relay or a changed bundle leaves this device as it was.
 
-use super::auto::{self, Backoff};
+use super::auto::{self, Backoff, Paused};
 use super::crypto::{self, Device, DeviceList, Me, Sealed};
 use super::model::{self, Bundle};
 use super::prefs;
 use super::relay::{self, Relay};
 use super::settings::{self, Paths};
-use super::store::Store;
+use super::store::{Ask, KeyError, Store};
 use crate::files::config::Os;
 use age::secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
@@ -36,6 +36,7 @@ const DEVICES: &str = "devices.json";
 const SETTINGS: &str = "settings.age.json";
 const PREFS: &str = "prefs.age.json";
 const AUTO: &str = "auto.json";
+const NEEDS_KEYCHAIN: &str = "needs-keychain";
 
 #[derive(Serialize, Deserialize)]
 struct State {
@@ -49,6 +50,8 @@ struct Ctx {
     prefs: prefs::Store,
     /// A background run: notes go to the sync log, never the screen.
     quiet: bool,
+    /// Whether reading this device's key may put a system prompt on screen; never in a background run.
+    ask: Ask,
 }
 
 fn now_ms() -> u64 {
@@ -93,6 +96,7 @@ fn ctx() -> Result<Ctx, String> {
             support: support_dir()?,
         },
         quiet: false,
+        ask: Ask::Prompt,
     })
 }
 
@@ -126,23 +130,27 @@ fn private_dir(d: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// This device's key, made on first use. The note says when it had to go in a file.
-fn identity(c: &Ctx, make: bool) -> Result<(Me, Option<String>), String> {
+/// This device's key, made on first use. The note says when it had to go in a file. A read that works ends a pause
+/// for the Keychain.
+fn identity(c: &Ctx, make: bool) -> Result<(Me, Option<String>), KeyError> {
     let (store, note) = Store::open(&c.dir)?;
-    if let Some(s) = store.load()? {
+    if let Some(s) = store.load_with(c.ask)? {
+        let _ = fs::remove_file(c.dir.join(NEEDS_KEYCHAIN));
         return Ok((Me::from_secret(s.expose_secret())?, None));
     }
     if !make {
-        return Err("this device has no sync key yet; run `polycarp sync init`".into());
+        return Err("this device has no sync key yet; run `polycarp sync init`"
+            .to_string()
+            .into());
     }
     let me = Me::generate();
     store.save(&me.secret())?;
     Ok((me, note))
 }
 
-fn load(c: &Ctx) -> Result<(State, Me, Device, Relay), String> {
+fn load(c: &Ctx) -> Result<(State, Me, Device, Relay), KeyError> {
     let st: State = read_json(&c.dir.join("state.json"))?
-        .ok_or("sync is not set up here; run `polycarp sync init`")?;
+        .ok_or_else(|| "sync is not set up here; run `polycarp sync init`".to_string())?;
     let (me, _) = identity(c, false)?;
     let dev = me.device(&st.name);
     let relay = Relay::parse(&st.relay)?;
@@ -542,7 +550,7 @@ fn sync_settings(
 }
 
 /// One sync. Any that works ends a background run's wait.
-fn sync_once(c: &Ctx, approver: Option<&str>) -> Result<Vec<PathBuf>, String> {
+fn sync_once(c: &Ctx, approver: Option<&str>) -> Result<Vec<PathBuf>, KeyError> {
     let (_, me, dev, relay) = load(c)?;
     let list = current_list(c, &dev, &relay, approver)?;
     let wrote = sync_settings(c, &me, &dev, &relay, &list, &list)?;
@@ -573,33 +581,70 @@ fn log_path() -> Result<PathBuf, String> {
     ))
 }
 
-/// The 5-minute run: nothing on screen, one log line when it fails, and no try before its wait is over.
+/// The 5-minute run: nothing on screen, one log line when it fails, and no try before its wait is over. It never
+/// lets the Keychain ask.
 fn background() -> i32 {
-    let fail = |e: String| {
-        if let Ok(log) = log_path() {
-            auto::log_line(&log, &e);
-        }
-        1
-    };
+    let log = log_path().ok();
     let c = match ctx() {
-        Ok(c) => Ctx { quiet: true, ..c },
-        Err(e) => return fail(e),
+        Ok(c) => Ctx {
+            quiet: true,
+            ask: Ask::Never,
+            ..c
+        },
+        Err(e) => {
+            if let Some(log) = &log {
+                auto::log_line(log, &e);
+            }
+            return 1;
+        }
+    };
+    background_run(&c, log.as_deref(), now_ms(), |c| sync_once(c, None))
+}
+
+/// One background turn at `t`. When the key can't be read without the Keychain asking, the turn is skipped: exit 0,
+/// no failure counted, the `needs-keychain` marker kept and a note in the log at most once an hour.
+fn background_run(
+    c: &Ctx,
+    log: Option<&Path>,
+    t: u64,
+    sync: impl FnOnce(&Ctx) -> Result<Vec<PathBuf>, KeyError>,
+) -> i32 {
+    let note = |line: &str| {
+        if let Some(log) = log {
+            auto::log_line(log, line);
+        }
     };
     let path = c.dir.join(AUTO);
     let b: Backoff = match read_json(&path) {
         Ok(b) => b.unwrap_or_default(),
-        Err(e) => return fail(e),
+        Err(e) => {
+            note(&e);
+            return 1;
+        }
     };
-    let t = now_ms();
     if !b.due(t) {
         return 0;
     }
-    match sync_once(&c, None) {
+    match sync(c) {
         Ok(_) => 0,
-        Err(e) => {
+        Err(KeyError::NeedsPrompt) => {
+            let marker = c.dir.join(NEEDS_KEYCHAIN);
+            // A damaged marker reads as none, so the note is logged again.
+            let prev: Option<Paused> = read_json(&marker).ok().flatten();
+            let (next, say) = Paused::skipped(prev, t);
+            if prev != Some(next) {
+                let _ = write_json(&marker, &next);
+            }
+            if say {
+                note(auto::PAUSED_LOG);
+            }
+            0
+        }
+        Err(KeyError::Failed(e)) => {
             let next = b.failed(t);
             let _ = write_json(&path, &next);
-            fail(format!("{e}; next try in {} minutes", next.wait_min(t)))
+            note(&format!("{e}; next try in {} minutes", next.wait_min(t)));
+            1
         }
     }
 }
@@ -743,6 +788,10 @@ fn auto_status() -> Result<(), String> {
         return Ok(());
     }
     let c = ctx()?;
+    if c.dir.join(NEEDS_KEYCHAIN).exists() {
+        println!("{}", auto::PAUSED_STATUS);
+        return Ok(());
+    }
     let b: Backoff = read_json(&c.dir.join(AUTO))?.unwrap_or_default();
     let t = now_ms();
     match b.failures {
@@ -863,5 +912,159 @@ pub fn run(args: &[OsString]) -> i32 {
             eprintln!("polycarp sync: {e}");
             1
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MIN: u64 = 60_000;
+
+    fn tmp(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("polycarp-sync-bg-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(d.join("sync")).unwrap();
+        d
+    }
+
+    fn test_ctx(root: &Path) -> Ctx {
+        let dir = root.join("sync");
+        Ctx {
+            prefs: prefs::Store::File(dir.join("prefs.json")),
+            dir,
+            paths: Paths {
+                config: root.join("config"),
+                support: root.join("support"),
+            },
+            quiet: true,
+            ask: Ask::Never,
+        }
+    }
+
+    fn log_lines(log: &Path) -> usize {
+        fs::read_to_string(log).map_or(0, |s| s.lines().count())
+    }
+
+    fn marker(c: &Ctx) -> Option<Paused> {
+        read_json(&c.dir.join(NEEDS_KEYCHAIN)).unwrap()
+    }
+
+    fn backoff(c: &Ctx) -> Option<Backoff> {
+        read_json(&c.dir.join(AUTO)).unwrap()
+    }
+
+    fn needs_prompt(_: &Ctx) -> Result<Vec<PathBuf>, KeyError> {
+        Err(KeyError::NeedsPrompt)
+    }
+
+    #[test]
+    fn a_keychain_that_would_ask_skips_the_round_quietly() {
+        let root = tmp("skip");
+        let c = test_ctx(&root);
+        let log = root.join("sync.log");
+        let t = 10_000 * MIN;
+
+        // First skip: exit 0, one fixed note, a marker, no failure counted.
+        assert_eq!(background_run(&c, Some(&log), t, needs_prompt), 0);
+        assert_eq!(log_lines(&log), 1);
+        let text = fs::read_to_string(&log).unwrap();
+        assert!(text.trim_end().ends_with(auto::PAUSED_LOG));
+        assert_eq!(
+            marker(&c),
+            Some(Paused {
+                since_ms: t,
+                logged_ms: t
+            })
+        );
+        assert_eq!(backoff(&c), None);
+
+        // Every 5 minutes for the next hour: still exit 0, no more lines.
+        for k in 1..12 {
+            assert_eq!(
+                background_run(&c, Some(&log), t + k * 5 * MIN, needs_prompt),
+                0
+            );
+        }
+        assert_eq!(log_lines(&log), 1);
+        assert_eq!(backoff(&c), None);
+
+        // An hour on: one more line, the pause keeps its start.
+        assert_eq!(
+            background_run(&c, Some(&log), t + 60 * MIN, needs_prompt),
+            0
+        );
+        assert_eq!(log_lines(&log), 2);
+        assert_eq!(
+            marker(&c),
+            Some(Paused {
+                since_ms: t,
+                logged_ms: t + 60 * MIN
+            })
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_damaged_marker_reads_as_none() {
+        let root = tmp("damaged");
+        let c = test_ctx(&root);
+        let log = root.join("sync.log");
+        fs::write(c.dir.join(NEEDS_KEYCHAIN), "not json").unwrap();
+        assert_eq!(background_run(&c, Some(&log), 5 * MIN, needs_prompt), 0);
+        assert_eq!(log_lines(&log), 1);
+        assert_eq!(
+            marker(&c),
+            Some(Paused {
+                since_ms: 5 * MIN,
+                logged_ms: 5 * MIN
+            })
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn other_failures_still_wait_and_leave_no_marker() {
+        let root = tmp("fail");
+        let c = test_ctx(&root);
+        let log = root.join("sync.log");
+        let t = 100 * MIN;
+        let code = background_run(&c, Some(&log), t, |_| {
+            Err(KeyError::Failed("the relay did not answer".into()))
+        });
+        assert_eq!(code, 1);
+        assert_eq!(log_lines(&log), 1);
+        assert_eq!(marker(&c), None);
+        assert_eq!(backoff(&c), Some(Backoff::default().failed(t)));
+        // Inside that wait nothing runs, a Keychain read included.
+        let code = background_run(&c, Some(&log), t + MIN, |_| -> Result<_, KeyError> {
+            panic!("ran inside the wait")
+        });
+        assert_eq!(code, 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_key_read_that_works_ends_the_pause() {
+        let root = tmp("ok");
+        let mut c = test_ctx(&root);
+        // The key in the file store, so no test reaches a real Keychain.
+        let me = Me::generate();
+        fs::write(c.dir.join("identity"), me.secret().expose_secret()).unwrap();
+        write_json(
+            &c.dir.join(NEEDS_KEYCHAIN),
+            &Paused {
+                since_ms: 1,
+                logged_ms: 1,
+            },
+        )
+        .unwrap();
+        for ask in [Ask::Never, Ask::Prompt] {
+            c.ask = ask;
+            let (got, _) = identity(&c, false).map_err(String::from).unwrap();
+            assert_eq!(got.secret().expose_secret(), me.secret().expose_secret());
+            assert!(!c.dir.join(NEEDS_KEYCHAIN).exists());
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 }
