@@ -88,9 +88,12 @@ is signed ad hoc and the command says so: macOS then asks for permissions and sa
 `polycarp browser install --dry-run` downloads the newest full release of
 [helium-windows](https://github.com/imputnet/helium-windows) for your processor (x64 or arm64) into Polycarp's cache, checks
 that the zip has the SHA-256 GitHub lists, unpacks it into a private folder and checks that every `.exe` and `.dll` in it
-carries a valid Authenticode signature from imput LLC, Helium's maker. Then it deletes the unpacked copy. Nothing is
-installed and nothing from the release is run. Every other `polycarp browser` command on Windows says that only
-`install --dry-run` works there so far. Making and installing the browser on Windows comes later.
+carries a valid Authenticode signature from imput LLC, Helium's maker. Then it builds Polycarp Browser from that copy: it
+removes Helium's updater, turns update checks off for new profiles, puts Polycarp's name in the browser's text and adds
+Polycarp's launcher and extension. Then it deletes it all. Nothing is installed and nothing from the release is run. The
+build needs Polycarp's parts: run `browser/scripts/build-parts-windows.sh DEST` from a checkout and set
+`POLYCARP_BROWSER_RESOURCES` to `DEST`. Every other `polycarp browser` command on Windows says that only
+`install --dry-run` works there so far. Installing the browser on Windows comes later.
 
 ## On Linux
 
