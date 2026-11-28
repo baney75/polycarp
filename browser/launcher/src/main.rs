@@ -217,8 +217,13 @@ fn arguments(
         } else if name == "load-extension" {
             let more = value.split(',').filter(|m| !m.is_empty());
             load.extend(more.map(OsString::from).filter(|m| !ours.contains(m)));
+        } else if name == "user-data-dir" {
+            // One with no folder would leave Chromium on its default, Helium's own profile: it is dropped, and ours given.
+            if !value.is_empty() {
+                theirs = true;
+                rest.push(arg);
+            }
         } else if !name.starts_with("remote-debugging-") {
-            theirs |= name == "user-data-dir";
             rest.push(arg);
         }
     }
@@ -490,6 +495,13 @@ mod tests {
             with(Some("/p"), &[" -user-data-dir=/mine"]),
             ["--load-extension=/a/ext", " -user-data-dir=/mine"]
         );
+        // One that names no folder is not the person's choice of one: it would leave Helium's own profile in force.
+        for bare in ["--user-data-dir", "--user-data-dir=", " -user-data-dir= "] {
+            assert_eq!(
+                with(Some("/p"), &[bare, "x"]),
+                ["--load-extension=/a/ext", "--user-data-dir=/p", "x"]
+            );
+        }
         // After two dashes it is not a switch, so ours is still given.
         assert_eq!(
             with(Some("/p"), &["--", "--user-data-dir=/mine"]),
