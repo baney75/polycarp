@@ -1049,7 +1049,7 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
                 }
             };
         }
-        // Run by bundle.sh --install before anything is installed: the build's weak imports resolve here (src/toolchain.rs).
+        // Run by bundle.sh --install and --check before anything is installed: the build's imports from the system resolve here (src/toolchain.rs).
         Some("--check-build") => {
             return crate::toolchain::check_build_command(&args[1..], device.home.as_deref());
         }
@@ -1215,7 +1215,17 @@ pub fn run(args: &[OsString], device: &Device) -> i32 {
         // The run that handed over prints the notes and the last line.
         Outcome::Done if o.check || o.finish => 0,
         Outcome::Done => {
-            for note in &notes {
+            // The Xcode line was printed before the steps ran.
+            let said = match &facts.toolchain {
+                crate::toolchain::Choice::Use { line, .. }
+                | crate::toolchain::Choice::Warn { line }
+                    if !ask =>
+                {
+                    Some(line)
+                }
+                _ => None,
+            };
+            for note in notes.iter().filter(|n| Some(*n) != said) {
                 println!("note: {note}");
             }
             // An older copy earlier on PATH would keep answering to `polycarp`: say so once.

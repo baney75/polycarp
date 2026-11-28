@@ -21,8 +21,14 @@
 //!    warning line.
 //! 5. The build check takes the host architecture, the system libraries the binary links (`otool -L`, under
 //!    /System/ or /usr/lib/) and its imports from them (`nm -m`, weak and strong), loads each library and looks each symbol up.
-//!    Exit 0: all resolve. Exit 1: some are missing; the report names them, macOS, the SDK used and the fix. Exit 2:
+//!    It checks every binary it is given (the app, its spaces command, the browser launcher).
+//! 6. A missing strong import always fails. A missing weak import fails too, except on a release macOS (a build with
+//!    no trailing letter) with an SDK of a higher version: that is ordinary weak linking, guarded by `#available`,
+//!    so it is printed as a note. On a seed, or with an SDK that is not newer by version, nothing should be missing.
+//!    Exit 0: nothing fails. Exit 1: the report names each failing symbol, macOS, the SDK used and the fix. Exit 2:
 //!    the check could not run. Anything but 0 stops the install.
+// Off a Mac only the pure parts are used, by the tests and by `update`'s plan.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -164,12 +170,39 @@ pub enum Choice {
     Warn { line: String },
 }
 
+/// Switching to a candidate needs proof it fits: a lower version, or the same version with builds that parse and are
+/// not newer. (`sdk_newer_than_os` calls what it can't judge "not newer", which is right only for keeping one.)
+fn known_not_newer(sdk: &Release, os: &Release) -> bool {
+    match compare_versions(&sdk.version, &os.version) {
+        Some(std::cmp::Ordering::Less) => true,
+        Some(std::cmp::Ordering::Equal) => {
+            sdk.build.as_deref().and_then(Build::parse).is_some()
+                && os.build.as_deref().and_then(Build::parse).is_some()
+                && !sdk_newer_than_os(sdk, os)
+        }
+        _ => false,
+    }
+}
+
+/// Rule 6: a missing weak import is ordinary weak linking only on a release macOS with an SDK of a higher version.
+pub fn weak_absence_is_normal(os: Option<&Release>, sdk: Option<&Release>) -> bool {
+    let (Some(os), Some(sdk)) = (os, sdk) else {
+        return false;
+    };
+    let release_os = os
+        .build
+        .as_deref()
+        .and_then(Build::parse)
+        .is_some_and(|b| b.seed.is_none());
+    release_os && compare_versions(&sdk.version, &os.version) == Some(std::cmp::Ordering::Greater)
+}
+
 /// The best candidate: a full Xcode whose SDK is not newer than macOS, the newest such SDK first, then by path.
 pub fn best_fit<'a>(os: &Release, candidates: &'a [DevDir]) -> Option<&'a DevDir> {
     let mut fit: Vec<&DevDir> = candidates
         .iter()
         .filter(|d| d.full_xcode)
-        .filter(|d| d.sdk.as_ref().is_some_and(|s| !sdk_newer_than_os(s, os)))
+        .filter(|d| d.sdk.as_ref().is_some_and(|s| known_not_newer(s, os)))
         .collect();
     fit.sort_by(|a, b| {
         let (sa, sb) = (a.sdk.as_ref().unwrap(), b.sdk.as_ref().unwrap());
@@ -270,6 +303,12 @@ pub fn parse_imports(nm: &str) -> Vec<Import> {
         .collect()
 }
 
+/// dlsym finds a name by its C spelling, the Mach-O name less its leading `_`. A name without one (dyld_stub_binder,
+/// which dyld itself binds) has no C spelling, so it can't be looked up and is left out of the check.
+pub fn checkable(import: &Import) -> Option<&str> {
+    import.symbol.strip_prefix('_').filter(|s| !s.is_empty())
+}
+
 /// The install paths in `otool -L` output, the binary's own line left out.
 pub fn parse_linked(otool: &str) -> Vec<String> {
     otool
@@ -327,10 +366,10 @@ pub fn report(
     }
     match fix_dir {
         Some(d) => out.push_str(&format!(
-            "  fix: build with a developer folder whose SDK is not newer than macOS {os_label}: DEVELOPER_DIR={} make -C spaces install ({}, {}). `polycarp update` picks it on its own.\n",
-            d.path.display(),
+            "  fix: build again with DEVELOPER_DIR={dir} set, a developer folder whose SDK is not newer than macOS {os_label} ({}, {}): `DEVELOPER_DIR={dir} make -C spaces install`, or export it before running the installer. `polycarp update` picks it on its own.\n",
             d.name(),
-            d.sdk_label()
+            d.sdk_label(),
+            dir = d.path.display()
         )),
         None => out.push_str(&format!(
             "  fix: build with a developer folder whose SDK is not newer than macOS {os_label}: install an Xcode with such an SDK (the Command Line Tools can't build the app), or update macOS, then build again.\n"
@@ -428,6 +467,7 @@ pub fn choice_here(home: Option<&Path>) -> Choice {
 
 // ---- The build check: running --------------------------------------------------------------------
 
+#[cfg(target_os = "macos")]
 fn host_arch() -> &'static str {
     match std::env::consts::ARCH {
         "aarch64" => "arm64",
@@ -435,6 +475,7 @@ fn host_arch() -> &'static str {
     }
 }
 
+#[cfg(target_os = "macos")]
 fn tool_output(tool: &str, args: &[&str], binary: &Path) -> Result<String, String> {
     let out = Command::new(tool)
         .args(args)
@@ -465,12 +506,14 @@ pub fn missing_imports(binary: &Path) -> Result<(usize, Vec<Import>), String> {
     .into_iter()
     .filter(|p| is_system_library(p))
     .collect();
+    // Loaded globally and looked up with RTLD_DEFAULT, not per library: nm names libSystem for symbols that live in
+    // dyld itself (dyld_stub_binder), which libSystem's own handle does not find.
     let mut loaded = std::collections::HashSet::new();
     for lib in &libs {
         let Ok(c) = CString::new(lib.as_str()) else {
             continue;
         };
-        // SAFETY: a NUL-terminated path; the handle is kept open for the lookups below.
+        // SAFETY: a NUL-terminated path; the image stays loaded for the lookups below.
         if !unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) }.is_null() {
             loaded.insert(short_name(lib));
         }
@@ -479,7 +522,7 @@ pub fn missing_imports(binary: &Path) -> Result<(usize, Vec<Import>), String> {
     let imports: Vec<Import> =
         parse_imports(&tool_output("/usr/bin/nm", &["-m", "-arch", arch], binary)?)
             .into_iter()
-            .filter(|w| system.contains(&w.from))
+            .filter(|w| system.contains(&w.from) && checkable(w).is_some())
             .collect();
     let missing = imports
         .iter()
@@ -487,8 +530,7 @@ pub fn missing_imports(binary: &Path) -> Result<(usize, Vec<Import>), String> {
             if !loaded.contains(&w.from) {
                 return true;
             }
-            let name = w.symbol.strip_prefix('_').unwrap_or(&w.symbol);
-            let Ok(c) = CString::new(name) else {
+            let Ok(c) = CString::new(checkable(w).unwrap_or_default()) else {
                 return true;
             };
             // SAFETY: a NUL-terminated name looked up in every image loaded so far.
@@ -504,41 +546,54 @@ pub fn missing_imports(_binary: &Path) -> Result<(usize, Vec<Import>), String> {
     Err("the build check runs on a Mac only".to_string())
 }
 
-/// `polycarp update --check-build <binary>`: exit 0, 1 or 2 (rule 5).
+/// `polycarp update --check-build <binary>...`: exit 0, 1 or 2 (rules 5 and 6).
 pub fn check_build_command(args: &[OsString], home: Option<&Path>) -> i32 {
-    let [binary] = args else {
-        eprintln!("polycarp update: --check-build needs the path of the app's executable");
+    if args.is_empty() {
+        eprintln!("polycarp update: --check-build needs the path of each executable to check");
         return 2;
-    };
-    let binary = Path::new(binary);
+    }
     let os = os_release();
-    match missing_imports(binary) {
-        Err(e) => {
-            eprintln!(
-                "polycarp update: the build check could not run, so nothing was installed: {e}"
-            );
-            2
-        }
-        Ok((n, missing)) if missing.is_empty() => {
-            println!(
-                "build check: all {n} imports from the system resolve on macOS {}",
-                os.as_ref()
-                    .map(|o| o.label())
-                    .unwrap_or_else(|| "(unknown)".into())
-            );
-            0
-        }
-        Ok((_, missing)) => {
-            let sel = selected(std::env::var_os("DEVELOPER_DIR")).map(|(d, _)| d);
-            let others: Vec<DevDir> = installed_xcodes(home)
-                .into_iter()
-                .filter(|d| Some(&d.path) != sel.as_ref().map(|s| &s.path))
-                .collect();
-            let fix = os.as_ref().and_then(|o| best_fit(o, &others));
-            eprint!("{}", report(&missing, os.as_ref(), sel.as_ref(), fix));
-            1
+    let os_label = os
+        .as_ref()
+        .map(|o| o.label())
+        .unwrap_or_else(|| "(unknown)".into());
+    let sel = selected(std::env::var_os("DEVELOPER_DIR")).map(|(d, _)| d);
+    let normal = weak_absence_is_normal(os.as_ref(), sel.as_ref().and_then(|d| d.sdk.as_ref()));
+    let (mut checked, mut failing, mut noted) = (0, Vec::new(), 0);
+    for binary in args {
+        match missing_imports(Path::new(binary)) {
+            Err(e) => {
+                eprintln!(
+                    "polycarp update: the build check could not run, so nothing was installed: {e}"
+                );
+                return 2;
+            }
+            Ok((n, missing)) => {
+                checked += n;
+                for m in missing {
+                    if m.weak && normal {
+                        noted += 1;
+                    } else if !failing.contains(&m) {
+                        failing.push(m);
+                    }
+                }
+            }
         }
     }
+    if noted > 0 {
+        println!("build check: note: {noted} weak imports are absent on macOS {os_label}; with an SDK of a higher version that is ordinary weak linking, so they don't stop the install");
+    }
+    if failing.is_empty() {
+        println!("build check: {checked} imports from the system checked in {} executables on macOS {os_label}; none stop the install", args.len());
+        return 0;
+    }
+    let others: Vec<DevDir> = installed_xcodes(home)
+        .into_iter()
+        .filter(|d| Some(&d.path) != sel.as_ref().map(|s| &s.path))
+        .collect();
+    let fix = os.as_ref().and_then(|o| best_fit(o, &others));
+    eprint!("{}", report(&failing, os.as_ref(), sel.as_ref(), fix));
+    1
 }
 
 #[cfg(test)]
@@ -707,6 +762,46 @@ mod tests {
     }
 
     #[test]
+    fn a_missing_weak_import_is_normal_only_on_a_release_os_with_a_higher_sdk() {
+        let r = |v, b| Release::new(v, b);
+        for (os, sdk, want) in [
+            // SDK 27 on a released macOS 26: weak linking, guarded by #available.
+            (r("26.4", "25E100"), r("27.2", "26B118"), true),
+            // The 2026-11-27 case: same version, the system a seed.
+            (r("27.2", "26B5091g"), r("27.2", "26B118"), false),
+            // A seed with a higher SDK: seeds are where symbols go missing unannounced.
+            (r("27.2", "26B5091g"), r("28.0", "27A100"), false),
+            // SDK not newer: nothing should be missing.
+            (r("27.2", "26B118"), r("27.2", "26B118"), false),
+            (r("27.2", "26B118"), r("27.0", "26A425"), false),
+        ] {
+            assert_eq!(
+                weak_absence_is_normal(Some(&os), Some(&sdk)),
+                want,
+                "{os:?} {sdk:?}"
+            );
+        }
+        assert!(!weak_absence_is_normal(None, Some(&r("27.2", "26B118"))));
+        assert!(!weak_absence_is_normal(Some(&r("26.4", "25E100")), None));
+    }
+
+    #[test]
+    fn a_candidate_needs_proof_that_it_fits() {
+        let os = Release::new("27.2", "26B5091g");
+        let odd = xcode(
+            "/Applications/Xcode-odd.app/Contents/Developer",
+            "27.2",
+            "weird",
+        );
+        let unparsed = xcode(
+            "/Applications/Xcode-x.app/Contents/Developer",
+            "27.x",
+            "26B1",
+        );
+        assert_eq!(best_fit(&os, &[odd, unparsed]), None);
+    }
+
+    #[test]
     fn nm_imports_parse_weak_and_strong() {
         let nm = "\
                  (undefined) weak external _$s10Foundation4DateV2leoiySbAC_ACtFZ (from Foundation)
@@ -741,6 +836,22 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn only_names_with_a_c_spelling_are_looked_up() {
+        let i = |s: &str| Import {
+            symbol: s.into(),
+            from: "libSystem".into(),
+            weak: false,
+        };
+        assert_eq!(checkable(&i("_malloc")), Some("malloc"));
+        assert_eq!(
+            checkable(&i("_$s10Foundation4DateVMa")),
+            Some("$s10Foundation4DateVMa")
+        );
+        assert_eq!(checkable(&i("dyld_stub_binder")), None);
+        assert_eq!(checkable(&i("_")), None);
     }
 
     #[test]
@@ -791,7 +902,8 @@ mod tests {
             "_$s10Foundation4DateV2leoiySbAC_ACtFZ (from Foundation, weak)",
             "macOS 27.2 (26B5091g)",
             "macOS SDK 27.2 (26B118)",
-            &format!("DEVELOPER_DIR={BETA} make -C spaces install"),
+            &format!("`DEVELOPER_DIR={BETA} make -C spaces install`"),
+            "export it before running the installer",
             "running app was left alone",
         ] {
             assert!(text.contains(want), "{want} in:\n{text}");

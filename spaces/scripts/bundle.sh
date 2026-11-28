@@ -127,7 +127,8 @@ echo "built $APP ($FULL_VERSION, $(lipo -archs "$APP/Contents/MacOS/$EXECUTABLE"
 # is quit or replaced, the build's own polycarp checks every import from the system (cli/src/toolchain.rs) and names
 # the missing symbols and the Xcode to build with. A build only made here (no flag, release.sh, CI) is not checked.
 if [ "${1:-}" = "--install" ] || [ "${1:-}" = "--check" ]; then
-  "$APP/Contents/Resources/bin/polycarp" update --check-build "$APP/Contents/MacOS/$EXECUTABLE" || exit 1
+  "$APP/Contents/Resources/bin/polycarp" update --check-build "$APP/Contents/MacOS/$EXECUTABLE" \
+    "$APP/Contents/Resources/bin/$CLI_NAME" "$APP/Contents/Resources/make-browser/launcher" || exit 1
 fi
 if [ "${1:-}" = "--install" ]; then
   scripts/install-app.sh "$APP"
