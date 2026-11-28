@@ -202,6 +202,16 @@ fn arguments(
     profile: Option<PathBuf>,
     given: impl Iterator<Item = OsString>,
 ) -> Vec<OsString> {
+    arguments_as(cfg!(windows), ours, profile, given)
+}
+
+/// `windows`: read switches as Chromium on Windows does, where `/` starts one too and their names ignore case.
+fn arguments_as(
+    windows: bool,
+    ours: Vec<OsString>,
+    profile: Option<PathBuf>,
+    given: impl Iterator<Item = OsString>,
+) -> Vec<OsString> {
     let mut load = ours.clone();
     let mut rest = Vec::new();
     let mut switches = true;
@@ -210,10 +220,22 @@ fn arguments(
         let text = arg.to_string_lossy();
         let text = text.trim_matches(|c| matches!(c, ' ' | '\t'..='\r'));
         switches &= text != "--";
-        let switch = text.trim_start_matches('-');
+        let slash = windows && text.starts_with('/');
+        let switch = if slash {
+            &text[1..]
+        } else {
+            text.trim_start_matches('-')
+        };
         let (name, value) = switch.split_once('=').unwrap_or((switch, ""));
-        if !switches || !text.starts_with('-') {
+        let name = if windows {
+            name.to_ascii_lowercase()
+        } else {
+            name.to_string()
+        };
+        if !switches || !(text.starts_with('-') || slash) {
             rest.push(arg);
+        } else if name.to_ascii_lowercase().starts_with("remote-debugging-") {
+            // Dropped in any case on every system: the port is never opened.
         } else if name == "load-extension" {
             let more = value.split(',').filter(|m| !m.is_empty());
             load.extend(more.map(OsString::from).filter(|m| !ours.contains(m)));
@@ -223,7 +245,7 @@ fn arguments(
                 theirs = true;
                 rest.push(arg);
             }
-        } else if !name.starts_with("remote-debugging-") {
+        } else {
             rest.push(arg);
         }
     }
@@ -329,6 +351,53 @@ mod tests {
         assert_eq!(
             with(Some("/p"), &given),
             ["--load-extension=/a/ext", "--user-data-dir=/p", "x"]
+        );
+    }
+
+    fn on_windows(profile: Option<&str>, given: &[&str]) -> Vec<String> {
+        let given = given.iter().map(OsString::from);
+        let args = arguments_as(
+            true,
+            vec!["/a/ext".into()],
+            profile.map(PathBuf::from),
+            given,
+        );
+        args.into_iter().map(|a| a.into_string().unwrap()).collect()
+    }
+
+    #[test]
+    fn windows_switches_with_a_slash_or_any_case_are_read_as_switches() {
+        let debugging = [
+            "/remote-debugging-port=9222",
+            "--Remote-Debugging-Port=1",
+            "/REMOTE-DEBUGGING-PIPE",
+            "x",
+        ];
+        assert_eq!(
+            on_windows(Some("/p"), &debugging),
+            ["--load-extension=/a/ext", "--user-data-dir=/p", "x"]
+        );
+        assert_eq!(
+            on_windows(Some("/p"), &["/User-Data-Dir=C:\\mine", "x"]),
+            ["--load-extension=/a/ext", "/User-Data-Dir=C:\\mine", "x"]
+        );
+        assert_eq!(
+            on_windows(None, &["/Load-Extension=/b", "x"]),
+            ["--load-extension=/a/ext,/b", "x"]
+        );
+        // Elsewhere a slash starts a path, not a switch.
+        assert_eq!(
+            with(Some("/p"), &["/user-data-dir=/mine"]),
+            [
+                "--load-extension=/a/ext",
+                "--user-data-dir=/p",
+                "/user-data-dir=/mine"
+            ]
+        );
+        // And mixed-case remote debugging is dropped on every system.
+        assert_eq!(
+            got(&["--Remote-Debugging-Port=1"]),
+            ["--load-extension=/a/ext"]
         );
     }
 
