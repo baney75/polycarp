@@ -215,6 +215,69 @@ fn laid_out(work: &Path, version: &str, arch: &str) -> Result<(PathBuf, usize), 
     Ok((root, files))
 }
 
+/// The binary key inside an armored OpenPGP block, which `gpgv` reads as its keyring. None when it is not one.
+fn dearmor(armored: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let mut lines = armored.lines().map(str::trim_end);
+    lines.find(|l| *l == "-----BEGIN PGP PUBLIC KEY BLOCK-----")?;
+    // Header lines such as `Comment:` end at the first empty line.
+    lines.find(|l| l.is_empty())?;
+    let mut body = String::new();
+    for line in lines {
+        if line == "-----END PGP PUBLIC KEY BLOCK-----" {
+            return base64::engine::general_purpose::STANDARD.decode(body).ok();
+        }
+        // The checksum line; the pinned file's sha256 already covers it.
+        if !line.starts_with('=') {
+            body.push_str(line);
+        }
+    }
+    None
+}
+
+/// A program by its absolute path, with none of the person's environment: helpers it runs by name, such as tar's
+/// `xz`, come only from `/usr/bin` and `/bin`, never from a folder on the person's `PATH`.
+fn pinned(program: &Path) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    command
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin")
+        .env("LC_ALL", "C");
+    command
+}
+
+/// `gpgv` checks one signature against one keyring file. Unlike `gpg` it never starts an agent or keyboxd and
+/// reads no options file; `--homedir` keeps it out of the person's `~/.gnupg`.
+fn gpgv(
+    program: &Path,
+    home: &Path,
+    keyring: &Path,
+    asc: &Path,
+    tarball: &Path,
+) -> std::process::Command {
+    let mut command = pinned(program);
+    command
+        .arg("--homedir")
+        .arg(home)
+        .args(["--status-fd", "1", "--keyring"])
+        .arg(keyring)
+        .arg("--")
+        .arg(asc)
+        .arg(tarball);
+    command
+}
+
+fn tar(program: &Path, tarball: &Path, work: &Path) -> std::process::Command {
+    let mut command = pinned(program);
+    command
+        .arg("-xJf")
+        .arg(tarball)
+        .arg("-C")
+        .arg(work)
+        .arg("--no-same-owner");
+    command
+}
+
 #[cfg(target_os = "linux")]
 mod system {
     use super::*;
@@ -330,42 +393,17 @@ mod system {
         })
     }
 
-    /// gpg with its own keyring folder and none of the person's settings or keys. `--no-autostart` keeps it from
-    /// leaving a gpg-agent running in that folder: a public key and a signature need no agent.
-    fn gpg(program: &Path, keyring: &Path) -> Command {
-        let mut command = Command::new(program);
-        command
-            .env_remove("GNUPGHOME")
-            .env("LC_ALL", "C")
-            .arg("--homedir")
-            .arg(keyring)
-            .args([
-                "--batch",
-                "--no-tty",
-                "--no-options",
-                "--no-autostart",
-                "--no-auto-key-retrieve",
-            ]);
-        command
-    }
-
-    /// Checks `asc` on `tarball` against the pinned key, in a keyring folder under `dir` that holds only that key
-    /// and is removed afterwards.
+    /// Checks `asc` on `tarball` against the pinned key with `gpgv`, in a folder under `dir` that holds only that
+    /// key and is removed afterwards.
     pub fn signature(dir: &Path, tarball: &Path, asc: &Path) -> Result<(), Refused> {
-        let program = first("signature", &["/usr/bin/gpg", "/bin/gpg"])?;
+        let program = first("signature", &["/usr/bin/gpgv", "/bin/gpgv"])?;
+        let key = dearmor(KEY)
+            .ok_or_else(|| Refused::new("signature", "the pinned key could not be read"))?;
         let keyring = dir.join("gnupg");
         let checked = fresh("signature", &keyring).and_then(|()| {
-            let key = keyring.join("helium.asc");
-            fs::write(&key, KEY).map_err(refuse("signature", "writing the key"))?;
-            let mut import = gpg(&program, &keyring);
-            import.arg("--import").arg(&key);
-            must("signature", import)?;
-            let mut verify = gpg(&program, &keyring);
-            verify
-                .args(["--status-fd", "1", "--verify"])
-                .arg(asc)
-                .arg(tarball);
-            let out = ran("signature", verify)?;
+            let file = keyring.join("helium.gpg");
+            fs::write(&file, &key).map_err(refuse("signature", "writing the key"))?;
+            let out = ran("signature", gpgv(&program, &keyring, &file, asc, tarball))?;
             judge_gpg(&String::from_utf8_lossy(&out.stdout), out.status.success())
         });
         let _ = clear(&keyring);
@@ -379,13 +417,8 @@ mod system {
         release: &Release,
         arch: &str,
     ) -> Result<usize, Refused> {
-        let mut tar = Command::new(first("unpack", &["/usr/bin/tar", "/bin/tar"])?);
-        tar.arg("-xJf")
-            .arg(tarball)
-            .arg("-C")
-            .arg(work)
-            .arg("--no-same-owner");
-        must("unpack", tar)?;
+        let program = first("unpack", &["/usr/bin/tar", "/bin/tar"])?;
+        must("unpack", tar(&program, tarball, work))?;
         laid_out(work, &release.version, arch).map(|(_, n)| n)
     }
 
@@ -408,6 +441,7 @@ use system::dry_run;
 mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
+    use std::ffi::OsStr;
 
     const VERSION: &str = "0.22.5.1";
 
@@ -536,6 +570,14 @@ mod tests {
             hex(KEY.as_bytes()),
             "e25c51e39b68d79d89bd26fc1200791f590f2e780efb946d62ca25ff5487d022"
         );
+        // The same bytes `gpg --dearmor` gives for it, which gpgv read to pass the real release.
+        assert_eq!(
+            hex(&dearmor(KEY).expect("the pinned key is armored")),
+            "b1d4ab21420c1fd3f4f5e4710b0bf3a47c3e36861a64d1c2486c610914eae413"
+        );
+        assert_eq!(dearmor("not a key"), None);
+        let no_end = KEY.replace("-----END PGP PUBLIC KEY BLOCK-----", "");
+        assert_eq!(dearmor(&no_end), None);
         assert_eq!(
             spaced(FINGERPRINT),
             "BE67 7C19 89D3 5EAB 2C5F 26C9 3516 01AD 01D6 378E"
@@ -681,6 +723,51 @@ mod tests {
         );
         assert!(!file.exists(), "a refused download was kept");
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn tar_and_gpgv_run_with_only_the_system_s_path() {
+        let path = |c: &std::process::Command| {
+            c.get_envs()
+                .map(|(k, v)| (k.to_owned(), v.map(OsStr::to_owned)))
+                .collect::<Vec<_>>()
+        };
+        let want = vec![
+            ("LC_ALL".into(), Some("C".into())),
+            ("PATH".into(), Some("/usr/bin:/bin".into())),
+        ];
+        let args =
+            |c: &std::process::Command| c.get_args().map(OsStr::to_owned).collect::<Vec<_>>();
+        let t = tar(
+            Path::new("/usr/bin/tar"),
+            Path::new("/c/h.tar.xz"),
+            Path::new("/c/work"),
+        );
+        assert_eq!(path(&t), want);
+        assert_eq!(
+            args(&t),
+            ["-xJf", "/c/h.tar.xz", "-C", "/c/work", "--no-same-owner"]
+        );
+        let g = gpgv(
+            Path::new("/usr/bin/gpgv"),
+            Path::new("/c/gnupg"),
+            Path::new("/c/gnupg/helium.gpg"),
+            Path::new("/c/h.tar.xz.asc"),
+            Path::new("/c/h.tar.xz"),
+        );
+        assert_eq!(path(&g), want);
+        let expected = [
+            "--homedir",
+            "/c/gnupg",
+            "--status-fd",
+            "1",
+            "--keyring",
+            "/c/gnupg/helium.gpg",
+            "--",
+            "/c/h.tar.xz.asc",
+            "/c/h.tar.xz",
+        ];
+        assert_eq!(args(&g), expected);
     }
 
     #[test]
