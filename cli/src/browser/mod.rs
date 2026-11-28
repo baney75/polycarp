@@ -15,6 +15,7 @@ mod pages;
 mod pak;
 mod progress;
 mod release;
+mod rename;
 mod running;
 mod sign;
 mod source;

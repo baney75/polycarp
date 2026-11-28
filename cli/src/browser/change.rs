@@ -1,6 +1,5 @@
 //! Turns a checked Helium app into Polycarp Browser, as `changes.toml` (shipped beside this command, GPL) says.
 
-use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -8,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
-use super::pak::Pak;
+use super::rename::{self, Rename};
 use super::tools::{must, Call, Tools};
 use super::{refuse, Refused};
 
@@ -74,27 +73,17 @@ impl Changes {
         toml::from_str(&text).map_err(|e| Refused::new("parts", format!("changes.toml: {e}")))
     }
 
-    /// Text with Helium's name made Polycarp's, except where it is part of a phrase that stays.
-    fn renamed(&self, text: &str) -> String {
-        let mut out = String::with_capacity(text.len());
-        let mut rest = text;
-        while let Some(at) = rest.find(&self.from.name) {
-            let (before, here) = rest.split_at(at);
-            let stays = self.strings.keep.iter().any(|k| here.starts_with(k));
-            out.push_str(before);
-            out.push_str(if stays {
-                &self.from.name
-            } else {
-                &self.to.name
-            });
-            rest = &here[self.from.name.len()..];
+    fn rename(&self) -> Rename<'_> {
+        Rename {
+            from: &self.from.name,
+            to: &self.to.name,
+            keep: &self.strings.keep,
         }
-        out + rest
     }
 
-    fn keeps(&self, text: &[u8]) -> bool {
-        let has = |k: &String| text.windows(k.len()).any(|w| w == k.as_bytes());
-        self.strings.keep.iter().any(has)
+    /// Text with Helium's name made Polycarp's, except where it is part of a phrase that stays.
+    fn renamed(&self, text: &str) -> String {
+        self.rename().renamed(text)
     }
 
     fn path(&self, app: &Path, framework: &str, listed: &str) -> PathBuf {
@@ -313,39 +302,16 @@ fn rename_strings(tools: &dyn Tools, file: &Path, changes: &Changes) -> Result<(
     fs::write(file, renamed).map_err(refuse(CHECK, "writing InfoPlist.strings"))
 }
 
-/// The interface's text, in every language. What stays is chosen by the English text and kept in each language.
+/// The interface's text, in every language, as `rename::rename_paks` makes it.
 fn rename_paks(all: &[PathBuf], changes: &Changes) -> Result<(), Refused> {
-    let packs = all.iter().filter(|f| f.ends_with("locale.pak"));
-    let mut read = Vec::new();
-    for file in packs {
-        let bytes = fs::read(file).map_err(refuse(CHECK, "reading its text"))?;
-        let pak = Pak::parse(&bytes)
-            .ok_or_else(|| Refused::new(CHECK, "its text is in a form this version can't read"))?;
-        read.push((file, pak));
-    }
-    let english = read
-        .iter()
-        .find(|(f, _)| f.ends_with("en.lproj/locale.pak"));
-    let Some((_, english)) = english else {
-        return Err(Refused::new(CHECK, "it has no English text"));
-    };
-    let kept = english.entries.iter().filter(|(_, t)| changes.keeps(t));
-    let stays: HashSet<u16> = kept.map(|(id, _)| *id).collect();
-    for (file, mut pak) in read {
-        for (id, text) in &mut pak.entries {
-            if let (false, Ok(old)) = (stays.contains(id), std::str::from_utf8(text)) {
-                *text = changes.renamed(old).into_bytes();
-            }
-        }
-        let bytes = pak.bytes();
-        let bytes = bytes.ok_or_else(|| Refused::new(CHECK, "its text grew too large"))?;
-        fs::write(file, bytes).map_err(refuse(CHECK, "writing its text"))?;
-    }
-    Ok(())
+    let packs: Vec<&PathBuf> = all.iter().filter(|f| f.ends_with("locale.pak")).collect();
+    let english = |f: &Path| f.ends_with("en.lproj/locale.pak");
+    rename::rename_paks(&packs, &english, &changes.rename())
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::pak::Pak;
     use super::super::testing::*;
     use super::super::tools::System;
     use super::*;
